@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
+import { NexusLogo } from '@/components/nexus-logo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,9 +46,12 @@ export function SignUpForm() {
 
   return (
     <div className='w-full max-w-sm space-y-6'>
-      <div className='space-y-2 text-center'>
-        <h1 className='text-2xl font-semibold tracking-tight'>Create your account</h1>
-        <p className='text-muted-foreground text-sm'>Enter your details to get started</p>
+      <div className='flex flex-col items-center space-y-4'>
+        <NexusLogo variant='square' className='h-14 w-auto lg:hidden' priority />
+        <div className='space-y-2 text-center'>
+          <h1 className='text-2xl font-semibold tracking-tight'>Create your account</h1>
+          <p className='text-muted-foreground text-sm'>Enter your details to get started</p>
+        </div>
       </div>
 
       <MicrosoftSsoButton />

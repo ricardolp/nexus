@@ -28,6 +28,7 @@ import { useAuth } from '@/context/auth-context';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icons } from '../icons';
+import { NexusLogo } from '../nexus-logo';
 
 export default function AdminSidebar() {
   const pathname = usePathname();
@@ -40,10 +41,12 @@ export default function AdminSidebar() {
       <SidebarHeader className='group-data-[collapsible=icon]:pt-4'>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size='lg' className='pointer-events-none'>
-              <Icons.lock className='text-primary' />
-              <div className='flex flex-col gap-0.5 leading-none'>
-                <span className='font-semibold'>Admin</span>
+            <SidebarMenuButton size='lg' className='pointer-events-none overflow-hidden'>
+              <div className='hidden size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg group-data-[collapsible=icon]:flex'>
+                <NexusLogo variant='square' className='h-8 w-auto max-w-none' />
+              </div>
+              <div className='flex min-w-0 flex-col gap-0.5 leading-none group-data-[collapsible=icon]:hidden'>
+                <NexusLogo variant='rectangular' className='h-7 w-auto max-w-full' />
                 <span className='text-muted-foreground text-xs'>Painel auxiliar</span>
               </div>
             </SidebarMenuButton>

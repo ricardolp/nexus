@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { Icons } from '@/components/icons';
+import { NexusLogo } from '@/components/nexus-logo';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,8 +36,8 @@ export function OrgSwitcher() {
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton size='lg' disabled>
-            <div className='bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg'>
-              <Icons.galleryVerticalEnd className='size-4' />
+            <div className='flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg'>
+              <NexusLogo variant='square' className='h-8 w-auto max-w-none' />
             </div>
             <div
               className={`grid flex-1 text-left text-sm leading-tight transition-all duration-200 ease-in-out ${
