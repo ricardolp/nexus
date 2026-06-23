@@ -20,7 +20,7 @@ interface AuthContextValue {
   activeOrganizationId: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  refreshSession: () => Promise<void>;
+  refreshSession: () => Promise<boolean>;
   setActiveOrganizationId: (organizationId: string) => void;
   logout: () => Promise<void>;
 }
@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setOrganizations([]);
       setActiveOrganizationIdState(null);
-      return;
+      return false;
     }
 
     const currentUser = (await meResponse.json()) as AuthUser;
@@ -66,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setOrganizations([]);
       setActiveOrganizationIdState(null);
     }
+
+    return true;
   }, []);
 
   useEffect(() => {

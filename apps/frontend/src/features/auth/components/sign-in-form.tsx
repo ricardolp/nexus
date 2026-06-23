@@ -56,7 +56,13 @@ export function SignInForm() {
         return;
       }
 
-      await refreshSession();
+      const sessionStarted = await refreshSession();
+
+      if (!sessionStarted) {
+        toast.error('Login aceito, mas a sessão não foi salva. Verifique cookies/HTTPS.');
+        return;
+      }
+
       toast.success('Login realizado com sucesso');
       router.push(redirectTo);
       router.refresh();

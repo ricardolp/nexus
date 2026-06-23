@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
-import { AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME } from '@/lib/auth/constants';
+import { AUTH_COOKIE_NAME } from '@/lib/auth/constants';
+import { buildAuthCookieOptions } from '@/lib/auth/cookie-options';
 import type { LoginResponse } from '@/lib/auth/types';
 import { getServerBackendUrl } from '@/lib/backend-url';
 
-function setAuthCookie(response: NextResponse, token: string) {
-  response.cookies.set(AUTH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: AUTH_COOKIE_MAX_AGE_SECONDS,
+function setAuthCookie(response: NextResponse, token: string, request: Request) {
+  const options = buildAuthCookieOptions(token, request);
+  response.cookies.set(options.name, options.value, {
+    httpOnly: options.httpOnly,
+    secure: options.secure,
+    sameSite: options.sameSite,
+    path: options.path,
+    maxAge: options.maxAge,
   });
 }
 
@@ -53,6 +55,6 @@ export async function POST(request: Request) {
 
   const data = payload as LoginResponse;
   const response = NextResponse.json({ user: data.user });
-  setAuthCookie(response, data.accessToken);
+  setAuthCookie(response, data.accessToken, request);
   return response;
 }

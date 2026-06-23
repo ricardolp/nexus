@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME } from '@/lib/auth/constants';
+import { AUTH_COOKIE_NAME } from '@/lib/auth/constants';
+import { buildAuthCookieOptions } from '@/lib/auth/cookie-options';
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token');
@@ -9,12 +10,13 @@ export async function GET(request: NextRequest) {
   }
 
   const response = NextResponse.redirect(new URL('/dashboard/overview', request.url));
-  response.cookies.set(AUTH_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: AUTH_COOKIE_MAX_AGE_SECONDS,
+  const options = buildAuthCookieOptions(token, request);
+  response.cookies.set(options.name, options.value, {
+    httpOnly: options.httpOnly,
+    secure: options.secure,
+    sameSite: options.sameSite,
+    path: options.path,
+    maxAge: options.maxAge,
   });
 
   return response;
