@@ -7,6 +7,7 @@ import { useSuspenseQuery } from '@tanstack/react-query';
 import { parseAsInteger, parseAsString, useQueryStates } from 'nuqs';
 import { getSortingStateParser } from '@/lib/parsers';
 import { organizationsQueryOptions } from '../../api/queries';
+import { CreateOrganizationSheetTrigger } from '../create-organization-sheet-trigger';
 import { columns } from './columns';
 
 const columnIds = columns.map((c) => c.id).filter(Boolean) as string[];
@@ -43,7 +44,9 @@ export function OrganizationsTable() {
 
   return (
     <DataTable table={table}>
-      <DataTableToolbar table={table} />
+      <DataTableToolbar table={table}>
+        <CreateOrganizationSheetTrigger />
+      </DataTableToolbar>
     </DataTable>
   );
 }

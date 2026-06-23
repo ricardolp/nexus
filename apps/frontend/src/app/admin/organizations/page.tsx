@@ -18,7 +18,7 @@ export default async function AdminOrganizationsPage(props: PageProps) {
   return (
     <PageContainer
       pageTitle='Organizações'
-      pageDescription='Gerencie organizações e crie usuários vinculados diretamente a cada uma.'
+      pageDescription='Crie organizações e gerencie usuários vinculados a cada uma.'
     >
       <OrganizationListingPage />
     </PageContainer>

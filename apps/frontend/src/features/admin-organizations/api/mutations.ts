@@ -1,11 +1,23 @@
 import { mutationOptions } from '@tanstack/react-query';
 import { getQueryClient } from '@/lib/query-client';
-import { createOrganizationUser, updateOrganizationSettings } from './service';
+import {
+  createOrganization,
+  createOrganizationUser,
+  updateOrganizationSettings,
+} from './service';
 import { organizationKeys } from './queries';
 import type {
+  CreateOrganizationPayload,
   CreateOrganizationUserPayload,
   UpdateOrganizationSettingsPayload,
 } from './types';
+
+export const createOrganizationMutation = mutationOptions({
+  mutationFn: (payload: CreateOrganizationPayload) => createOrganization(payload),
+  onSuccess: () => {
+    getQueryClient().invalidateQueries({ queryKey: organizationKeys.all });
+  },
+});
 
 export const createOrganizationUserMutation = mutationOptions({
   mutationFn: ({

@@ -24,6 +24,11 @@ export interface CreateOrganizationUserPayload {
   senha: string;
 }
 
+export interface CreateOrganizationPayload {
+  nome: string;
+  slug: string;
+}
+
 export interface OrganizationSettings {
   id: string;
   organizationId: string;

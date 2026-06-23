@@ -1,4 +1,5 @@
 import type {
+  CreateOrganizationPayload,
   CreateOrganizationUserPayload,
   OrganizationFilters,
   OrganizationSettings,
@@ -37,6 +38,21 @@ export async function getOrganizations(
     items: filteredItems,
     total: filteredItems.length,
   };
+}
+
+export async function createOrganization(payload: CreateOrganizationPayload) {
+  const response = await fetch('/api/backend/organization', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(error?.message ?? 'Falha ao criar organização');
+  }
+
+  return response.json();
 }
 
 export async function createOrganizationUser(
