@@ -1,0 +1,31 @@
+enum email_log_status {
+  pending
+  sent
+  failed
+}
+
+enum email_template_type {
+  welcome
+  email_confirmation
+  password_reset
+  invite
+  password_changed
+}
+
+model EmailLog {
+  id           String              @id @default(uuid()) @db.Uuid
+  destinatario String
+  assunto      String
+  template     email_template_type
+  status       email_log_status    @default(pending)
+  erro         String?
+  metadados    Json?
+  enviado_em   DateTime?
+  created_at   DateTime            @default(now())
+  updated_at   DateTime            @updatedAt
+  deleted_at   DateTime?
+
+  @@index([destinatario])
+  @@index([template, status])
+  @@map("email_logs")
+}

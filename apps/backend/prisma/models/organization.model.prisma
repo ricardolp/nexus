@@ -1,0 +1,159 @@
+model Organization {
+  id         String    @id @default(uuid()) @db.Uuid
+  nome       String
+  slug       String    @unique
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+  deleted_at DateTime?
+
+  members OrganizationMember[]
+  roles   OrganizationRole[]
+  companies OrganizationCompany[]
+  settings OrganizationSettings?
+  companyCertificates OrganizationCompanyCertificate[]
+  nfeDocuments FiscalNfeDocument[]
+  nfseDocuments FiscalNfseDocument[]
+  nfeDocumentEvents FiscalNfeDocumentEvent[]
+  nfseDocumentEvents FiscalNfseDocumentEvent[]
+  nfeNumberRanges FiscalNfeNumberRange[]
+  nfseNumberRanges FiscalNfseNumberRange[]
+  integrationTokens IntegrationToken[]
+  webhookEndpoints WebhookEndpoint[]
+  webhookDeliveries WebhookDelivery[]
+  domainEventOutbox DomainEventOutbox[]
+  nfeFlowConfigs FiscalNfeFlowConfig[]
+  integrationRequestLogs IntegrationRequestLog[]
+
+  @@map("organizations")
+}
+
+enum organization_company_status {
+  active
+  inactive
+}
+
+model OrganizationCompany {
+  id              String                      @id @default(uuid()) @db.Uuid
+  organization_id String                      @db.Uuid
+  cnpj            String                      @unique
+  razao_social    String
+  status          organization_company_status @default(active)
+  created_at      DateTime                    @default(now())
+  updated_at      DateTime                    @updatedAt
+  deleted_at      DateTime?
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+
+  certificates OrganizationCompanyCertificate[]
+  nfeNumberRanges FiscalNfeNumberRange[]
+  nfseNumberRanges FiscalNfseNumberRange[]
+  nfeDocuments FiscalNfeDocument[]
+  nfseDocuments FiscalNfseDocument[]
+  nfeFlowConfigs FiscalNfeFlowConfig[]
+
+  @@index([organization_id])
+  @@map("organization_companies")
+}
+
+enum organization_company_certificate_status {
+  active
+  inactive
+  expired
+  revoked
+}
+
+model OrganizationCompanyCertificate {
+  id                   String                                @id @default(uuid()) @db.Uuid
+  organization_id      String                                @db.Uuid
+  company_id           String                                @db.Uuid
+  name                 String?
+  description          String?
+  status               organization_company_certificate_status @default(inactive)
+  key_vault_cert_name  String
+  key_vault_cert_id    String
+  key_vault_key_id     String?
+  password_secret_name String?
+  password_secret_id   String?
+  thumbprint           String?
+  subject              String?
+  issuer               String?
+  expires_at           DateTime?
+  created_at           DateTime                              @default(now())
+  updated_at           DateTime                              @updatedAt
+  deleted_at           DateTime?
+
+  company      OrganizationCompany @relation(fields: [company_id], references: [id])
+  organization Organization        @relation(fields: [organization_id], references: [id])
+
+  @@index([company_id])
+  @@index([organization_id])
+  @@map("organization_company_certificates")
+}
+
+model OrganizationSettings {
+  id                              String   @id @default(uuid()) @db.Uuid
+  organization_id                 String   @unique @db.Uuid
+  max_companies                   Int      @default(1)
+  integration_base_url            String?  @db.VarChar(2048)
+  integration_client_id           String?  @db.VarChar(255)
+  integration_secret_key_vault_name String? @db.VarChar(255)
+  integration_secret_key_vault_id String?
+  integration_client_secret_local String?
+  sap_client                      String?  @db.VarChar(3)
+  sap_language                    String?  @db.VarChar(5)
+  created_at                      DateTime @default(now())
+  updated_at                      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+
+  @@map("organization_settings")
+}
+
+model OrganizationRole {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  nome            String
+  slug            String
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  deleted_at      DateTime?
+
+  organization Organization                 @relation(fields: [organization_id], references: [id])
+  permissions  OrganizationRolePermission[]
+  members      OrganizationMember[]
+
+  @@unique([organization_id, slug])
+  @@map("organization_roles")
+}
+
+model OrganizationRolePermission {
+  id         String   @id @default(uuid()) @db.Uuid
+  role_id    String   @db.Uuid
+  permission String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  deleted_at DateTime?
+
+  role OrganizationRole @relation(fields: [role_id], references: [id])
+
+  @@unique([role_id, permission])
+  @@map("organization_role_permissions")
+}
+
+model OrganizationMember {
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String   @db.Uuid
+  user_id         String   @db.Uuid
+  role_id         String   @db.Uuid
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  deleted_at      DateTime?
+
+  organization Organization     @relation(fields: [organization_id], references: [id])
+  user         User             @relation(fields: [user_id], references: [id])
+  role         OrganizationRole @relation(fields: [role_id], references: [id])
+
+  @@unique([organization_id, user_id])
+  @@index([user_id])
+  @@map("organization_members")
+}

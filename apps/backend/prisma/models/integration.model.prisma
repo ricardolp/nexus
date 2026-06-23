@@ -1,0 +1,124 @@
+enum webhook_delivery_status {
+  pending
+  delivered
+  failed
+}
+
+enum integration_provider {
+  sap_cpi
+}
+
+enum integration_operation {
+  purchase_orders
+  inbound_delivery
+  inbound_miro
+}
+
+model IntegrationToken {
+  id                 String    @id @default(uuid()) @db.Uuid
+  organization_id    String    @db.Uuid
+  name               String
+  token_prefix       String
+  token_hash         String    @unique
+  scopes             String[]
+  created_by_user_id String    @db.Uuid
+  last_used_at       DateTime?
+  revoked_at         DateTime?
+  expires_at         DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+  deleted_at         DateTime?
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+  createdBy    User         @relation(fields: [created_by_user_id], references: [id])
+
+  @@index([organization_id])
+  @@map("integration_tokens")
+}
+
+model WebhookEndpoint {
+  id                 String    @id @default(uuid()) @db.Uuid
+  organization_id    String    @db.Uuid
+  url                String
+  description        String?
+  secret             String
+  event_types        String[]
+  active             Boolean   @default(true)
+  created_by_user_id String    @db.Uuid
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+  deleted_at         DateTime?
+
+  organization Organization      @relation(fields: [organization_id], references: [id])
+  createdBy    User                @relation(fields: [created_by_user_id], references: [id])
+  deliveries   WebhookDelivery[]
+
+  @@index([organization_id])
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  webhook_endpoint_id String                  @db.Uuid
+  organization_id     String                  @db.Uuid
+  event_type          String
+  payload             Json
+  status              webhook_delivery_status @default(pending)
+  attempts            Int                     @default(0)
+  next_retry_at       DateTime?
+  last_error          String?
+  delivered_at        DateTime?
+  idempotency_key     String                  @unique
+  created_at          DateTime                @default(now())
+  updated_at          DateTime                @updatedAt
+
+  webhookEndpoint WebhookEndpoint @relation(fields: [webhook_endpoint_id], references: [id])
+  organization    Organization    @relation(fields: [organization_id], references: [id])
+
+  @@index([webhook_endpoint_id])
+  @@index([organization_id, status])
+  @@map("webhook_deliveries")
+}
+
+model DomainEventOutbox {
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String    @db.Uuid
+  aggregate_type  String
+  aggregate_id    String    @db.Uuid
+  event_type      String
+  payload         Json
+  published_at    DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+
+  @@index([organization_id, published_at])
+  @@map("domain_event_outbox")
+}
+
+model IntegrationRequestLog {
+  id              String                @id @default(uuid()) @db.Uuid
+  organization_id String                @db.Uuid
+  nfe_document_id String?               @db.Uuid
+  provider        integration_provider
+  operation       integration_operation
+  http_method     String                @db.VarChar(8)
+  request_url     String
+  request_body    Json?
+  response_body   Json?
+  response_status Int?
+  duration_ms     Int
+  success         Boolean
+  error_code      String?               @db.VarChar(64)
+  error_message   String?
+  correlation_id  String?               @db.VarChar(128)
+  created_at      DateTime              @default(now())
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+
+  @@index([organization_id, created_at])
+  @@index([nfe_document_id])
+  @@index([organization_id, operation, created_at])
+  @@map("integration_request_logs")
+}

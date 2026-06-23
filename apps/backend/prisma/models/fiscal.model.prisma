@@ -1,0 +1,950 @@
+enum fiscal_document_direction {
+  inbound
+  outbound
+}
+
+// --- NFe enums ---
+
+enum fiscal_nfe_environment {
+  production
+  homologation
+}
+
+enum fiscal_nfe_document_status {
+  draft
+  received
+  validating
+  validation_error
+  waiting_processing
+  sent_to_sefaz
+  authorized
+  rejected
+  denied
+  cancel_requested
+  cancelled
+  cancel_rejected
+  inutilized
+  processing_error
+  contingency
+  closed
+}
+
+enum fiscal_nfe_event_type {
+  authorization
+  cancellation
+  cancellation_denied
+  correction_letter
+  manifestation_confirmation
+  manifestation_unknown
+  manifestation_not_performed
+  manifestation_awareness
+  epec
+  protocol_query
+  status_query
+  distribution_dfe
+  xml_import
+  xml_export
+  system_status_change
+  webhook_callback
+  sap_callback
+  manual_note
+  inbound_status_change
+  pedido_validation
+  sap_delivery_create
+  sap_migo
+  sap_miro
+  inbound_rejection
+  portaria_confirmation
+}
+
+enum fiscal_nfe_inbound_status {
+  xml_imported
+  sefaz_validated
+  pedido_validating
+  pedido_matched
+  pedido_alert
+  delivery_creating
+  delivery_created
+  awaiting_portaria
+  migo_pending
+  migo_done
+  miro_pending
+  miro_done
+  rejected_inbound
+  inbound_error
+}
+
+enum fiscal_nfe_pedido_validation_status {
+  pending
+  matched
+  alert
+  skipped
+}
+
+enum fiscal_nfe_sap_document_type {
+  purchase_order
+  inbound_delivery
+  goods_movement
+  invoice_verification
+  accounting_doc
+}
+
+enum fiscal_nfe_sap_document_status {
+  pending
+  success
+  error
+}
+
+enum fiscal_nfe_event_status {
+  pending
+  sent
+  accepted
+  rejected
+  error
+  ignored
+}
+
+enum fiscal_nfe_timeline_source {
+  system
+  user
+  sefaz
+  sap
+  webhook
+  job
+  api
+}
+
+enum fiscal_nfe_attachment_kind {
+  xml_request
+  xml_response
+  xml_authorized
+  xml_cancel
+  xml_correction_letter
+  xml_distribution
+  danfe_pdf
+  event_pdf
+  json_payload
+  txt_log
+  other
+}
+
+enum fiscal_nfe_number_range_event_type {
+  inutilization_requested
+  inutilization_authorized
+  inutilization_rejected
+  status_query
+  manual_note
+}
+
+// --- NFSe enums ---
+
+enum fiscal_nfse_environment {
+  production
+  homologation
+}
+
+enum fiscal_nfse_document_status {
+  draft
+  received
+  validating
+  validation_error
+  waiting_processing
+  sent_to_prefeitura
+  authorized
+  rejected
+  denied
+  cancel_requested
+  cancelled
+  cancel_rejected
+  substituted
+  processing_error
+  closed
+}
+
+enum fiscal_nfse_event_type {
+  authorization
+  cancellation
+  cancellation_denied
+  correction_letter
+  substitution
+  service_taken
+  xml_import
+  xml_export
+  system_status_change
+  webhook_callback
+  sap_callback
+  manual_note
+  inbound_status_change
+  pedido_validation
+  sap_delivery_create
+  sap_migo
+  sap_miro
+  inbound_rejection
+  portaria_confirmation
+}
+
+enum fiscal_nfse_inbound_status {
+  xml_imported
+  prefeitura_validated
+  pedido_validating
+  pedido_matched
+  pedido_alert
+  delivery_creating
+  delivery_created
+  awaiting_portaria
+  migo_pending
+  migo_done
+  miro_pending
+  miro_done
+  rejected_inbound
+  inbound_error
+}
+
+enum fiscal_nfse_pedido_validation_status {
+  pending
+  matched
+  alert
+  skipped
+}
+
+enum fiscal_nfse_sap_document_type {
+  purchase_order
+  inbound_delivery
+  goods_movement
+  invoice_verification
+  accounting_doc
+}
+
+enum fiscal_nfse_sap_document_status {
+  pending
+  success
+  error
+}
+
+enum fiscal_nfse_event_status {
+  pending
+  sent
+  accepted
+  rejected
+  error
+  ignored
+}
+
+enum fiscal_nfse_timeline_source {
+  system
+  user
+  prefeitura
+  sap
+  webhook
+  job
+  api
+}
+
+enum fiscal_nfse_attachment_kind {
+  xml_request
+  xml_response
+  xml_authorized
+  xml_cancel
+  xml_correction_letter
+  pdf_nfse
+  event_pdf
+  json_payload
+  txt_log
+  other
+}
+
+enum fiscal_nfse_number_range_event_type {
+  inutilization_requested
+  inutilization_authorized
+  inutilization_rejected
+  status_query
+  manual_note
+}
+
+// --- NFe flow config enums ---
+
+enum fiscal_nfe_flow_config_status {
+  draft
+  published
+  archived
+}
+
+enum fiscal_nfe_flow_step_type {
+  validation
+  action
+  wait
+  approval
+}
+
+enum fiscal_nfe_flow_edge_condition {
+  success
+  error
+  wait
+  manual
+  status_ok
+}
+
+enum fiscal_nfe_flow_instance_status {
+  draft
+  ready
+  processing
+  waiting_gate
+  waiting_approval
+  error
+  blocked
+  completed
+  cancelled
+}
+
+enum fiscal_nfe_flow_step_execution_status {
+  pending
+  running
+  success
+  error
+  skipped
+  disabled
+  waiting_external_status
+}
+
+// --- NFe models ---
+
+model FiscalNfeDocument {
+  id                      String                     @id @default(uuid()) @db.Uuid
+  organization_id         String                     @db.Uuid
+  company_id              String                     @db.Uuid
+  direction               fiscal_document_direction
+  environment             fiscal_nfe_environment
+  status                  fiscal_nfe_document_status @default(draft)
+  model                   String                     @default("55") @db.VarChar(2)
+  series                  Int
+  number                  Int
+  access_key              String?                    @db.VarChar(44)
+  issuer_cnpj             String                     @db.VarChar(14)
+  issuer_name             String?                    @db.VarChar(300)
+  recipient_document      String?                    @db.VarChar(14)
+  recipient_name          String?                    @db.VarChar(300)
+  total_amount            Decimal?                   @db.Decimal(15, 2)
+  issued_at               DateTime?
+  authorized_at           DateTime?
+  cancelled_at            DateTime?
+  authorization_protocol  String?                    @db.VarChar(20)
+  cancellation_protocol   String?                    @db.VarChar(20)
+  sefaz_status_code       String?                    @db.VarChar(10)
+  sefaz_status_message    String?
+  sap_document_id         String?                    @db.VarChar(128)
+  sap_order_id            String?                    @db.VarChar(128)
+  idempotency_key         String?                    @db.VarChar(128)
+  metadata                Json?
+  created_at              DateTime                   @default(now())
+  updated_at              DateTime                   @updatedAt
+  deleted_at              DateTime?
+
+  organization Organization        @relation(fields: [organization_id], references: [id])
+  company      OrganizationCompany @relation(fields: [company_id], references: [id])
+  events       FiscalNfeDocumentEvent[]
+  timeline     FiscalNfeDocumentTimeline[]
+  attachments  FiscalNfeDocumentAttachment[]
+  items        FiscalNfeDocumentItem[]
+  inboundProcess FiscalNfeInboundProcess?
+  sapDocuments FiscalNfeSapDocument[]
+  flowInstances FiscalNfeFlowInstance[]
+
+  @@index([company_id, status])
+  @@index([company_id, direction, environment])
+  @@index([organization_id, direction])
+  @@index([organization_id, company_id])
+  @@map("fiscal_nfe_documents")
+}
+
+model FiscalNfeDocumentEvent {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  organization_id      String                  @db.Uuid
+  document_id          String                  @db.Uuid
+  event_type           fiscal_nfe_event_type
+  event_status         fiscal_nfe_event_status @default(pending)
+  sequence             Int
+  sefaz_status_code    String?                 @db.VarChar(10)
+  sefaz_status_message String?
+  protocol             String?                 @db.VarChar(20)
+  correlation_id       String?                 @db.VarChar(128)
+  request_summary      Json?
+  response_summary     Json?
+  error_code           String?                 @db.VarChar(64)
+  error_message        String?
+  triggered_by_user_id String?                 @db.Uuid
+  started_at           DateTime?
+  completed_at         DateTime?
+  created_at           DateTime                @default(now())
+  updated_at           DateTime                @updatedAt
+  deleted_at           DateTime?
+
+  organization  Organization                  @relation(fields: [organization_id], references: [id])
+  document      FiscalNfeDocument             @relation(fields: [document_id], references: [id])
+  triggeredBy   User?                         @relation("NfeDocumentEventTriggeredBy", fields: [triggered_by_user_id], references: [id])
+  timeline      FiscalNfeDocumentTimeline[]
+  attachments   FiscalNfeDocumentAttachment[]
+
+  @@index([document_id, created_at])
+  @@index([document_id, event_type])
+  @@index([organization_id, document_id])
+  @@map("fiscal_nfe_document_events")
+}
+
+model FiscalNfeDocumentTimeline {
+  id                String                     @id @default(uuid()) @db.Uuid
+  document_id       String                     @db.Uuid
+  event_id          String?                    @db.Uuid
+  source            fiscal_nfe_timeline_source
+  title             String                     @db.VarChar(255)
+  message           String?
+  metadata          Json?
+  created_by_user_id  String?                    @db.Uuid
+  created_at        DateTime                   @default(now())
+  updated_at        DateTime                   @updatedAt
+  deleted_at        DateTime?
+
+  document   FiscalNfeDocument      @relation(fields: [document_id], references: [id])
+  event      FiscalNfeDocumentEvent? @relation(fields: [event_id], references: [id])
+  createdBy  User?                  @relation("NfeTimelineCreatedBy", fields: [created_by_user_id], references: [id])
+
+  @@index([document_id, created_at])
+  @@map("fiscal_nfe_document_timeline")
+}
+
+model FiscalNfeDocumentAttachment {
+  id               String                     @id @default(uuid()) @db.Uuid
+  document_id      String                     @db.Uuid
+  event_id         String?                    @db.Uuid
+  kind             fiscal_nfe_attachment_kind
+  file_name        String                     @db.VarChar(512)
+  content_type     String?                    @db.VarChar(128)
+  storage_key      String
+  content          String?
+  size_bytes       BigInt?
+  checksum_sha256  String?                    @db.VarChar(64)
+  created_at       DateTime                   @default(now())
+  updated_at       DateTime                   @updatedAt
+  deleted_at       DateTime?
+
+  document FiscalNfeDocument      @relation(fields: [document_id], references: [id])
+  event    FiscalNfeDocumentEvent? @relation(fields: [event_id], references: [id])
+
+  @@index([document_id])
+  @@index([event_id])
+  @@map("fiscal_nfe_document_attachments")
+}
+
+model FiscalNfeNumberRange {
+  id              String                 @id @default(uuid()) @db.Uuid
+  organization_id String                 @db.Uuid
+  company_id      String                 @db.Uuid
+  environment     fiscal_nfe_environment
+  model           String                 @default("55") @db.VarChar(2)
+  series          Int
+  number_from     Int
+  number_to       Int
+  justification   String?
+  protocol        String?                @db.VarChar(20)
+  authorized_at   DateTime?
+  created_at      DateTime               @default(now())
+  updated_at      DateTime               @updatedAt
+  deleted_at      DateTime?
+
+  organization Organization              @relation(fields: [organization_id], references: [id])
+  company      OrganizationCompany       @relation(fields: [company_id], references: [id])
+  events       FiscalNfeNumberRangeEvent[]
+
+  @@index([company_id, environment, series])
+  @@unique([company_id, environment, model, series, number_from, number_to])
+  @@map("fiscal_nfe_number_ranges")
+}
+
+model FiscalNfeNumberRangeEvent {
+  id                   String                             @id @default(uuid()) @db.Uuid
+  number_range_id      String                             @db.Uuid
+  event_type           fiscal_nfe_number_range_event_type
+  event_status         fiscal_nfe_event_status            @default(pending)
+  sefaz_status_code    String?                            @db.VarChar(10)
+  sefaz_status_message String?
+  protocol             String?                            @db.VarChar(20)
+  error_code           String?                            @db.VarChar(64)
+  error_message        String?
+  created_at           DateTime                           @default(now())
+  updated_at           DateTime                           @updatedAt
+  deleted_at           DateTime?
+
+  numberRange FiscalNfeNumberRange @relation(fields: [number_range_id], references: [id])
+
+  @@index([number_range_id, created_at])
+  @@map("fiscal_nfe_number_range_events")
+}
+
+model FiscalNfeDocumentItem {
+  id                        String                              @id @default(uuid()) @db.Uuid
+  document_id               String                              @db.Uuid
+  line_number               Int
+  prod_codigo               String                              @db.VarChar(60)
+  descricao                 String                              @db.VarChar(500)
+  ncm                       String                              @default("") @db.VarChar(8)
+  cfop                      String                              @default("") @db.VarChar(4)
+  qty                       Decimal                             @db.Decimal(15, 4)
+  uom                       String                              @default("UN") @db.VarChar(10)
+  valor_total               Decimal                             @db.Decimal(15, 2)
+  x_ped                     String?                             @db.VarChar(60)
+  n_item_ped                String?                             @db.VarChar(20)
+  pedido_validation_status  fiscal_nfe_pedido_validation_status @default(pending)
+  pedido_validation_message String?
+  sap_order_number          String?                             @db.VarChar(20)
+  sap_order_item            String?                             @db.VarChar(10)
+  created_at                DateTime                            @default(now())
+  updated_at                DateTime                            @updatedAt
+  deleted_at                DateTime?
+
+  document     FiscalNfeDocument    @relation(fields: [document_id], references: [id])
+  sapDocuments FiscalNfeSapDocument[]
+
+  @@unique([document_id, line_number])
+  @@index([document_id])
+  @@map("fiscal_nfe_document_items")
+}
+
+model FiscalNfeInboundProcess {
+  document_id                  String                    @id @db.Uuid
+  inbound_status               fiscal_nfe_inbound_status @default(xml_imported)
+  status_changed_at            DateTime                  @default(now())
+  sefaz_validated_at           DateTime?
+  pedido_validated_at          DateTime?
+  delivery_created_at          DateTime?
+  portaria_confirmed_at        DateTime?
+  portaria_confirmed_by_user_id String?                  @db.Uuid
+  migo_completed_at            DateTime?
+  miro_completed_at            DateTime?
+  rejected_at                  DateTime?
+  rejected_by_user_id          String?                   @db.Uuid
+  rejection_reason             String?
+  alert_code                   String?                   @db.VarChar(64)
+  alert_message                String?
+  correlation_id               String?                   @db.VarChar(128)
+  created_at                   DateTime                  @default(now())
+  updated_at                   DateTime                  @updatedAt
+  deleted_at                   DateTime?
+
+  document              FiscalNfeDocument @relation(fields: [document_id], references: [id])
+  portariaConfirmedBy   User?             @relation("NfeInboundPortariaConfirmedBy", fields: [portaria_confirmed_by_user_id], references: [id])
+  rejectedBy            User?             @relation("NfeInboundRejectedBy", fields: [rejected_by_user_id], references: [id])
+
+  @@map("fiscal_nfe_inbound_process")
+}
+
+model FiscalNfeSapDocument {
+  id            String                         @id @default(uuid()) @db.Uuid
+  document_id   String                         @db.Uuid
+  item_id       String?                        @db.Uuid
+  document_type fiscal_nfe_sap_document_type
+  doc_number    String                         @db.VarChar(20)
+  item_number   String?                        @db.VarChar(10)
+  fiscal_year   String?                        @db.VarChar(4)
+  status        fiscal_nfe_sap_document_status @default(pending)
+  raw_response  Json?
+  created_at    DateTime                       @default(now())
+  updated_at    DateTime                       @updatedAt
+  deleted_at    DateTime?
+
+  document FiscalNfeDocument    @relation(fields: [document_id], references: [id])
+  item     FiscalNfeDocumentItem? @relation(fields: [item_id], references: [id])
+
+  @@index([document_id])
+  @@index([document_id, document_type])
+  @@map("fiscal_nfe_sap_documents")
+}
+
+// --- NFSe models ---
+
+model FiscalNfseDocument {
+  id                      String                      @id @default(uuid()) @db.Uuid
+  organization_id         String                      @db.Uuid
+  company_id              String                      @db.Uuid
+  direction               fiscal_document_direction
+  environment             fiscal_nfse_environment
+  status                  fiscal_nfse_document_status @default(draft)
+  model                   String                      @default("NFSe") @db.VarChar(10)
+  series                  Int
+  number                  Int
+  access_key              String?                     @db.VarChar(44)
+  issuer_cnpj             String                      @db.VarChar(14)
+  recipient_document      String?                     @db.VarChar(14)
+  recipient_name          String?                     @db.VarChar(300)
+  total_amount            Decimal?                    @db.Decimal(15, 2)
+  issued_at               DateTime?
+  authorized_at           DateTime?
+  cancelled_at            DateTime?
+  authorization_protocol  String?                     @db.VarChar(20)
+  cancellation_protocol   String?                     @db.VarChar(20)
+  prefeitura_status_code  String?                     @db.VarChar(10)
+  prefeitura_status_message String?
+  sap_document_id         String?                     @db.VarChar(128)
+  sap_order_id            String?                     @db.VarChar(128)
+  idempotency_key         String?                     @db.VarChar(128)
+  metadata                Json?
+  rps_number              Int?
+  rps_series              String?                     @db.VarChar(10)
+  verification_code       String?                     @db.VarChar(64)
+  service_code            String?                     @db.VarChar(20)
+  municipality_code       String?                     @db.VarChar(7)
+  iss_retained            Boolean?
+  service_description     String?
+  created_at              DateTime                    @default(now())
+  updated_at              DateTime                    @updatedAt
+  deleted_at              DateTime?
+
+  organization Organization        @relation(fields: [organization_id], references: [id])
+  company      OrganizationCompany @relation(fields: [company_id], references: [id])
+  events       FiscalNfseDocumentEvent[]
+  timeline     FiscalNfseDocumentTimeline[]
+  attachments  FiscalNfseDocumentAttachment[]
+  items        FiscalNfseDocumentItem[]
+  inboundProcess FiscalNfseInboundProcess?
+  sapDocuments FiscalNfseSapDocument[]
+
+  @@index([company_id, status])
+  @@index([company_id, direction, environment])
+  @@index([organization_id, direction])
+  @@index([organization_id, company_id])
+  @@map("fiscal_nfse_documents")
+}
+
+model FiscalNfseDocumentEvent {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  organization_id      String                   @db.Uuid
+  document_id          String                   @db.Uuid
+  event_type           fiscal_nfse_event_type
+  event_status         fiscal_nfse_event_status @default(pending)
+  sequence             Int
+  prefeitura_status_code    String?             @db.VarChar(10)
+  prefeitura_status_message String?
+  protocol             String?                  @db.VarChar(20)
+  correlation_id       String?                  @db.VarChar(128)
+  request_summary      Json?
+  response_summary     Json?
+  error_code           String?                  @db.VarChar(64)
+  error_message        String?
+  triggered_by_user_id String?                  @db.Uuid
+  started_at           DateTime?
+  completed_at         DateTime?
+  created_at           DateTime                 @default(now())
+  updated_at           DateTime                 @updatedAt
+  deleted_at           DateTime?
+
+  organization  Organization                   @relation(fields: [organization_id], references: [id])
+  document      FiscalNfseDocument             @relation(fields: [document_id], references: [id])
+  triggeredBy   User?                          @relation("NfseDocumentEventTriggeredBy", fields: [triggered_by_user_id], references: [id])
+  timeline      FiscalNfseDocumentTimeline[]
+  attachments   FiscalNfseDocumentAttachment[]
+
+  @@index([document_id, created_at])
+  @@index([document_id, event_type])
+  @@index([organization_id, document_id])
+  @@map("fiscal_nfse_document_events")
+}
+
+model FiscalNfseDocumentTimeline {
+  id                String                      @id @default(uuid()) @db.Uuid
+  document_id       String                      @db.Uuid
+  event_id          String?                     @db.Uuid
+  source            fiscal_nfse_timeline_source
+  title             String                      @db.VarChar(255)
+  message           String?
+  metadata          Json?
+  created_by_user_id  String?                   @db.Uuid
+  created_at        DateTime                    @default(now())
+  updated_at        DateTime                    @updatedAt
+  deleted_at        DateTime?
+
+  document   FiscalNfseDocument      @relation(fields: [document_id], references: [id])
+  event      FiscalNfseDocumentEvent? @relation(fields: [event_id], references: [id])
+  createdBy  User?                   @relation("NfseTimelineCreatedBy", fields: [created_by_user_id], references: [id])
+
+  @@index([document_id, created_at])
+  @@map("fiscal_nfse_document_timeline")
+}
+
+model FiscalNfseDocumentAttachment {
+  id               String                      @id @default(uuid()) @db.Uuid
+  document_id      String                      @db.Uuid
+  event_id         String?                     @db.Uuid
+  kind             fiscal_nfse_attachment_kind
+  file_name        String                      @db.VarChar(512)
+  content_type     String?                     @db.VarChar(128)
+  storage_key      String
+  content          String?
+  size_bytes       BigInt?
+  checksum_sha256  String?                     @db.VarChar(64)
+  created_at       DateTime                    @default(now())
+  updated_at       DateTime                    @updatedAt
+  deleted_at       DateTime?
+
+  document FiscalNfseDocument      @relation(fields: [document_id], references: [id])
+  event    FiscalNfseDocumentEvent? @relation(fields: [event_id], references: [id])
+
+  @@index([document_id])
+  @@index([event_id])
+  @@map("fiscal_nfse_document_attachments")
+}
+
+model FiscalNfseNumberRange {
+  id              String                  @id @default(uuid()) @db.Uuid
+  organization_id String                  @db.Uuid
+  company_id      String                  @db.Uuid
+  environment     fiscal_nfse_environment
+  model           String                  @default("NFSe") @db.VarChar(10)
+  series          Int
+  number_from     Int
+  number_to       Int
+  justification   String?
+  protocol        String?                 @db.VarChar(20)
+  authorized_at   DateTime?
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
+  deleted_at      DateTime?
+
+  organization Organization               @relation(fields: [organization_id], references: [id])
+  company      OrganizationCompany        @relation(fields: [company_id], references: [id])
+  events       FiscalNfseNumberRangeEvent[]
+
+  @@index([company_id, environment, series])
+  @@unique([company_id, environment, model, series, number_from, number_to])
+  @@map("fiscal_nfse_number_ranges")
+}
+
+model FiscalNfseNumberRangeEvent {
+  id                        String                              @id @default(uuid()) @db.Uuid
+  number_range_id           String                              @db.Uuid
+  event_type                fiscal_nfse_number_range_event_type
+  event_status              fiscal_nfse_event_status            @default(pending)
+  prefeitura_status_code    String?                             @db.VarChar(10)
+  prefeitura_status_message String?
+  protocol                  String?                             @db.VarChar(20)
+  error_code                String?                             @db.VarChar(64)
+  error_message             String?
+  created_at                DateTime                            @default(now())
+  updated_at                DateTime                            @updatedAt
+  deleted_at                DateTime?
+
+  numberRange FiscalNfseNumberRange @relation(fields: [number_range_id], references: [id])
+
+  @@index([number_range_id, created_at])
+  @@map("fiscal_nfse_number_range_events")
+}
+
+model FiscalNfseDocumentItem {
+  id                        String                               @id @default(uuid()) @db.Uuid
+  document_id               String                               @db.Uuid
+  line_number               Int
+  prod_codigo               String                               @db.VarChar(60)
+  descricao                 String                               @db.VarChar(500)
+  service_code              String                               @default("") @db.VarChar(20)
+  municipality_code         String                               @default("") @db.VarChar(7)
+  qty                       Decimal                              @db.Decimal(15, 4)
+  uom                       String                               @default("UN") @db.VarChar(10)
+  valor_total               Decimal                              @db.Decimal(15, 2)
+  x_ped                     String?                              @db.VarChar(60)
+  n_item_ped                String?                              @db.VarChar(20)
+  pedido_validation_status  fiscal_nfse_pedido_validation_status @default(pending)
+  pedido_validation_message String?
+  sap_order_number          String?                              @db.VarChar(20)
+  sap_order_item            String?                              @db.VarChar(10)
+  created_at                DateTime                             @default(now())
+  updated_at                DateTime                             @updatedAt
+  deleted_at                DateTime?
+
+  document     FiscalNfseDocument    @relation(fields: [document_id], references: [id])
+  sapDocuments FiscalNfseSapDocument[]
+
+  @@unique([document_id, line_number])
+  @@index([document_id])
+  @@map("fiscal_nfse_document_items")
+}
+
+model FiscalNfseInboundProcess {
+  document_id                  String                     @id @db.Uuid
+  inbound_status               fiscal_nfse_inbound_status @default(xml_imported)
+  status_changed_at            DateTime                   @default(now())
+  prefeitura_validated_at      DateTime?
+  pedido_validated_at          DateTime?
+  delivery_created_at          DateTime?
+  portaria_confirmed_at        DateTime?
+  portaria_confirmed_by_user_id String?                   @db.Uuid
+  migo_completed_at            DateTime?
+  miro_completed_at            DateTime?
+  rejected_at                  DateTime?
+  rejected_by_user_id          String?                    @db.Uuid
+  rejection_reason             String?
+  alert_code                   String?                    @db.VarChar(64)
+  alert_message                String?
+  correlation_id               String?                    @db.VarChar(128)
+  created_at                   DateTime                   @default(now())
+  updated_at                   DateTime                   @updatedAt
+  deleted_at                   DateTime?
+
+  document              FiscalNfseDocument @relation(fields: [document_id], references: [id])
+  portariaConfirmedBy   User?              @relation("NfseInboundPortariaConfirmedBy", fields: [portaria_confirmed_by_user_id], references: [id])
+  rejectedBy            User?              @relation("NfseInboundRejectedBy", fields: [rejected_by_user_id], references: [id])
+
+  @@map("fiscal_nfse_inbound_process")
+}
+
+model FiscalNfseSapDocument {
+  id            String                          @id @default(uuid()) @db.Uuid
+  document_id   String                          @db.Uuid
+  item_id       String?                         @db.Uuid
+  document_type fiscal_nfse_sap_document_type
+  doc_number    String                          @db.VarChar(20)
+  item_number   String?                         @db.VarChar(10)
+  fiscal_year   String?                         @db.VarChar(4)
+  status        fiscal_nfse_sap_document_status @default(pending)
+  raw_response  Json?
+  created_at    DateTime                        @default(now())
+  updated_at    DateTime                        @updatedAt
+  deleted_at    DateTime?
+
+  document FiscalNfseDocument    @relation(fields: [document_id], references: [id])
+  item     FiscalNfseDocumentItem? @relation(fields: [item_id], references: [id])
+
+  @@index([document_id])
+  @@index([document_id, document_type])
+  @@map("fiscal_nfse_sap_documents")
+}
+
+// --- NFe flow config models ---
+
+model FiscalNfeFlowConfig {
+  id              String                      @id @default(uuid()) @db.Uuid
+  organization_id String                      @db.Uuid
+  company_id      String?                     @db.Uuid
+  model           String                      @db.VarChar(20)
+  name            String                      @db.VarChar(200)
+  version         String                      @db.VarChar(20)
+  active          Boolean                     @default(false)
+  status          fiscal_nfe_flow_config_status @default(draft)
+  created_by      String?                     @db.Uuid
+  updated_by      String?                     @db.Uuid
+  created_at      DateTime                    @default(now())
+  updated_at      DateTime                    @updatedAt
+  deleted_at      DateTime?
+
+  organization Organization         @relation(fields: [organization_id], references: [id])
+  company      OrganizationCompany? @relation(fields: [company_id], references: [id])
+  createdBy    User?                @relation("NfeFlowConfigCreatedBy", fields: [created_by], references: [id])
+  updatedBy    User?                @relation("NfeFlowConfigUpdatedBy", fields: [updated_by], references: [id])
+  steps        FiscalNfeFlowStep[]
+  edges        FiscalNfeFlowEdge[]
+  auditLogs    FiscalNfeFlowAuditLog[]
+  instances    FiscalNfeFlowInstance[]
+
+  @@unique([organization_id, company_id, model, version])
+  @@index([organization_id, company_id, model, status])
+  @@map("fiscal_nfe_flow_configs")
+}
+
+model FiscalNfeFlowStep {
+  id              String                  @id @default(uuid()) @db.Uuid
+  flow_config_id  String                  @db.Uuid
+  step_key        String                  @db.VarChar(64)
+  name            String                  @db.VarChar(200)
+  sequence        Int
+  active          Boolean                 @default(true)
+  type            fiscal_nfe_flow_step_type
+  config          Json                    @default("{}")
+  position_x      Float                   @default(0)
+  position_y      Float                   @default(0)
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
+  deleted_at      DateTime?
+
+  flowConfig       FiscalNfeFlowConfig @relation(fields: [flow_config_id], references: [id], onDelete: Cascade)
+  outgoingEdges    FiscalNfeFlowEdge[] @relation("FlowEdgeSource")
+  incomingEdges    FiscalNfeFlowEdge[] @relation("FlowEdgeTarget")
+  currentInstances FiscalNfeFlowInstance[] @relation("FlowInstanceCurrentStep")
+
+  @@index([flow_config_id, sequence])
+  @@map("fiscal_nfe_flow_steps")
+}
+
+model FiscalNfeFlowEdge {
+  id                    String                       @id @default(uuid()) @db.Uuid
+  flow_config_id        String                       @db.Uuid
+  source_step_id        String                       @db.Uuid
+  target_step_id        String                       @db.Uuid
+  condition_type        fiscal_nfe_flow_edge_condition
+  condition_expression  Json?
+  created_at            DateTime                     @default(now())
+  updated_at            DateTime                     @updatedAt
+  deleted_at            DateTime?
+
+  flowConfig FiscalNfeFlowConfig @relation(fields: [flow_config_id], references: [id], onDelete: Cascade)
+  sourceStep FiscalNfeFlowStep   @relation("FlowEdgeSource", fields: [source_step_id], references: [id], onDelete: Cascade)
+  targetStep FiscalNfeFlowStep   @relation("FlowEdgeTarget", fields: [target_step_id], references: [id], onDelete: Cascade)
+
+  @@index([flow_config_id])
+  @@map("fiscal_nfe_flow_edges")
+}
+
+model FiscalNfeFlowAuditLog {
+  id              String   @id @default(uuid()) @db.Uuid
+  flow_config_id  String   @db.Uuid
+  version         String   @db.VarChar(20)
+  user_id         String?  @db.Uuid
+  action          String   @db.VarChar(64)
+  step_key        String?  @db.VarChar(64)
+  before          Json?
+  after           Json?
+  reason          String?
+  created_at      DateTime @default(now())
+
+  flowConfig FiscalNfeFlowConfig @relation(fields: [flow_config_id], references: [id], onDelete: Cascade)
+  user       User?               @relation("NfeFlowAuditLogUser", fields: [user_id], references: [id])
+
+  @@index([flow_config_id, created_at])
+  @@map("fiscal_nfe_flow_audit_logs")
+}
+
+model FiscalNfeFlowInstance {
+  id               String                        @id @default(uuid()) @db.Uuid
+  flow_config_id   String                        @db.Uuid
+  document_id      String                        @db.Uuid
+  model            String                        @db.VarChar(20)
+  status           fiscal_nfe_flow_instance_status @default(draft)
+  current_step_id  String?                       @db.Uuid
+  started_at       DateTime                      @default(now())
+  finished_at      DateTime?
+  created_at       DateTime                      @default(now())
+  updated_at       DateTime                      @updatedAt
+  deleted_at       DateTime?
+
+  flowConfig   FiscalNfeFlowConfig @relation(fields: [flow_config_id], references: [id])
+  document     FiscalNfeDocument   @relation(fields: [document_id], references: [id])
+  currentStep  FiscalNfeFlowStep?  @relation("FlowInstanceCurrentStep", fields: [current_step_id], references: [id])
+  executions   FiscalNfeFlowStepExecution[]
+
+  @@index([document_id])
+  @@index([flow_config_id, status])
+  @@map("fiscal_nfe_flow_instances")
+}
+
+model FiscalNfeFlowStepExecution {
+  id          String                              @id @default(uuid()) @db.Uuid
+  instance_id String                              @db.Uuid
+  step_key    String                              @db.VarChar(64)
+  status      fiscal_nfe_flow_step_execution_status @default(pending)
+  message     String?
+  payload     Json?
+  started_at  DateTime?
+  finished_at DateTime?
+  created_at  DateTime                            @default(now())
+  updated_at  DateTime                            @updatedAt
+
+  instance FiscalNfeFlowInstance @relation(fields: [instance_id], references: [id], onDelete: Cascade)
+
+  @@index([instance_id, step_key])
+  @@map("fiscal_nfe_flow_step_executions")
+}

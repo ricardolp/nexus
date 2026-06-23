@@ -1,0 +1,162 @@
+{
+  "pedidos": [
+    {
+      "cabecalho": {
+        "pedido": "4504332174",
+        "empresa": "BR10",
+        "tipoPedido": "NB",
+        "dataCriacao": "2025-06-20",
+        "organizacaoCompras": "BR10",
+        "grupoCompras": "B17",
+        "fornecedor": "0000402408",
+        "nomeFornecedor": "POLIFILTRO IND. E COM. DE PEÇAS",
+        "moeda": "BRL",
+        "condicaoPagamento": "P030",
+        "criadoPor": "BR1000309"
+      },
+      "itens": [
+        {
+          "item": 10,
+          "material": "40349739",
+          "descricao": "FILTRO-DE SEGURANÇA-TRG190",
+          "centro": "BR1A",
+          "deposito": "4000",
+          "unidade": "EA",
+          "quantidade": 20,
+          "valorBruto": 962.97,
+          "valorLiquido": 962.97,
+          "valorUnitario": 48.1485,
+          "fluxoRecebimentoNec": "MERCADORIA",
+          "impostos": [
+            { "tipo": "ICMS", "condicaoAliquota": "BIC0", "condicaoValor": "BX12" },
+            { "tipo": "IPI", "condicaoAliquota": "BIP0", "condicaoValor": "BX22" }
+          ]
+        },
+        {
+          "item": 50,
+          "material": "40338727",
+          "descricao": "FILTRO-PSS IN-TRG822",
+          "centro": "BR1A",
+          "deposito": "4000",
+          "unidade": "EA",
+          "quantidade": 50,
+          "valorBruto": 1440.67,
+          "valorLiquido": 1440.67,
+          "valorUnitario": 28.8134,
+          "fluxoRecebimentoNec": "MERCADORIA",
+          "impostos": []
+        },
+        {
+          "item": 20,
+          "material": "40007575",
+          "descricao": "ELEMENT-PRIMARY-TRG190",
+          "centro": "BR1A",
+          "deposito": "4000",
+          "unidade": "EA",
+          "quantidade": 200,
+          "valorBruto": 3887.59,
+          "valorLiquido": 3887.59,
+          "valorUnitario": 19.43795,
+          "fluxoRecebimentoNec": "MERCADORIA",
+          "impostos": []
+        }
+      ]
+    },
+    {
+      "cabecalho": {
+        "pedido": "4504335562",
+        "empresa": "BR10",
+        "tipoPedido": "NB",
+        "dataCriacao": "2025-07-02",
+        "organizacaoCompras": "BR10",
+        "grupoCompras": "B17",
+        "fornecedor": "0000402408",
+        "nomeFornecedor": "POLIFILTRO IND. E COM. DE PEÇAS",
+        "moeda": "BRL",
+        "condicaoPagamento": "P030",
+        "criadoPor": "BR1000309"
+      },
+      "itens": [
+        {
+          "item": 10,
+          "material": "40273659",
+          "descricao": "FILTRO PRINCIPAL -TRG190",
+          "centro": "BR1A",
+          "deposito": "4000",
+          "unidade": "EA",
+          "quantidade": 100,
+          "valorBruto": 4801.18,
+          "valorLiquido": 4801.18,
+          "valorUnitario": 48.0118,
+          "fluxoRecebimentoNec": "MERCADORIA",
+          "impostos": []
+        }
+      ]
+    },
+    {
+      "cabecalho": {
+        "pedido": "4504342330",
+        "empresa": "BR10",
+        "tipoPedido": "NB",
+        "dataCriacao": "2026-05-19",
+        "organizacaoCompras": "BR10",
+        "grupoCompras": "B17",
+        "fornecedor": "0000402408",
+        "nomeFornecedor": "POLIFILTRO IND. E COM. DE PEÇAS",
+        "moeda": "BRL",
+        "condicaoPagamento": "P030",
+        "criadoPor": "ZLSMNOVA02"
+      },
+      "itens": [
+        {
+          "item": 10,
+          "material": "40006977",
+          "descricao": "40318590 FILTRO DE ÓLEO - CONJUNTO Q140",
+          "centro": "BR1A",
+          "deposito": "4000",
+          "unidade": "EA",
+          "quantidade": 250,
+          "valorBruto": 2628.48,
+          "valorLiquido": 2628.48,
+          "valorUnitario": 10.51392,
+          "fluxoRecebimentoNec": "MERCADORIA",
+          "impostos": []
+        }
+      ]
+    },
+    {
+      "cabecalho": {
+        "pedido": "4504342368",
+        "empresa": "BR10",
+        "tipoPedido": "NB",
+        "dataCriacao": "2026-05-29",
+        "organizacaoCompras": "BR10",
+        "grupoCompras": "B17",
+        "fornecedor": "0000402408",
+        "nomeFornecedor": "POLIFILTRO IND. E COM. DE PEÇAS",
+        "moeda": "BRL",
+        "condicaoPagamento": "P030",
+        "criadoPor": "ZLSMNOVA02"
+      },
+      "itens": [
+        {
+          "item": 30,
+          "material": "40007370",
+          "descricao": "MANGUEIRA ENTRADA DE REFRIGERACAO-EGQ185",
+          "centro": "BR1A",
+          "deposito": "4000",
+          "unidade": "EA",
+          "quantidade": 12,
+          "valorBruto": 100,
+          "valorLiquido": 100,
+          "valorUnitario": 8.33,
+          "fluxoRecebimentoNec": "MERCADORIA",
+          "impostos": []
+        }
+      ]
+    }
+  ],
+  "PROGRAMASREMESSA": [],
+  "ESTOQUE_NO_FORNECEDOR": [],
+  "MESSAGE": []
+}

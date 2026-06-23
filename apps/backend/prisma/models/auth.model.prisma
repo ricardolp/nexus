@@ -1,0 +1,79 @@
+enum user_role {
+  member
+  admin
+}
+
+enum auth_token_type {
+  email_confirmation
+  password_reset
+  invite
+}
+
+model User {
+  id                  String    @id @default(uuid()) @db.Uuid
+  nome                String
+  sobrenome           String
+  email               String    @unique
+  senha               String
+  email_confirmado_em DateTime?
+  role                user_role @default(member)
+  ultimo_login_em     DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+  deleted_at          DateTime?
+
+  login_audits UserLoginAudit[]
+  auth_tokens  AuthToken[]
+  organization_members OrganizationMember[]
+  integration_tokens IntegrationToken[]
+  webhook_endpoints WebhookEndpoint[]
+  nfeDocumentEventsTriggered FiscalNfeDocumentEvent[] @relation("NfeDocumentEventTriggeredBy")
+  nfseDocumentEventsTriggered FiscalNfseDocumentEvent[] @relation("NfseDocumentEventTriggeredBy")
+  nfeTimelineCreated FiscalNfeDocumentTimeline[] @relation("NfeTimelineCreatedBy")
+  nfseTimelineCreated FiscalNfseDocumentTimeline[] @relation("NfseTimelineCreatedBy")
+  nfeInboundPortariaConfirmed FiscalNfeInboundProcess[] @relation("NfeInboundPortariaConfirmedBy")
+  nfeInboundRejected FiscalNfeInboundProcess[] @relation("NfeInboundRejectedBy")
+  nfseInboundPortariaConfirmed FiscalNfseInboundProcess[] @relation("NfseInboundPortariaConfirmedBy")
+  nfseInboundRejected FiscalNfseInboundProcess[] @relation("NfseInboundRejectedBy")
+  nfeFlowConfigsCreated FiscalNfeFlowConfig[] @relation("NfeFlowConfigCreatedBy")
+  nfeFlowConfigsUpdated FiscalNfeFlowConfig[] @relation("NfeFlowConfigUpdatedBy")
+  nfeFlowAuditLogs FiscalNfeFlowAuditLog[] @relation("NfeFlowAuditLogUser")
+
+  @@map("users")
+}
+
+model UserLoginAudit {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  ip_address   String?
+  user_agent   String?
+  logged_in_at DateTime  @default(now())
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+  deleted_at   DateTime?
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@map("user_login_audits")
+}
+
+model AuthToken {
+  id         String          @id @default(uuid()) @db.Uuid
+  tipo       auth_token_type
+  email      String
+  user_id    String?         @db.Uuid
+  token_hash String
+  expires_at DateTime
+  used_at    DateTime?
+  metadados  Json?
+  created_at DateTime        @default(now())
+  updated_at DateTime        @updatedAt
+  deleted_at DateTime?
+
+  user User? @relation(fields: [user_id], references: [id])
+
+  @@index([email, tipo])
+  @@index([token_hash])
+  @@map("auth_tokens")
+}
