@@ -1,10 +1,7 @@
-import { join } from 'node:path';
-import { config as loadEnv } from 'dotenv';
+import './load-env';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './shared/errors/api-exception.filter';
-
-loadEnv({ path: join(__dirname, '..', '.env') });
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

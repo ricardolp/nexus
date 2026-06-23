@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { DbModule } from '../../db/db.module';
 import {
@@ -16,10 +17,13 @@ import { WebhookDispatchProcessor } from './webhook-dispatch.processor';
 @Module({
   imports: [
     DbModule,
-    BullModule.forRoot({
-      connection: {
-        url: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
-      },
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          url: config.getOrThrow<string>('REDIS_URL'),
+        },
+      }),
     }),
     BullModule.registerQueue(
       { name: WEBHOOK_DISPATCH_QUEUE },
