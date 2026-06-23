@@ -6,8 +6,8 @@
   "steps": {
     "build": {
       "commands": [
-        "...",
-        "npm run prisma:generate -w @nexus/backend"
+        "npm run prisma:generate -w @nexus/backend",
+        "npx turbo run build --filter=@nexus/backend"
       ]
     }
   },
