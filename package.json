@@ -10,7 +10,13 @@
     "railway:build:backend": "turbo run build --filter=@nexus/backend...",
     "railway:build:frontend": "turbo run build --filter=@nexus/frontend",
     "railway:start:backend": "npm run start:prod --workspace=@nexus/backend",
-    "railway:start:frontend": "npm run start --workspace=@nexus/frontend"
+    "railway:start:frontend": "npm run start --workspace=@nexus/frontend",
+    "pm2:start": "pm2 start ecosystem.config.cjs --only nexus-backend,nexus-frontend",
+    "pm2:start:dev": "pm2 start ecosystem.config.cjs --only nexus-backend-dev,nexus-frontend-dev",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status"
   },
   "devDependencies": {
     "@types/react": "19.2.14",

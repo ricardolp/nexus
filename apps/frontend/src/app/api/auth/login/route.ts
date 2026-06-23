@@ -20,19 +20,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: 'E-mail e senha são obrigatórios' }, { status: 400 });
   }
 
-  const backendResponse = await fetch(`${getServerBackendUrl()}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: body.email, senha: body.senha }),
-  });
+  let backendResponse: Response;
+
+  try {
+    backendResponse = await fetch(`${getServerBackendUrl()}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: body.email, senha: body.senha }),
+    });
+  } catch (error) {
+    console.error('Login proxy error:', error);
+
+    return NextResponse.json(
+      {
+        message:
+          'Não foi possível conectar ao backend. Verifique se ele está rodando e se API_URL aponta para a porta correta (ex.: http://127.0.0.1:4000).',
+      },
+      { status: 502 },
+    );
+  }
 
   const payload = await backendResponse.json().catch(() => ({}));
 
   if (!backendResponse.ok) {
-    return NextResponse.json(
-      { message: payload.message ?? 'Credenciais inválidas' },
-      { status: backendResponse.status },
-    );
+    const message =
+      backendResponse.status === 404
+        ? 'Backend retornou 404 em /auth/login. Verifique se o NestJS está rodando na porta 4000 e se o nginx não encaminha /api/* direto para o backend.'
+        : (payload.message ?? 'Credenciais inválidas');
+
+    return NextResponse.json({ message }, { status: backendResponse.status });
   }
 
   const data = payload as LoginResponse;
