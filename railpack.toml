@@ -1,0 +1,6 @@
+[build]
+cmd = "npm run build"
+
+[start]
+cmd = "node apps/backend/dist/main"
+
