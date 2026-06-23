@@ -1,9 +1,0 @@
-[options]
-buildCommand = "npm run build"
-startCommand = "node apps/backend/dist/main"
-
-[runtime]
-aptPackages = []
-
-[[providers]]
-name = "node"
