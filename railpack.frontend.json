@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "build": {
+      "commands": ["..."]
+    }
+  },
+  "deploy": {
+    "inputs": [{ "step": "build" }],
+    "startCommand": "npm run start -w @nexus/frontend"
+  }
+}

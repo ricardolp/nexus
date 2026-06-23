@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "build": {
+      "commands": [
+        "...",
+        "npm run prisma:generate -w @nexus/backend"
+      ]
+    }
+  },
+  "deploy": {
+    "inputs": [{ "step": "build" }],
+    "startCommand": "node apps/backend/dist/main.js"
+  }
+}
