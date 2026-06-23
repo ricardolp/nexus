@@ -1,0 +1,19 @@
+# Railway config for @nexus/backend (shared monorepo — deploy from repo root).
+# In the Railway dashboard, set "Config File Path" to: /apps/backend/railway.toml
+# Do NOT set a Root Directory — backend depends on modules/* and packages/*.
+
+[build]
+builder = "RAILPACK"
+buildCommand = "npx turbo run build --filter=@nexus/backend..."
+watchPatterns = [
+  "apps/backend/**",
+  "modules/**",
+  "packages/shared/**",
+]
+
+[deploy]
+startCommand = "npm run start:prod --workspace=@nexus/backend"
+preDeployCommand = ["npm run prisma:migrate:deploy --workspace=@nexus/backend"]
+healthcheckPath = "/auth/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
