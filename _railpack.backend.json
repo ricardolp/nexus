@@ -12,7 +12,6 @@
     }
   },
   "deploy": {
-    "inputs": [{ "step": "build" }],
     "startCommand": "node apps/backend/dist/main.js"
   }
 }
