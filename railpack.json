@@ -7,12 +7,13 @@
     "build": {
       "commands": [
         "npm run prisma:generate -w @nexus/backend",
-        "..."
+        "npm run build"
       ]
     }
   },
   "deploy": {
     "inputs": [{ "step": "build" }],
-    "startCommand": "node apps/backend/dist/main.js"
+    "startCommand": "node apps/backend/dist/main"
   }
 }
+
