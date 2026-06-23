@@ -7,6 +7,7 @@ import { AzureKeyVaultCertificateProvider } from './azure-key-vault.certificate-
 import { OrganizationAuthorizationService } from './organization-authorization.service';
 import { OrganizationController } from './organization.controller';
 import { OrganizationFacadeService } from './organization-facade.service';
+import { OrganizationUsageService } from './organization-usage.service';
 import { PrismaOrganizationCompanyCertificateRepository } from './organization-company-certificate.prisma';
 import { PrismaOrganizationMemberRepository } from './organization-member.prisma';
 import { PrismaOrganizationCompanyRepository } from './organization-company.prisma';
@@ -29,6 +30,7 @@ import { PrismaOrganizationRoleRepository } from './organization-role.prisma';
     AzureKeyVaultCertificateProvider,
     OrganizationAuthorizationService,
     OrganizationFacadeService,
+    OrganizationUsageService,
   ],
   exports: [OrganizationAuthorizationService, OrganizationFacadeService],
 })

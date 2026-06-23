@@ -21,6 +21,7 @@ import { GlobalAdminGuard } from '../../shared/auth/global-admin.guard';
 import { OrganizationAccessGuard } from '../../shared/auth/organization-access.guard';
 import { parseCertificateUploadFields } from './certificate-upload.helper';
 import { OrganizationFacadeService } from './organization-facade.service';
+import { OrganizationUsageService } from './organization-usage.service';
 import { PrismaOrganizationMemberRepository } from './organization-member.prisma';
 import { PrismaOrganizationRolePermissionRepository } from './organization-role-permission.prisma';
 
@@ -94,6 +95,7 @@ class UploadOrganizationCompanyCertificateDto {
 export class OrganizationController {
   constructor(
     private readonly organizationFacade: OrganizationFacadeService,
+    private readonly organizationUsageService: OrganizationUsageService,
     private readonly organizationMemberRepository: PrismaOrganizationMemberRepository,
     private readonly organizationRolePermissionRepository: PrismaOrganizationRolePermissionRepository,
   ) {}
@@ -419,6 +421,20 @@ export class OrganizationController {
       organizationId,
       companyId,
       certificateId,
+    });
+  }
+
+  @Get(':organizationId/usage')
+  @UseGuards(GlobalAdminGuard)
+  getUsage(
+    @Param('organizationId') organizationId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.organizationUsageService.getUsage({
+      organizationId,
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
     });
   }
 

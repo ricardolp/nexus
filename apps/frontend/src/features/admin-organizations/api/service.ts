@@ -3,6 +3,8 @@ import type {
   CreateOrganizationUserPayload,
   OrganizationFilters,
   OrganizationSettings,
+  OrganizationUsage,
+  OrganizationUsageFilters,
   OrganizationsResponse,
   UpdateOrganizationSettingsPayload,
 } from './types';
@@ -102,6 +104,27 @@ export async function updateOrganizationSettings(
   if (!response.ok) {
     const error = (await response.json().catch(() => null)) as { message?: string } | null;
     throw new Error(error?.message ?? 'Falha ao atualizar configurações');
+  }
+
+  return response.json();
+}
+
+export async function getOrganizationUsage(
+  organizationId: string,
+  filters: OrganizationUsageFilters = {},
+): Promise<OrganizationUsage> {
+  const params = new URLSearchParams();
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+
+  const query = params.toString();
+  const response = await fetch(
+    `/api/backend/organization/${organizationId}/usage${query ? `?${query}` : ''}`,
+  );
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(error?.message ?? 'Falha ao carregar indicadores de uso');
   }
 
   return response.json();
