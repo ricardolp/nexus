@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { AUTH_COOKIE_NAME } from '@/lib/auth/constants';
-import { getBackendUrl } from '@/lib/backend-url';
+import { getServerBackendUrl } from '@/lib/backend-url';
 
 export async function getAccessTokenFromCookies(): Promise<string | undefined> {
   const cookieStore = await cookies();
@@ -19,7 +19,7 @@ export async function backendFetch(path: string, init?: RequestInit) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  return fetch(`${getBackendUrl()}${path}`, {
+  return fetch(`${getServerBackendUrl()}${path}`, {
     ...init,
     headers,
     cache: 'no-store',

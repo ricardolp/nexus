@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getBackendUrl } from '@/lib/backend-url';
+import { getServerBackendUrl } from '@/lib/backend-url';
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     senha?: string;
   };
 
-  const backendResponse = await fetch(`${getBackendUrl()}/auth/register`, {
+  const backendResponse = await fetch(`${getServerBackendUrl()}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

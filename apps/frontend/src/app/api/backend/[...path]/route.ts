@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAccessTokenFromCookies } from '@/lib/server-backend';
-import { getBackendUrl } from '@/lib/backend-url';
+import { getServerBackendUrl } from '@/lib/backend-url';
 
 async function readProxyBody(request: NextRequest): Promise<{
   body?: BodyInit;
@@ -43,7 +43,7 @@ async function proxy(request: NextRequest, path: string) {
   }
 
   try {
-    const targetUrl = `${getBackendUrl()}/${path}${request.nextUrl.search}`;
+    const targetUrl = `${getServerBackendUrl()}/${path}${request.nextUrl.search}`;
     const headers = new Headers();
     headers.set('Authorization', `Bearer ${token}`);
 

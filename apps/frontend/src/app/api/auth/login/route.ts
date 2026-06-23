@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME } from '@/lib/auth/constants';
 import type { LoginResponse } from '@/lib/auth/types';
-import { getBackendUrl } from '@/lib/backend-url';
+import { getServerBackendUrl } from '@/lib/backend-url';
 
 function setAuthCookie(response: NextResponse, token: string) {
   response.cookies.set(AUTH_COOKIE_NAME, token, {
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: 'E-mail e senha são obrigatórios' }, { status: 400 });
   }
 
-  const backendResponse = await fetch(`${getBackendUrl()}/auth/login`, {
+  const backendResponse = await fetch(`${getServerBackendUrl()}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: body.email, senha: body.senha }),

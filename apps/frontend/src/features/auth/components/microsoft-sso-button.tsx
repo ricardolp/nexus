@@ -1,7 +1,6 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { getBackendUrl } from '@/lib/backend-url';
 
 function MicrosoftIcon() {
   return (
@@ -16,7 +15,7 @@ function MicrosoftIcon() {
 
 export function MicrosoftSsoButton() {
   const handleClick = () => {
-    window.location.href = `${getBackendUrl()}/auth/microsoft`;
+    window.location.href = '/api/auth/microsoft';
   };
 
   return (
