@@ -20,6 +20,8 @@ import {
   slugifyOrganizationName,
   type OrganizationFormValues,
 } from '../schemas/organization';
+import { useAuth } from '@/context/auth-context';
+import { FormOrganizationLogoField } from './organization-logo-field';
 
 interface CreateOrganizationSheetProps {
   open: boolean;
@@ -27,10 +29,14 @@ interface CreateOrganizationSheetProps {
 }
 
 export function CreateOrganizationSheet({ open, onOpenChange }: CreateOrganizationSheetProps) {
+  const { refreshSession, patchOrganizationLogo } = useAuth();
+
   const createMutation = useMutation({
     ...createOrganizationMutation,
-    onSuccess: () => {
+    onSuccess: async (createdOrganization) => {
+      patchOrganizationLogo(createdOrganization.id, createdOrganization.logo ?? null);
       toast.success('Organização criada com sucesso');
+      await refreshSession();
       onOpenChange(false);
       form.reset();
     },
@@ -43,14 +49,22 @@ export function CreateOrganizationSheet({ open, onOpenChange }: CreateOrganizati
     defaultValues: {
       nome: '',
       slug: '',
+      logo: null,
     } as OrganizationFormValues,
     validators: {
-      onSubmit: organizationSchema.pick({ nome: true }).extend({ slug: z.string() }),
+      onSubmit: organizationSchema.pick({ nome: true }).extend({
+        slug: z.string(),
+        logo: organizationSchema.shape.logo,
+      }),
     },
     onSubmit: async ({ value }) => {
       const nome = value.nome.trim();
       const slug = value.slug.trim() || slugifyOrganizationName(nome);
-      const parsed = organizationSchema.safeParse({ nome, slug });
+      const parsed = organizationSchema.safeParse({
+        nome,
+        slug,
+        logo: value.logo ?? null,
+      });
 
       if (!parsed.success) {
         toast.error(parsed.error.issues[0]?.message ?? 'Dados inválidos');
@@ -76,6 +90,12 @@ export function CreateOrganizationSheet({ open, onOpenChange }: CreateOrganizati
         <div className='flex-1 overflow-auto'>
           <form.AppForm>
             <form.Form id='create-organization-form' className='space-y-4'>
+              <FormOrganizationLogoField
+                name='logo'
+                label='Logo'
+                description='Imagem quadrada exibida no seletor de organizações (150×150 px).'
+              />
+
               <FormTextField
                 name='nome'
                 label='Nome'

@@ -7,33 +7,36 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { NotificationCard } from '@/components/ui/notification-card';
-import { useNotificationStore } from '../utils/store';
+import { useNotifications } from '../hooks/use-notifications';
 import { useRouter } from 'next/navigation';
 
 const MAX_VISIBLE = 5;
 
-const actionRoutes: Record<string, string> = {
-  view: '/dashboard/workspaces',
-  'view-product': '/dashboard/product',
-  billing: '/dashboard/billing',
-  open: '/dashboard/kanban',
-  'open-chat': '/dashboard/chat'
-};
-
 export function NotificationCenter() {
-  const { notifications, markAsRead, markAllAsRead, unreadCount } = useNotificationStore();
+  const { notifications, markAsRead, markAllAsRead, unreadCount, isLoading } =
+    useNotifications(MAX_VISIBLE);
   const router = useRouter();
-  const count = unreadCount();
   const visibleNotifications = notifications.slice(0, MAX_VISIBLE);
+
+  const handleAction = (notificationId: string, actionId: string) => {
+    const notification = notifications.find((item) => item.id === notificationId);
+    const route = notification?.navigatePath ?? actionId;
+
+    markAsRead(notificationId);
+
+    if (route.startsWith('/')) {
+      router.push(route);
+    }
+  };
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button variant='ghost' size='icon' className='relative h-8 w-8'>
           <Icons.notification className='h-4 w-4' />
-          {count > 0 && (
+          {unreadCount > 0 && (
             <span className='bg-destructive text-destructive-foreground absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium'>
-              {count > 9 ? '9+' : count}
+              {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}
           <span className='sr-only'>Notifications</span>
@@ -46,17 +49,17 @@ export function NotificationCenter() {
             <Icons.chevronRight className='text-muted-foreground h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5' />
           </Link>
           <div className='flex items-center gap-2'>
-            {count > 0 && (
+            {unreadCount > 0 && (
               <span className='bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs'>
-                {count} new
+                {unreadCount} new
               </span>
             )}
-            {count > 0 && (
+            {unreadCount > 0 && (
               <Button
                 variant='ghost'
                 size='sm'
                 className='text-muted-foreground h-auto px-2 py-1 text-xs'
-                onClick={markAllAsRead}
+                onClick={() => markAllAsRead()}
               >
                 Mark all as read
               </Button>
@@ -65,7 +68,12 @@ export function NotificationCenter() {
         </div>
         <Separator />
         <ScrollArea className='h-[400px]'>
-          {notifications.length === 0 ? (
+          {isLoading ? (
+            <div className='flex flex-col items-center justify-center py-12'>
+              <Icons.spinner className='text-muted-foreground/40 mb-2 h-8 w-8 animate-spin' />
+              <p className='text-muted-foreground text-sm'>Carregando notificações...</p>
+            </div>
+          ) : notifications.length === 0 ? (
             <div className='flex flex-col items-center justify-center py-12'>
               <Icons.notification className='text-muted-foreground/40 mb-2 h-8 w-8' />
               <p className='text-muted-foreground text-sm'>No notifications yet</p>
@@ -82,13 +90,7 @@ export function NotificationCenter() {
                   createdAt={notification.createdAt}
                   actions={notification.actions}
                   onMarkAsRead={markAsRead}
-                  onAction={(notifId, actionId) => {
-                    const route = actionRoutes[actionId];
-                    if (route) {
-                      markAsRead(notifId);
-                      router.push(route);
-                    }
-                  }}
+                  onAction={handleAction}
                 />
               ))}
             </div>

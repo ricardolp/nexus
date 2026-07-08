@@ -12,17 +12,24 @@ import {
 } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
 import { Icons } from '@/components/icons';
+import { useAuth } from '@/context/auth-context';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 import * as z from 'zod';
-import { updateOrganizationSettingsMutation } from '../api/mutations';
+import {
+  updateOrganizationMutation,
+  updateOrganizationSettingsMutation,
+} from '../api/mutations';
 import { organizationSettingsQueryOptions } from '../api/queries';
 import type { Organization } from '../api/types';
 import {
-  organizationSettingsSchema,
-  type OrganizationSettingsFormValues,
-} from '../schemas/organization-settings';
+  editOrganizationSchema,
+  organizationSchema,
+  type EditOrganizationFormValues,
+} from '../schemas/organization';
+import { hydrateOrganizationWithCachedLogo } from '@/lib/organization/organization-logo-cache';
+import { FormOrganizationLogoField } from './organization-logo-field';
 
 interface EditOrganizationSettingsSheetProps {
   organization: Organization;
@@ -35,54 +42,97 @@ export function EditOrganizationSettingsSheet({
   open,
   onOpenChange,
 }: EditOrganizationSettingsSheetProps) {
+  const { refreshSession, patchOrganizationLogo } = useAuth();
+  const organizationWithLogo = hydrateOrganizationWithCachedLogo(organization);
+
   const settingsQuery = useQuery({
     ...organizationSettingsQueryOptions(organization.id),
     enabled: open,
   });
 
-  const updateMutation = useMutation({
+  const updateOrganizationMut = useMutation({
+    ...updateOrganizationMutation,
+  });
+
+  const updateSettingsMut = useMutation({
     ...updateOrganizationSettingsMutation,
-    onSuccess: () => {
-      toast.success('Configurações atualizadas');
-      onOpenChange(false);
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Falha ao atualizar configurações');
-    },
   });
 
   const form = useAppForm({
     defaultValues: {
+      nome: organizationWithLogo.nome,
+      slug: organizationWithLogo.slug,
+      logo: organizationWithLogo.logo,
       maxCompanies: 1,
-    } as OrganizationSettingsFormValues,
+    } as EditOrganizationFormValues,
     validators: {
-      onSubmit: organizationSettingsSchema,
+      onSubmit: editOrganizationSchema,
     },
     onSubmit: async ({ value }) => {
-      await updateMutation.mutateAsync({
-        organizationId: organization.id,
-        payload: value,
+      const parsed = editOrganizationSchema.safeParse({
+        nome: value.nome.trim(),
+        slug: value.slug.trim(),
+        logo: value.logo ?? null,
+        maxCompanies: value.maxCompanies,
       });
+
+      if (!parsed.success) {
+        toast.error(parsed.error.issues[0]?.message ?? 'Dados inválidos');
+        return;
+      }
+
+      try {
+        const [updatedOrganization] = await Promise.all([
+          updateOrganizationMut.mutateAsync({
+            organizationId: organization.id,
+            payload: {
+              nome: parsed.data.nome,
+              slug: parsed.data.slug,
+              logo: parsed.data.logo ?? null,
+            },
+          }),
+          updateSettingsMut.mutateAsync({
+            organizationId: organization.id,
+            payload: { maxCompanies: parsed.data.maxCompanies },
+          }),
+        ]);
+
+        patchOrganizationLogo(
+          organization.id,
+          updatedOrganization.logo ?? parsed.data.logo ?? null,
+        );
+        toast.success('Organização atualizada');
+        await refreshSession();
+        onOpenChange(false);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Falha ao atualizar organização',
+        );
+      }
     },
   });
 
   useEffect(() => {
-    if (open && settingsQuery.data) {
+    if (open) {
       form.reset({
-        maxCompanies: settingsQuery.data.maxCompanies,
+        nome: organizationWithLogo.nome,
+        slug: organizationWithLogo.slug,
+        logo: organizationWithLogo.logo,
+        maxCompanies: settingsQuery.data?.maxCompanies ?? 1,
       });
     }
-  }, [open, settingsQuery.data, form]);
+  }, [open, organizationWithLogo, settingsQuery.data, form]);
 
-  const { FormTextField } = useFormFields<OrganizationSettingsFormValues>();
+  const { FormTextField } = useFormFields<EditOrganizationFormValues>();
+  const isSaving = updateOrganizationMut.isPending || updateSettingsMut.isPending;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className='flex flex-col'>
         <SheetHeader>
-          <SheetTitle>Configurações da organização</SheetTitle>
+          <SheetTitle>Editar organização</SheetTitle>
           <SheetDescription>
-            Ajuste os limites e parâmetros de <strong>{organization.nome}</strong>.
+            Atualize os dados e configurações de <strong>{organization.nome}</strong>.
           </SheetDescription>
         </SheetHeader>
 
@@ -98,6 +148,30 @@ export function EditOrganizationSettingsSheet({
           ) : (
             <form.AppForm>
               <form.Form id='organization-settings-form' className='space-y-4'>
+                <FormOrganizationLogoField
+                  name='logo'
+                  label='Logo'
+                  description='Imagem quadrada exibida no seletor de organizações (150×150 px).'
+                />
+
+                <FormTextField
+                  name='nome'
+                  label='Nome'
+                  required
+                  validators={{
+                    onBlur: organizationSchema.shape.nome,
+                  }}
+                />
+
+                <FormTextField
+                  name='slug'
+                  label='Slug'
+                  required
+                  validators={{
+                    onBlur: organizationSchema.shape.slug,
+                  }}
+                />
+
                 <FormTextField
                   name='maxCompanies'
                   label='Limite de empresas'
@@ -107,7 +181,7 @@ export function EditOrganizationSettingsSheet({
                   min={1}
                   step={1}
                   validators={{
-                    onBlur: organizationSettingsSchema.shape.maxCompanies,
+                    onBlur: editOrganizationSchema.shape.maxCompanies,
                     onChange: z.number().int().min(1),
                   }}
                 />
@@ -123,7 +197,7 @@ export function EditOrganizationSettingsSheet({
           <Button
             type='submit'
             form='organization-settings-form'
-            isLoading={updateMutation.isPending}
+            isLoading={isSaving}
             disabled={settingsQuery.isLoading || settingsQuery.isError}
           >
             <Icons.check /> Salvar

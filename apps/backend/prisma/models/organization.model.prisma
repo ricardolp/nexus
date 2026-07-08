@@ -2,6 +2,7 @@ model Organization {
   id         String    @id @default(uuid()) @db.Uuid
   nome       String
   slug       String    @unique
+  logo       String?   @db.Text
   created_at DateTime  @default(now())
   updated_at DateTime  @updatedAt
   deleted_at DateTime?

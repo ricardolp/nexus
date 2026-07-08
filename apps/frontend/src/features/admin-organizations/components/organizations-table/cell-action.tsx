@@ -58,7 +58,7 @@ export function CellAction({ data }: CellActionProps) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setSettingsSheetOpen(true)}>
             <Icons.settings className='mr-2 h-4 w-4' />
-            Configurações
+            Editar organização
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

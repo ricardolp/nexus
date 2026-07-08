@@ -19,6 +19,7 @@ import { OrganizationSettingsRepository } from '../organization-settings/provide
 export interface CreateOrganizationIn {
   nome: string;
   slug: string;
+  logo?: string | null;
   actorRole: string;
 }
 
@@ -43,6 +44,7 @@ export class CreateOrganization implements UseCase<CreateOrganizationIn, Organiz
     const organization = new Organization({
       nome: input.nome,
       slug: input.slug,
+      logo: input.logo ?? null,
     });
 
     organization.validate();

@@ -49,6 +49,7 @@ describe('ListMyOrganizations', () => {
       id: organization.id,
       nome: 'Acme',
       slug: 'acme',
+      logo: null,
       role: {
         id: role.id,
         nome: 'TI',
@@ -92,12 +93,14 @@ describe('ListMyOrganizations', () => {
           id: organizationA.id,
           nome: 'Acme',
           slug: 'acme',
+          logo: null,
           role: null,
         },
         {
           id: organizationB.id,
           nome: 'Beta',
           slug: 'beta',
+          logo: null,
           role: null,
         },
       ]),

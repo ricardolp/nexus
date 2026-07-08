@@ -5,11 +5,12 @@ const DEFAULT_BACKEND_URL = 'http://localhost:4000';
  * Prefer API_URL in deploy — it is read at runtime and does not require a rebuild.
  */
 export function getServerBackendUrl(): string {
-  return (
+  const raw =
     process.env.API_URL ??
     process.env.NEXT_PUBLIC_API_URL ??
-    DEFAULT_BACKEND_URL
-  );
+    DEFAULT_BACKEND_URL;
+
+  return raw.replace(/\/+$/, '');
 }
 
 /** @deprecated Use getServerBackendUrl in server code. */

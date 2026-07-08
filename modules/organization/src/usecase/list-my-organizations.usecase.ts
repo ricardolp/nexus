@@ -18,6 +18,7 @@ export interface MyOrganizationItem {
   id: string;
   nome: string;
   slug: string;
+  logo: string | null;
   role: MyOrganizationRole | null;
 }
 
@@ -48,6 +49,7 @@ export class ListMyOrganizations
           id: organization.id,
           nome: organization.nome,
           slug: organization.slug,
+          logo: organization.logo,
           role: null,
         })),
       };
@@ -71,6 +73,7 @@ export class ListMyOrganizations
           id: organization.id,
           nome: organization.nome,
           slug: organization.slug,
+          logo: organization.logo,
           role: role
             ? {
                 id: role.id,

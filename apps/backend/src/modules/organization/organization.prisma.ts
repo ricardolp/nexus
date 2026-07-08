@@ -83,6 +83,7 @@ export class PrismaOrganizationRepository implements OrganizationRepository {
       id: data.id,
       nome: data.nome,
       slug: data.slug,
+      logo: data.logo ?? null,
       created_at: data.createdAt,
       updated_at: data.updatedAt,
       deleted_at: data.deletedAt ?? null,
@@ -93,6 +94,7 @@ export class PrismaOrganizationRepository implements OrganizationRepository {
     id: string;
     nome: string;
     slug: string;
+    logo: string | null;
     created_at: Date;
     updated_at: Date;
     deleted_at: Date | null;
@@ -101,6 +103,7 @@ export class PrismaOrganizationRepository implements OrganizationRepository {
       id: record.id,
       nome: record.nome,
       slug: record.slug,
+      logo: record.logo,
       createdAt: record.created_at,
       updatedAt: record.updated_at,
       deletedAt: record.deleted_at,

@@ -16,6 +16,7 @@ export interface OrganizationSummary {
   id: string;
   nome: string;
   slug: string;
+  logo: string | null;
   role: OrganizationRole | null;
 }
 

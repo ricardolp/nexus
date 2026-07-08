@@ -28,6 +28,13 @@ import { PrismaOrganizationRolePermissionRepository } from './organization-role-
 class CreateOrganizationDto {
   nome!: string;
   slug!: string;
+  logo?: string | null;
+}
+
+class UpdateOrganizationDto {
+  nome?: string;
+  slug?: string;
+  logo?: string | null;
 }
 
 class CreateOrganizationRoleDto {
@@ -128,11 +135,48 @@ export class OrganizationController {
     return this.organizationFacade.listMyOrganizations(user);
   }
 
+  @Get('usage')
+  @UseGuards(GlobalAdminGuard)
+  listUsage(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.organizationUsageService.listUsageSummary({
+      from: from ? new Date(from) : undefined,
+      to: to ? new Date(to) : undefined,
+    });
+  }
+
   @Get(':organizationId')
   @UseGuards(OrganizationAccessGuard)
   @RequirePermission('organization:read')
   getOrganization(@Param('organizationId') organizationId: string) {
     return this.organizationFacade.getOrganization(organizationId);
+  }
+
+  @Get(':organizationId/logo')
+  @UseGuards(OrganizationAccessGuard)
+  @RequirePermission('organization:read')
+  getOrganizationLogo(@Param('organizationId') organizationId: string) {
+    return this.organizationFacade.getOrganizationLogo(organizationId);
+  }
+
+  @Patch(':organizationId')
+  @UseGuards(GlobalAdminGuard)
+  updateOrganization(
+    @Param('organizationId') organizationId: string,
+    @Body() body: UpdateOrganizationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.organizationFacade.updateOrganization(
+      {
+        organizationId,
+        nome: body.nome,
+        slug: body.slug,
+        logo: body.logo,
+      },
+      user,
+    );
   }
 
   @Delete(':organizationId')

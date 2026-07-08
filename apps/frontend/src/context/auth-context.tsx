@@ -12,6 +12,11 @@ import {
 import { useRouter } from 'next/navigation';
 import { ACTIVE_ORG_STORAGE_KEY } from '@/lib/auth/constants';
 import type { AuthUser, OrganizationSummary } from '@/lib/auth/types';
+import { mergeOrganizationsWithLogos } from '@/lib/organization/hydrate-organization-logos';
+import {
+  clearOrganizationLogoCache,
+  setCachedOrganizationLogo,
+} from '@/lib/organization/organization-logo-cache';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -21,6 +26,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   refreshSession: () => Promise<boolean>;
+  patchOrganizationLogo: (organizationId: string, logo: string | null) => void;
   setActiveOrganizationId: (organizationId: string) => void;
   logout: () => Promise<void>;
 }
@@ -33,6 +39,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
   const [activeOrganizationId, setActiveOrganizationIdState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const patchOrganizationLogo = useCallback((organizationId: string, logo: string | null) => {
+    setCachedOrganizationLogo(organizationId, logo);
+    setOrganizations((current) =>
+      current.map((organization) =>
+        organization.id === organizationId ? { ...organization, logo } : organization,
+      ),
+    );
+  }, []);
 
   const refreshSession = useCallback(async () => {
     const meResponse = await fetch('/api/auth/me');
@@ -49,12 +64,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const orgResponse = await fetch('/api/backend/organization/me');
     if (orgResponse.ok) {
-      const orgPayload = (await orgResponse.json()) as { items: OrganizationSummary[] };
-      setOrganizations(orgPayload.items);
+      const orgPayload = (await orgResponse.json()) as {
+        items: Array<Omit<OrganizationSummary, 'logo'> & { logo?: string | null }>;
+      };
+      const organizationsWithLogos = mergeOrganizationsWithLogos(orgPayload.items);
+      setOrganizations(organizationsWithLogos);
 
       const storedOrgId = window.localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
-      const validStoredOrg = orgPayload.items.find((item) => item.id === storedOrgId);
-      const nextOrgId = validStoredOrg?.id ?? orgPayload.items[0]?.id ?? null;
+      const validStoredOrg = organizationsWithLogos.find((item) => item.id === storedOrgId);
+      const nextOrgId = validStoredOrg?.id ?? organizationsWithLogos[0]?.id ?? null;
       setActiveOrganizationIdState(nextOrgId);
 
       if (nextOrgId) {
@@ -85,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOrganizations([]);
     setActiveOrganizationIdState(null);
     window.localStorage.removeItem(ACTIVE_ORG_STORAGE_KEY);
+    clearOrganizationLogoCache();
     router.push('/auth/sign-in');
   }, [router]);
 
@@ -102,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       isAuthenticated: Boolean(user),
       refreshSession,
+      patchOrganizationLogo,
       setActiveOrganizationId,
       logout,
     }),
@@ -112,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeOrganizationId,
       isLoading,
       refreshSession,
+      patchOrganizationLogo,
       setActiveOrganizationId,
       logout,
     ],

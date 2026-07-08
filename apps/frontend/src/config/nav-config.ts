@@ -2,6 +2,17 @@ import { NavGroup } from '@/types';
 
 export const navGroups: NavGroup[] = [
   {
+    label: '',
+    items: [
+      {
+        title: 'Início',
+        url: '/dashboard/overview',
+        icon: 'dashboard',
+        access: { requireOrg: true },
+      },
+    ],
+  },
+  {
     label: 'Documentos',
     items: [
       {

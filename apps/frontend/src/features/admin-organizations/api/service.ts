@@ -1,3 +1,6 @@
+import { backendApiFetch } from '@/lib/backend-api-fetch';
+import { hydrateOrganizationLogos } from '@/lib/organization/hydrate-organization-logos';
+import { applyOrganizationSearchFilter, buildOrganizationListParams } from './service.helpers';
 import type {
   CreateOrganizationPayload,
   CreateOrganizationUserPayload,
@@ -5,45 +8,34 @@ import type {
   OrganizationSettings,
   OrganizationUsage,
   OrganizationUsageFilters,
+  OrganizationUsageList,
   OrganizationsResponse,
+  UpdateOrganizationPayload,
   UpdateOrganizationSettingsPayload,
 } from './types';
 
 export async function getOrganizations(
   filters: OrganizationFilters,
 ): Promise<OrganizationsResponse> {
-  const params = new URLSearchParams({
-    page: String(filters.page),
-    perPage: String(filters.limit),
-  });
-
-  const response = await fetch(`/api/backend/organization?${params.toString()}`);
+  const params = buildOrganizationListParams(filters);
+  const response = await backendApiFetch(`/organization?${params.toString()}`);
 
   if (!response.ok) {
     throw new Error('Falha ao carregar organizações');
   }
 
   const data = (await response.json()) as OrganizationsResponse;
-
-  if (!filters.search) {
-    return data;
-  }
-
-  const search = filters.search.toLowerCase();
-  const filteredItems = data.items.filter(
-    (item) =>
-      item.nome.toLowerCase().includes(search) || item.slug.toLowerCase().includes(search),
-  );
+  const filtered = applyOrganizationSearchFilter(data, filters.search);
+  const hydratedItems = await hydrateOrganizationLogos(filtered.items);
 
   return {
-    ...data,
-    items: filteredItems,
-    total: filteredItems.length,
+    ...filtered,
+    items: hydratedItems,
   };
 }
 
 export async function createOrganization(payload: CreateOrganizationPayload) {
-  const response = await fetch('/api/backend/organization', {
+  const response = await backendApiFetch('/organization', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -57,12 +49,30 @@ export async function createOrganization(payload: CreateOrganizationPayload) {
   return response.json();
 }
 
+export async function updateOrganization(
+  organizationId: string,
+  payload: UpdateOrganizationPayload,
+) {
+  const response = await backendApiFetch(`/organization/${organizationId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(error?.message ?? 'Falha ao atualizar organização');
+  }
+
+  return response.json();
+}
+
 export async function createOrganizationUser(
   organizationId: string,
   payload: CreateOrganizationUserPayload,
 ) {
-  const response = await fetch(
-    `/api/backend/organization/${organizationId}/members/create-user`,
+  const response = await backendApiFetch(
+    `/organization/${organizationId}/members/create-user`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -81,7 +91,7 @@ export async function createOrganizationUser(
 export async function getOrganizationSettings(
   organizationId: string,
 ): Promise<OrganizationSettings> {
-  const response = await fetch(`/api/backend/organization/${organizationId}/settings`);
+  const response = await backendApiFetch(`/organization/${organizationId}/settings`);
 
   if (!response.ok) {
     const error = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -95,7 +105,7 @@ export async function updateOrganizationSettings(
   organizationId: string,
   payload: UpdateOrganizationSettingsPayload,
 ): Promise<OrganizationSettings> {
-  const response = await fetch(`/api/backend/organization/${organizationId}/settings`, {
+  const response = await backendApiFetch(`/organization/${organizationId}/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -104,6 +114,26 @@ export async function updateOrganizationSettings(
   if (!response.ok) {
     const error = (await response.json().catch(() => null)) as { message?: string } | null;
     throw new Error(error?.message ?? 'Falha ao atualizar configurações');
+  }
+
+  return response.json();
+}
+
+export async function getOrganizationsUsage(
+  filters: OrganizationUsageFilters = {},
+): Promise<OrganizationUsageList> {
+  const params = new URLSearchParams();
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+
+  const query = params.toString();
+  const response = await backendApiFetch(
+    `/organization/usage${query ? `?${query}` : ''}`,
+  );
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(error?.message ?? 'Falha ao carregar indicadores de uso');
   }
 
   return response.json();
@@ -118,8 +148,8 @@ export async function getOrganizationUsage(
   if (filters.to) params.set('to', filters.to);
 
   const query = params.toString();
-  const response = await fetch(
-    `/api/backend/organization/${organizationId}/usage${query ? `?${query}` : ''}`,
+  const response = await backendApiFetch(
+    `/organization/${organizationId}/usage${query ? `?${query}` : ''}`,
   );
 
   if (!response.ok) {

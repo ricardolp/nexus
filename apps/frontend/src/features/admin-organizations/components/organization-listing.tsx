@@ -2,9 +2,10 @@ import { HydrationBoundary, dehydrate } from '@tanstack/react-query';
 import { getQueryClient } from '@/lib/query-client';
 import { searchParamsCache } from '@/lib/searchparams';
 import { organizationsQueryOptions } from '../api/queries';
+import { getOrganizations } from '../api/service.server';
 import { OrganizationsTable } from './organizations-table';
 
-export default function OrganizationListingPage() {
+export default async function OrganizationListingPage() {
   const page = searchParamsCache.get('page');
   const search = searchParamsCache.get('name');
   const pageLimit = searchParamsCache.get('perPage');
@@ -17,7 +18,10 @@ export default function OrganizationListingPage() {
 
   const queryClient = getQueryClient();
 
-  void queryClient.prefetchQuery(organizationsQueryOptions(filters));
+  await queryClient.prefetchQuery({
+    ...organizationsQueryOptions(filters),
+    queryFn: () => getOrganizations(filters),
+  });
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>

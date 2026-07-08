@@ -38,8 +38,26 @@ model User {
   nfeFlowConfigsCreated FiscalNfeFlowConfig[] @relation("NfeFlowConfigCreatedBy")
   nfeFlowConfigsUpdated FiscalNfeFlowConfig[] @relation("NfeFlowConfigUpdatedBy")
   nfeFlowAuditLogs FiscalNfeFlowAuditLog[] @relation("NfeFlowAuditLogUser")
+  notifications UserNotification[]
 
   @@map("users")
+}
+
+model UserNotification {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  title       String    @db.VarChar(255)
+  description String
+  action      Json?
+  category    String?   @db.VarChar(64)
+  read_at     DateTime?
+  created_at  DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, created_at])
+  @@index([user_id, read_at])
+  @@map("user_notifications")
 }
 
 model UserLoginAudit {

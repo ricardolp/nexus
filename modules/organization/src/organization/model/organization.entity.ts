@@ -11,6 +11,7 @@ import {
 export interface OrganizationState extends EntityState {
   nome: string;
   slug: string;
+  logo?: string | null;
 }
 
 export class Organization extends Entity<OrganizationState> {
@@ -24,6 +25,10 @@ export class Organization extends Entity<OrganizationState> {
 
   get slug(): string {
     return this.props.slug;
+  }
+
+  get logo(): string | null {
+    return this.props.logo ?? null;
   }
 
   validate(): void {

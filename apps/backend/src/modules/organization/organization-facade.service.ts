@@ -37,6 +37,8 @@ import {
   RemoveOrganizationMemberIn,
   RemoveOrganization,
   RemoveOrganizationIn,
+  UpdateOrganization,
+  UpdateOrganizationIn,
   UpdateOrganizationCompany,
   UpdateOrganizationCompanyCertificate,
   UpdateOrganizationCompanyCertificateIn,
@@ -69,6 +71,15 @@ import {
 import { CertificateUploadInput } from './certificate-upload.helper';
 
 function serializeOrganization(organization: Organization) {
+  return {
+    id: organization.id,
+    nome: organization.nome,
+    slug: organization.slug,
+    logo: organization.logo,
+  };
+}
+
+function serializeOrganizationSummary(organization: Organization) {
   return {
     id: organization.id,
     nome: organization.nome,
@@ -179,6 +190,20 @@ export class OrganizationFacadeService {
     return serializeOrganization(organization);
   }
 
+  async updateOrganization(
+    input: Omit<UpdateOrganizationIn, 'actorRole'>,
+    actor: JwtPayload,
+  ) {
+    const organization = await new UpdateOrganization(
+      this.organizationRepository,
+    ).execute({
+      ...input,
+      actorRole: actor.role,
+    });
+
+    return serializeOrganization(organization);
+  }
+
   async listOrganizations(actor: JwtPayload, page = 1, perPage = 20) {
     const result = await new ListOrganizations(
       this.organizationRepository,
@@ -260,6 +285,16 @@ export class OrganizationFacadeService {
     });
 
     return serializeOrganization(organization);
+  }
+
+  async getOrganizationLogo(organizationId: string) {
+    const organization = await new GetOrganization(
+      this.organizationRepository,
+    ).execute({
+      organizationId,
+    });
+
+    return { logo: organization.logo };
   }
 
   async listRoles(organizationId: string, page = 1, perPage = 20) {
@@ -558,7 +593,7 @@ export class OrganizationFacadeService {
   private serializeOrganizationPage(result: PageResult<Organization>) {
     return {
       ...result,
-      items: result.items.map(serializeOrganization),
+      items: result.items.map(serializeOrganizationSummary),
     };
   }
 

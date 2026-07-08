@@ -19,6 +19,7 @@ export * from './remove-organization-company-certificate.usecase';
 export * from './remove-organization-member.usecase';
 export * from './remove-organization.usecase';
 export * from './update-organization-company.usecase';
+export * from './update-organization.usecase';
 export * from './update-organization-company-certificate.usecase';
 export * from './upload-organization-company-certificate.usecase';
 export * from './update-organization-settings.usecase';

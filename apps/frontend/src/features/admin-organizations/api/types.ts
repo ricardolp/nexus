@@ -2,6 +2,7 @@ export interface Organization {
   id: string;
   nome: string;
   slug: string;
+  logo?: string | null;
 }
 
 export interface OrganizationFilters {
@@ -27,6 +28,13 @@ export interface CreateOrganizationUserPayload {
 export interface CreateOrganizationPayload {
   nome: string;
   slug: string;
+  logo?: string | null;
+}
+
+export interface UpdateOrganizationPayload {
+  nome: string;
+  slug: string;
+  logo?: string | null;
 }
 
 export interface OrganizationSettings {
@@ -42,6 +50,41 @@ export interface UpdateOrganizationSettingsPayload {
 export interface OrganizationUsageFilters {
   from?: string;
   to?: string;
+}
+
+export interface OrganizationUsageSummaryItem {
+  organizationId: string;
+  nome: string;
+  slug: string;
+  companies: number;
+  members: number;
+  nfeEmitted: number;
+  nfseEmitted: number;
+  emittedTotal: number;
+  documentsTotal: number;
+  eventsTotal: number;
+  integrationRequests: number;
+  webhookDeliveries: number;
+}
+
+export interface OrganizationUsageList {
+  period: {
+    from: string | null;
+    to: string | null;
+  };
+  totals: {
+    organizations: number;
+    companies: number;
+    members: number;
+    nfeEmitted: number;
+    nfseEmitted: number;
+    emittedTotal: number;
+    documentsTotal: number;
+    eventsTotal: number;
+    integrationRequests: number;
+    webhookDeliveries: number;
+  };
+  items: OrganizationUsageSummaryItem[];
 }
 
 export interface OrganizationUsage {

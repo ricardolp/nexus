@@ -19,6 +19,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { useAuth } from '@/context/auth-context';
+import { OrganizationLogo } from '@/components/organization-logo';
 
 export function OrgSwitcher() {
   const { isMobile, state } = useSidebar();
@@ -95,8 +96,17 @@ export function OrgSwitcher() {
               size='lg'
               className='data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground'
             >
-              <div className='bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg'>
-                <Icons.galleryVerticalEnd className='size-4' />
+              <div
+                className={
+                  displayOrganization.logo
+                    ? 'flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg'
+                    : 'bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg'
+                }
+              >
+                <OrganizationLogo
+                  logo={displayOrganization.logo}
+                  nome={displayOrganization.nome}
+                />
               </div>
               <div
                 className={`grid flex-1 text-left text-sm leading-tight transition-all duration-200 ease-in-out ${
@@ -136,8 +146,18 @@ export function OrgSwitcher() {
                   onClick={() => setActiveOrganizationId(organization.id)}
                   className='gap-2 p-2'
                 >
-                  <div className='flex size-6 items-center justify-center overflow-hidden rounded-md border'>
-                    <Icons.galleryVerticalEnd className='size-3.5 shrink-0' />
+                  <div
+                    className={
+                      organization.logo
+                        ? 'flex size-6 items-center justify-center overflow-hidden rounded-md border'
+                        : 'flex size-6 items-center justify-center overflow-hidden rounded-md border bg-muted'
+                    }
+                  >
+                    <OrganizationLogo
+                      logo={organization.logo}
+                      nome={organization.nome}
+                      iconClassName='size-3.5 shrink-0'
+                    />
                   </div>
                   {organization.nome}
                   {isActive && <Icons.check className='ml-auto size-4' />}
