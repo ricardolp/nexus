@@ -30,7 +30,7 @@ export async function getOrganizations(
 
   return {
     ...filtered,
-    items: hydratedItems,
+    items: hydratedItems.map(({ id, nome, slug, logo }) => ({ id, nome, slug, logo })),
   };
 }
 

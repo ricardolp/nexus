@@ -17,7 +17,7 @@ export function UsageTable({ items }: UsageTableProps) {
     shallow: false,
     initialState: {
       columnPinning: { right: ['actions'] },
-      pagination: { pageSize: 20 },
+      pagination: { pageIndex: 0, pageSize: 20 },
     },
   });
 

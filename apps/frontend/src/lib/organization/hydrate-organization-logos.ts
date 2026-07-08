@@ -18,7 +18,10 @@ export async function fetchOrganizationLogo(
   return response.json() as Promise<{ logo: string | null }>;
 }
 
-type OrganizationListItem = Omit<OrganizationSummary, 'logo'> & { logo?: string | null };
+type OrganizationListItem = Pick<OrganizationSummary, 'id' | 'nome' | 'slug'> & {
+  logo?: string | null;
+  role?: OrganizationSummary['role'];
+};
 
 export function mergeOrganizationsWithLogos(
   organizations: OrganizationListItem[],
