@@ -80,6 +80,41 @@ export const SAP_DOC_TYPE_LABELS: Record<string, string> = {
   accounting_doc: 'Documento contábil',
 };
 
+export const EVENT_TYPE_LABELS: Record<string, string> = {
+  authorization: 'Autorização SEFAZ',
+  xml_import: 'Importação XML',
+  pedido_validation: 'Validação pedido',
+  sap_delivery_create: 'Criação delivery SAP',
+  sap_migo: 'Lançamento MIGO',
+  sap_miro: 'Faturamento MIRO',
+  inbound_status_change: 'Mudança de status',
+  inbound_rejection: 'Rejeição inbound',
+  portaria_confirmation: 'Confirmação portaria',
+  cancellation: 'Cancelamento',
+  correction_letter: 'Carta de correção',
+  system_status_change: 'Mudança de status (sistema)',
+  status_query: 'Consulta status',
+  manual_note: 'Nota manual',
+};
+
+export const EVENT_STATUS_LABELS: Record<string, string> = {
+  pending: 'Pendente',
+  sent: 'Enviado',
+  accepted: 'Aceito',
+  rejected: 'Rejeitado',
+  error: 'Erro',
+  ignored: 'Ignorado',
+};
+
+export const EVENT_STATUS_BADGE_CLASS: Record<string, string> = {
+  accepted: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  sent: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  pending: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  rejected: 'bg-red-500/10 text-red-700 dark:text-red-300',
+  error: 'bg-red-500/10 text-red-700 dark:text-red-300',
+  ignored: 'bg-muted text-muted-foreground',
+};
+
 export const TIMELINE_STEP_ORDER = [
   { key: 'xml', label: 'Importada por XML', minStatus: 'xml_imported' as NfeInboundStatus },
   { key: 'sefaz', label: 'Validação SEFAZ', minStatus: 'sefaz_validated' as NfeInboundStatus },

@@ -57,11 +57,12 @@ export function DeleteDocumentButton({
       {variant === 'button' ? (
         <Button
           size='sm'
-          variant='destructive'
+          variant='outline'
+          className='text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive'
           onClick={() => setOpen(true)}
           disabled={remove.isPending}
         >
-          Eliminar documento
+          Eliminar
         </Button>
       ) : (
         <DropdownMenuItem

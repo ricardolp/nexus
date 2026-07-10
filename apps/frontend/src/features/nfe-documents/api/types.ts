@@ -136,6 +136,7 @@ export interface NfeDocumentItem {
 
 export interface NfeDocumentEvent {
   id: string;
+  organizationId?: string;
   documentId: string;
   eventType: string;
   eventStatus: string;
@@ -143,10 +144,43 @@ export interface NfeDocumentEvent {
   sefazStatusCode: string | null;
   sefazStatusMessage: string | null;
   protocol: string | null;
+  correlationId?: string | null;
+  requestSummary?: Record<string, unknown> | null;
+  responseSummary?: Record<string, unknown> | null;
+  errorCode?: string | null;
   errorMessage: string | null;
+  triggeredByUserId?: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface NfeEventDocumentSummary {
+  id: string;
+  number: number;
+  series: number;
+  direction: NfeDocumentDirection;
+  accessKey: string | null;
+}
+
+export interface NfeOrganizationEvent extends NfeDocumentEvent {
+  document: NfeEventDocumentSummary;
+}
+
+export interface NfeOrganizationEventsListFilters {
+  page?: number;
+  perPage?: number;
+  eventType?: string;
+  eventStatus?: string;
+  search?: string;
+}
+
+export interface NfeOrganizationEventsListResponse {
+  items: NfeOrganizationEvent[];
+  page: number;
+  perPage: number;
+  total: number;
 }
 
 export interface NfeDocumentTimeline {

@@ -4,14 +4,19 @@ import {
   getNfeDocumentsSummary,
   getNfeFlowInstance,
   getNfeInboundProcess,
+  getOrganizationNfeEvent,
   listNfeDocumentAttachments,
   listNfeDocumentEvents,
   listNfeDocumentItems,
   listNfeDocuments,
   listNfeDocumentTimeline,
   listNfeSapDocuments,
+  listOrganizationNfeEvents,
 } from './service';
-import type { NfeDocumentListFilters } from './types';
+import type {
+  NfeDocumentListFilters,
+  NfeOrganizationEventsListFilters,
+} from './types';
 
 export const nfeDocumentsKeys = {
   all: ['nfe-documents'] as const,
@@ -27,6 +32,10 @@ export const nfeDocumentsKeys = {
     [...nfeDocumentsKeys.all, 'items', organizationId, documentId] as const,
   events: (organizationId: string, documentId: string) =>
     [...nfeDocumentsKeys.all, 'events', organizationId, documentId] as const,
+  orgEvents: (organizationId: string, filters: NfeOrganizationEventsListFilters) =>
+    [...nfeDocumentsKeys.all, 'org-events', organizationId, filters] as const,
+  orgEventDetail: (organizationId: string, eventId: string) =>
+    [...nfeDocumentsKeys.all, 'org-event', organizationId, eventId] as const,
   timeline: (organizationId: string, documentId: string) =>
     [...nfeDocumentsKeys.all, 'timeline', organizationId, documentId] as const,
   attachments: (organizationId: string, documentId: string) =>
@@ -125,4 +134,22 @@ export const nfeFlowInstanceQueryOptions = (
   queryOptions({
     queryKey: nfeDocumentsKeys.flowInstance(organizationId, documentId),
     queryFn: () => getNfeFlowInstance(organizationId, documentId),
+  });
+
+export const nfeOrganizationEventsListQueryOptions = (
+  organizationId: string,
+  filters: NfeOrganizationEventsListFilters,
+) =>
+  queryOptions({
+    queryKey: nfeDocumentsKeys.orgEvents(organizationId, filters),
+    queryFn: () => listOrganizationNfeEvents(organizationId, filters),
+  });
+
+export const nfeOrganizationEventDetailQueryOptions = (
+  organizationId: string,
+  eventId: string,
+) =>
+  queryOptions({
+    queryKey: nfeDocumentsKeys.orgEventDetail(organizationId, eventId),
+    queryFn: () => getOrganizationNfeEvent(organizationId, eventId),
   });

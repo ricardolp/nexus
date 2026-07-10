@@ -69,6 +69,7 @@ import {
   serializeNfeDocumentListItem,
   serializeNfeDocumentAttachment,
   serializeNfeDocumentEvent,
+  serializeNfeDocumentEventWithDocument,
   serializeNfeDocumentItem,
   serializeNfeDocumentTimeline,
   serializeNfeInboundProcess,
@@ -433,6 +434,57 @@ export class FiscalFacadeService {
       ...result,
       items: result.items.map(serializeNfeDocumentEvent),
     };
+  }
+
+  async listOrganizationNfeEvents(
+    organizationId: string,
+    page: number,
+    perPage: number,
+    filters?: {
+      eventType?: string;
+      eventStatus?: string;
+      search?: string;
+    },
+  ) {
+    const result = await this.nfeDocumentEventRepository.findPageWithDocument({
+      organizationId,
+      page,
+      perPage,
+      eventType: filters?.eventType,
+      eventStatus: filters?.eventStatus,
+      search: filters?.search,
+    });
+
+    return {
+      ...result,
+      items: result.items.map(({ event, document }) =>
+        serializeNfeDocumentEventWithDocument(event, document),
+      ),
+    };
+  }
+
+  async getOrganizationNfeEvent(organizationId: string, eventId: string) {
+    const event = await this.findNfeDocumentEventById.execute({ id: eventId });
+    this.assertOrganizationScope(event, organizationId, 'Evento de documento NFe');
+
+    if (!event) {
+      throw new NotFoundError('Evento de documento NFe não encontrado');
+    }
+
+    const document = await this.findNfeDocumentById.execute({
+      id: event.documentId,
+    });
+    if (!document || document.organizationId !== organizationId) {
+      throw new NotFoundError('Evento de documento NFe não encontrado');
+    }
+
+    return serializeNfeDocumentEventWithDocument(event, {
+      id: document.id,
+      number: document.number,
+      series: document.series,
+      direction: document.direction,
+      accessKey: document.accessKey ?? null,
+    });
   }
 
   async createNfeDocumentEventRecord(

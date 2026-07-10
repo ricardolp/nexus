@@ -161,6 +161,28 @@ export function serializeNfeDocumentEvent(event: NfeDocumentEvent) {
   };
 }
 
+export function serializeNfeDocumentEventWithDocument(
+  event: NfeDocumentEvent,
+  document: {
+    id: string;
+    number: number;
+    series: number;
+    direction: string;
+    accessKey: string | null;
+  },
+) {
+  return {
+    ...serializeNfeDocumentEvent(event),
+    document: {
+      id: document.id,
+      number: document.number,
+      series: document.series,
+      direction: document.direction,
+      accessKey: document.accessKey,
+    },
+  };
+}
+
 export function serializeNfseDocumentEvent(event: NfseDocumentEvent) {
   return {
     id: event.id,

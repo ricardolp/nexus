@@ -79,6 +79,16 @@ export const ROUTE_PERMISSION_RULES: RoutePermissionRule[] = [
   },
   {
     method: 'GET',
+    pattern: /^\/organization\/[^/]+\/documents\/nfe\/events$/,
+    permission: 'organization:documents:nfe:events:read',
+  },
+  {
+    method: 'GET',
+    pattern: /^\/organization\/[^/]+\/documents\/nfe\/events\/[^/]+$/,
+    permission: 'organization:documents:nfe:events:read',
+  },
+  {
+    method: 'GET',
     pattern: /^\/organization\/[^/]+\/documents\/nfe\/[^/]+$/,
     permission: 'organization:documents:nfe:read',
   },

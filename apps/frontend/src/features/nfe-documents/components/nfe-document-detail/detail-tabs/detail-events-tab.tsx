@@ -29,7 +29,10 @@ import {
   timelineEntriesForStep,
   type InboundFlowStep,
 } from '../../../lib/build-inbound-steps';
-import type { InboundStepVisualState } from '../../../constants/nfe-status-options';
+import {
+  EVENT_TYPE_LABELS,
+  type InboundStepVisualState,
+} from '../../../constants/nfe-status-options';
 import type {
   NfeDocumentEvent,
   NfeDocumentTimeline,
@@ -59,20 +62,6 @@ const STEP_STATUS_ICON: Record<InboundStepVisualState, React.ReactNode> = {
   warning: <IconAlertTriangle className='size-3.5 text-amber-600' stroke={2.5} />,
   current: <IconLoader2 className='text-primary size-3.5 animate-spin' />,
   pending: null,
-};
-
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  authorization: 'Autorização SEFAZ',
-  xml_import: 'Importação XML',
-  pedido_validation: 'Validação pedido',
-  sap_delivery_create: 'Criação delivery SAP',
-  sap_migo: 'Lançamento MIGO',
-  sap_miro: 'Faturamento MIRO',
-  inbound_status_change: 'Mudança de status',
-  inbound_rejection: 'Rejeição inbound',
-  portaria_confirmation: 'Confirmação portaria',
-  cancellation: 'Cancelamento',
-  correction_letter: 'Carta de correção',
 };
 
 function eventCardStyle(status: string): string {

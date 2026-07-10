@@ -155,6 +155,15 @@ export function DetailHeader({
               <IconFileText className='size-4' />
             </Button>
           )}
+          {!isInbound && (
+            <div className='mt-1 shrink-0'>
+              <DeleteDocumentButton
+                organizationId={organizationId}
+                documentId={document.id}
+                documentNumber={document.number}
+              />
+            </div>
+          )}
         </div>
       </div>
 
@@ -185,20 +194,6 @@ export function DetailHeader({
               Ver detalhes
             </Button>
           )}
-        </div>
-      )}
-
-      {!isInbound && (
-        <div className='flex flex-col gap-3'>
-          <div className='bg-muted/50 text-muted-foreground rounded-lg border border-dashed px-4 py-3 text-sm'>
-            Documento outbound — visualização simplificada. O fluxo SAP inbound não
-            se aplica a esta nota.
-          </div>
-          <DeleteDocumentButton
-            organizationId={organizationId}
-            documentId={document.id}
-            documentNumber={document.number}
-          />
         </div>
       )}
 

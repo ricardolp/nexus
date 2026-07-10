@@ -74,11 +74,7 @@ export class PrismaNfeDocumentEventRepository
   async findPage(
     params: NfeDocumentEventPageParams,
   ): Promise<PageResult<NfeDocumentEvent>> {
-    const where: Prisma.FiscalNfeDocumentEventWhereInput = {
-      deleted_at: null,
-      organization_id: params.organizationId,
-      document_id: params.documentId,
-    };
+    const where = this.buildWhere(params);
     const skip = (params.page - 1) * params.perPage;
 
     const [records, total] = await Promise.all([
@@ -97,6 +93,99 @@ export class PrismaNfeDocumentEventRepository
       perPage: params.perPage,
       total,
     };
+  }
+
+  async findPageWithDocument(params: NfeDocumentEventPageParams): Promise<
+    PageResult<{
+      event: NfeDocumentEvent;
+      document: {
+        id: string;
+        number: number;
+        series: number;
+        direction: string;
+        accessKey: string | null;
+      };
+    }>
+  > {
+    const where = this.buildWhere(params);
+    const skip = (params.page - 1) * params.perPage;
+
+    const [records, total] = await Promise.all([
+      this.prisma.fiscalNfeDocumentEvent.findMany({
+        where,
+        skip,
+        take: params.perPage,
+        orderBy: { created_at: 'desc' },
+        include: {
+          document: {
+            select: {
+              id: true,
+              number: true,
+              series: true,
+              direction: true,
+              access_key: true,
+            },
+          },
+        },
+      }),
+      this.prisma.fiscalNfeDocumentEvent.count({ where }),
+    ]);
+
+    return {
+      items: records.map((record) => ({
+        event: this.toDomain(record),
+        document: {
+          id: record.document.id,
+          number: record.document.number,
+          series: record.document.series,
+          direction: record.document.direction,
+          accessKey: record.document.access_key,
+        },
+      })),
+      page: params.page,
+      perPage: params.perPage,
+      total,
+    };
+  }
+
+  private buildWhere(
+    params: NfeDocumentEventPageParams,
+  ): Prisma.FiscalNfeDocumentEventWhereInput {
+    const where: Prisma.FiscalNfeDocumentEventWhereInput = {
+      deleted_at: null,
+      organization_id: params.organizationId,
+    };
+
+    if (params.documentId) {
+      where.document_id = params.documentId;
+    }
+    if (params.eventType) {
+      where.event_type = params.eventType as FiscalNfeEventType;
+    }
+    if (params.eventStatus) {
+      where.event_status = params.eventStatus as FiscalNfeEventStatus;
+    }
+    if (params.search?.trim()) {
+      const search = params.search.trim();
+      const asNumber = Number(search);
+      where.OR = [
+        { protocol: { contains: search, mode: 'insensitive' } },
+        { sefaz_status_message: { contains: search, mode: 'insensitive' } },
+        { error_message: { contains: search, mode: 'insensitive' } },
+        {
+          document: {
+            OR: [
+              { access_key: { contains: search } },
+              ...(Number.isFinite(asNumber)
+                ? [{ number: asNumber }]
+                : []),
+            ],
+          },
+        },
+      ];
+    }
+
+    return where;
   }
 
   private toPersistence(

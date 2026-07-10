@@ -11,6 +11,9 @@ import type {
   NfeDocumentTimeline,
   NfeFlowInstance,
   NfeInboundProcess,
+  NfeOrganizationEvent,
+  NfeOrganizationEventsListFilters,
+  NfeOrganizationEventsListResponse,
   NfeSapDocument,
   PaginatedResponse,
   RegisterMigoPayload,
@@ -103,6 +106,35 @@ export async function listNfeDocumentEvents(
     `${nfeBase(organizationId)}/${documentId}/events?page=1&perPage=100`,
   );
   if (!response.ok) await parseError(response, 'Falha ao carregar eventos');
+  return response.json();
+}
+
+function buildEventsListParams(filters: NfeOrganizationEventsListFilters) {
+  const params = new URLSearchParams();
+  params.set('page', String(filters.page ?? 1));
+  params.set('perPage', String(filters.perPage ?? 20));
+  if (filters.eventType) params.set('eventType', filters.eventType);
+  if (filters.eventStatus) params.set('eventStatus', filters.eventStatus);
+  if (filters.search) params.set('search', filters.search);
+  return params;
+}
+
+export async function listOrganizationNfeEvents(
+  organizationId: string,
+  filters: NfeOrganizationEventsListFilters = {},
+): Promise<NfeOrganizationEventsListResponse> {
+  const params = buildEventsListParams(filters);
+  const response = await fetch(`${nfeBase(organizationId)}/events?${params}`);
+  if (!response.ok) await parseError(response, 'Falha ao listar eventos');
+  return response.json();
+}
+
+export async function getOrganizationNfeEvent(
+  organizationId: string,
+  eventId: string,
+): Promise<NfeOrganizationEvent> {
+  const response = await fetch(`${nfeBase(organizationId)}/events/${eventId}`);
+  if (!response.ok) await parseError(response, 'Evento não encontrado');
   return response.json();
 }
 

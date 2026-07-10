@@ -147,6 +147,35 @@ export class FiscalController {
     });
   }
 
+  @Get(':organizationId/documents/nfe/events')
+  @UseGuards(OrganizationAccessGuard)
+  @RequirePermission('organization:documents:nfe:events:read')
+  listOrganizationNfeEvents(
+    @Param('organizationId') organizationId: string,
+    @Query('page') page = '1',
+    @Query('perPage') perPage = '20',
+    @Query('eventType') eventType?: string,
+    @Query('eventStatus') eventStatus?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.fiscalFacade.listOrganizationNfeEvents(
+      organizationId,
+      Number(page),
+      Number(perPage),
+      { eventType, eventStatus, search },
+    );
+  }
+
+  @Get(':organizationId/documents/nfe/events/:eventId')
+  @UseGuards(OrganizationAccessGuard)
+  @RequirePermission('organization:documents:nfe:events:read')
+  getOrganizationNfeEvent(
+    @Param('organizationId') organizationId: string,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.fiscalFacade.getOrganizationNfeEvent(organizationId, eventId);
+  }
+
   @Get(':organizationId/documents/nfe/:documentId')
   @UseGuards(OrganizationAccessGuard)
   @RequirePermission('organization:documents:nfe:read')
