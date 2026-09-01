@@ -1,0 +1,15 @@
+{
+  "nfeProc": {
+    "versao": "4.00",
+    "NFe": {
+      "infNFe": {
+        "ide": {
+          "cUF": "35",
+          "mod": "55",
+          "serie": "1",
+          "nNF": "1"
+        }
+      }
+    }
+  }
+}

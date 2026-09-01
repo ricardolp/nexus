@@ -1,0 +1,98 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  - job_name: grafana
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["grafana.railway.internal:3000"]
+
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["loki.railway.internal:3100"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres_exporter.railway.internal:9187"]
+        labels:
+          service: postgres
+          component: database
+
+  - job_name: control_plane_api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["control_plane_api.railway.internal:9090"]
+        labels:
+          service: control_plane_api
+          component: api
+
+  - job_name: inbound_api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["inbound_api.railway.internal:9090"]
+        labels:
+          service: inbound_api
+          component: api
+
+  - job_name: internal_api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["internal_api.railway.internal:9090"]
+        labels:
+          service: internal_api
+          component: api
+
+  - job_name: fiscal_worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fiscal_worker.railway.internal:9090"]
+        labels:
+          service: fiscal_worker
+          component: worker
+
+  - job_name: outbox_relay
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["outbox_relay.railway.internal:9090"]
+        labels:
+          service: outbox_relay
+          component: worker
+
+  - job_name: webhook_dispatcher
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["webhook_dispatcher.railway.internal:9090"]
+        labels:
+          service: webhook_dispatcher
+          component: worker
+
+  - job_name: scheduler
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scheduler.railway.internal:9090"]
+        labels:
+          service: scheduler
+          component: worker
+
+  - job_name: inbound_orchestrator_worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["inbound_orchestrator_worker.railway.internal:9090"]
+        labels:
+          service: inbound_orchestrator_worker
+          component: worker
+
+  - job_name: nfe_query_worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["nfe_query_worker.railway.internal:9090"]
+        labels:
+          service: nfe_query_worker
+          component: worker

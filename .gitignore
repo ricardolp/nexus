@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build / output
+dist/
+dist-ssr/
+bin/
+*.exe
+*.test
+coverage.out
+*.local
+.vite
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local data and caches
+data/
+.pytest_cache/
+.cache/
+.turbo/
+
+# IDE / editor
+.claude/
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini

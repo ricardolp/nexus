@@ -1,0 +1,10 @@
+.venv
+data
+tests
+__pycache__
+.pytest_cache
+.env
+.env.*
+*.log
+.git
+query_worker_run.log

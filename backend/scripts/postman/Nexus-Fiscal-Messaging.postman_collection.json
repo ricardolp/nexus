@@ -1,0 +1,561 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Nexus Fiscal Messaging",
+    "description": "API collection for Control Plane (:4000) and Inbound API (:4001).\n\nSuggested flow:\n1. Auth → Register / Login\n2. Organizations → Create Organization\n3. Companies → Create Company\n4. API Clients → Create API Client\n5. Auth → Client Credentials Token\n6. Fiscal Documents → Receive Document",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_control",
+      "value": "{{base_control}}"
+    },
+    {
+      "key": "base_inbound",
+      "value": "{{base_inbound}}"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Control Plane Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_control}}/health",
+            "description": "Health check do Control Plane API."
+          },
+          "response": []
+        },
+        {
+          "name": "Inbound API Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_inbound}}/health",
+            "description": "Health check do Inbound API."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.id) {",
+                  "    pm.environment.set('user_id', body.id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": "{{base_control}}/v1/auth/register",
+            "description": "Registra um novo usuário na plataforma."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.access_token) {",
+                  "    pm.environment.set('access_token', body.access_token);",
+                  "  }",
+                  "  if (body.user && body.user.id) {",
+                  "    pm.environment.set('user_id', body.user.id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": "{{base_control}}/v1/auth/login",
+            "description": "Autentica o usuário e salva `access_token` no environment.\n\nOpcional: envie `organization_id` no body para emitir token com contexto de organização."
+          },
+          "response": []
+        },
+        {
+          "name": "Login with Organization",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.access_token) {",
+                  "    pm.environment.set('access_token', body.access_token);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"organization_id\": \"{{organization_id}}\"\n}"
+            },
+            "url": "{{base_control}}/v1/auth/login",
+            "description": "Login com `organization_id` para token no contexto da organização."
+          },
+          "response": []
+        },
+        {
+          "name": "Client Credentials Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.access_token) {",
+                  "    pm.environment.set('client_access_token', body.access_token);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grant_type\": \"client_credentials\",\n  \"client_id\": \"{{client_id}}\",\n  \"client_secret\": \"{{client_secret}}\"\n}"
+            },
+            "url": "{{base_control}}/v1/oauth/token",
+            "description": "Emite token de API client (client_credentials) e salva `client_access_token`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Organizations",
+      "item": [
+        {
+          "name": "Create Organization",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.id) {",
+                  "    pm.environment.set('organization_id', body.id);",
+                  "  }",
+                  "  if (body.slug) {",
+                  "    pm.environment.set('organization_slug', body.slug);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legal_name\": \"{{org_legal_name}}\",\n  \"trade_name\": \"{{org_trade_name}}\",\n  \"slug\": \"{{org_slug}}\",\n  \"tax_identifier\": \"{{org_tax_identifier}}\"\n}"
+            },
+            "url": "{{base_control}}/v1/organizations",
+            "description": "Cria organização e salva `organization_id` no environment."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Organization",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_control}}/v1/organizations/{{organization_id}}",
+            "description": "Busca organização por ID."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "item": [
+        {
+          "name": "Create Company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.id) {",
+                  "    pm.environment.set('company_id', body.id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"legal_name\": \"{{company_legal_name}}\",\n  \"trade_name\": \"{{company_trade_name}}\",\n  \"cnpj\": \"{{company_cnpj}}\",\n  \"environment\": \"{{company_environment}}\"\n}"
+            },
+            "url": "{{base_control}}/v1/organizations/{{organization_id}}/companies",
+            "description": "Cria company na organização e salva `company_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "List Companies",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_control}}/v1/organizations/{{organization_id}}/companies",
+            "description": "Lista companies da organização."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "API Clients",
+      "item": [
+        {
+          "name": "Create API Client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.client_secret) {",
+                  "    pm.environment.set('client_secret', body.client_secret);",
+                  "  }",
+                  "  const client = body.client || body;",
+                  "  if (client.client_id) {",
+                  "    pm.environment.set('client_id', client.client_id);",
+                  "  }",
+                  "  if (client.id) {",
+                  "    pm.environment.set('api_client_id', client.id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{api_client_name}}\",\n  \"source_system\": \"{{source_system}}\",\n  \"scopes\": [\n    \"fiscal_documents:create\",\n    \"fiscal_documents:read\"\n  ]\n}"
+            },
+            "url": "{{base_control}}/v1/organizations/{{organization_id}}/api_clients",
+            "description": "Cria API client e salva `client_id` e `client_secret` (secret retornado apenas na criação)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Create Webhook Endpoint",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.id) {",
+                  "    pm.environment.set('webhook_endpoint_id', body.id);",
+                  "  }",
+                  "  if (body.secret) {",
+                  "    pm.environment.set('webhook_secret', body.secret);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{webhook_name}}\",\n  \"url\": \"{{webhook_url}}\",\n  \"organization_company_id\": \"{{company_id}}\",\n  \"event_types\": [\n    \"fiscal_document.received\",\n    \"fiscal_document.status_changed\"\n  ]\n}"
+            },
+            "url": "{{base_control}}/v1/organizations/{{organization_id}}/webhook_endpoints",
+            "description": "Registra endpoint de webhook para a organização."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Fiscal Documents",
+      "item": [
+        {
+          "name": "Receive NFe Document",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('idempotency_key')) {",
+                  "  pm.environment.set('idempotency_key', pm.variables.replaceIn('{{$guid}}'));",
+                  "}",
+                  "if (!pm.environment.get('correlation_id')) {",
+                  "  pm.environment.set('correlation_id', pm.variables.replaceIn('{{$guid}}'));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202 || pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.document_id) {",
+                  "    pm.environment.set('document_id', body.document_id);",
+                  "  }",
+                  "  if (body.trace_id) {",
+                  "    pm.environment.set('trace_id', body.trace_id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{client_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotency_key}}"
+              },
+              {
+                "key": "X-Correlation-Id",
+                "value": "{{correlation_id}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serie\": \"{{nfe_series}}\",\n  \"numero\": \"{{nfe_number}}\",\n  \"cnpj_emitente\": \"{{company_cnpj}}\"\n}"
+            },
+            "url": "{{base_inbound}}/v1/fiscal_documents/nfe",
+            "description": "Recebe documento fiscal (NFe). Usa `client_access_token`.\n\nO corpo é o payload da nota, sem envelope. `document_type` vem da URL; `direction` é sempre `outbound` neste endpoint. `organization_company_id`/`series`/`number`/`issuer_cnpj` são resolvidos no backend a partir das chaves `serie`/`numero`/`cnpj_emitente` deste mesmo JSON.\n\nGera `idempotency_key`/`correlation_id` se estiverem vazios e salva `document_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Document",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{client_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_inbound}}/v1/fiscal_documents/{{document_id}}",
+            "description": "Consulta documento fiscal por ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Document Timeline",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{client_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_inbound}}/v1/fiscal_documents/{{document_id}}/timeline",
+            "description": "Consulta timeline de eventos do documento."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
