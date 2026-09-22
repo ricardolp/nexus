@@ -2,11 +2,14 @@ package inbound
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/audit"
+	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 )
 
 type PatchItemInput struct {
@@ -100,4 +103,81 @@ func (s *Service) GetItem(ctx context.Context, organizationID, itemID uuid.UUID)
 		return nil, err
 	}
 	return &item, nil
+}
+
+type SetItemAlternativeUnitInput struct {
+	OrganizationID uuid.UUID
+	DocumentID     uuid.UUID
+	ItemID         uuid.UUID
+	Unit           string
+	ActorUserID    uuid.UUID
+}
+
+// SetItemAlternativeUnit stores the UOM that should be posted to SAP instead
+// of the XML commercial unit, converting quantity via the material master.
+func (s *Service) SetItemAlternativeUnit(ctx context.Context, in SetItemAlternativeUnitInput) (*Item, error) {
+	var result Item
+	err := s.pool.WithTenant(ctx, in.OrganizationID, func(ctx context.Context, tx pgx.Tx) error {
+		item, err := getItem(ctx, tx, in.OrganizationID, in.ItemID)
+		if err != nil {
+			return err
+		}
+		if item.OrganizationDocumentID != in.DocumentID {
+			return domainerr.NotFound("item_not_found", "Item not found")
+		}
+		before := item
+		unit := strings.ToUpper(strings.TrimSpace(in.Unit))
+		xmlUnit := ""
+		if item.Unit != nil {
+			xmlUnit = *item.Unit
+		}
+
+		if unit == "" || strings.EqualFold(unit, xmlUnit) {
+			item.AlternativeUnit = nil
+			item.AlternativeQuantity = nil
+		} else {
+			code := ""
+			if item.ResolvedMaterialCode != nil && strings.TrimSpace(*item.ResolvedMaterialCode) != "" {
+				code = strings.TrimSpace(*item.ResolvedMaterialCode)
+			} else if item.SupplierMaterialCode != nil {
+				code = strings.TrimSpace(*item.SupplierMaterialCode)
+			}
+			if code == "" {
+				return domainerr.Validation("material_required", "Item has no material code to resolve alternative units")
+			}
+			mat, err := s.orgs.GetMaterialByCode(ctx, in.OrganizationID, code)
+			if err != nil {
+				return err
+			}
+			base := ""
+			if mat.BaseUnit != nil {
+				base = *mat.BaseUnit
+			}
+			qty, err := organization.ConvertQuantity(item.Quantity, xmlUnit, unit, mat.UOMs, base)
+			if err != nil {
+				return err
+			}
+			item.AlternativeUnit = nullEmptyStr(unit)
+			item.AlternativeQuantity = &qty
+		}
+		item.UpdatedAt = time.Now().UTC()
+		if err := updateItemAlternativeUnit(ctx, tx, item); err != nil {
+			return err
+		}
+		result = item
+		return audit.Write(ctx, tx, audit.Event{
+			OrganizationID: &in.OrganizationID,
+			ActorType:      "user",
+			ActorID:        in.ActorUserID.String(),
+			Action:         "inbound.item.alternative_unit",
+			ResourceType:   "organization_nfe_items",
+			ResourceID:     in.ItemID.String(),
+			Before:         before,
+			After:          item,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

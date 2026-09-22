@@ -103,7 +103,8 @@ export function IntegrationFormDialog({
       token_url: values.token_url || undefined,
       sap_client: values.sap_client || undefined,
       sap_language: values.sap_language || undefined,
-      query_params: Object.keys(queryParams).length > 0 ? queryParams : undefined
+      query_params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
+      capabilities: integration?.configuration_json?.capabilities
     };
 
     if (integration) {

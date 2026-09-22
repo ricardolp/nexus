@@ -64,6 +64,16 @@ export const statusLabels: Record<string, { label: string; className: string; do
     label: 'Autorizado',
     className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     dot: 'bg-emerald-500'
+  },
+  cancel_requested: {
+    label: 'Cancelamento solicitado',
+    className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    dot: 'bg-amber-500'
+  },
+  cancelled: {
+    label: 'Cancelado',
+    className: 'bg-slate-500/10 text-slate-600 dark:text-slate-400',
+    dot: 'bg-slate-500'
   }
 };
 
@@ -122,7 +132,7 @@ export function badgeFor(
 export type DocumentListFilter = 'all' | 'action_needed' | 'in_progress' | 'completed' | 'problem';
 
 const ACTION_NEEDED_STATUSES = new Set(['action_required']);
-const COMPLETED_STATUSES = new Set(['completed', 'authorized']);
+const COMPLETED_STATUSES = new Set(['completed', 'authorized', 'cancelled']);
 const PROBLEM_STATUSES = new Set(['blocked', 'rejected', 'failed']);
 
 export function documentListBucket(status: string): Exclude<DocumentListFilter, 'all'> {

@@ -20,16 +20,18 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   token?: string | null;
   formData?: FormData;
   baseUrl?: string;
+  headers?: Record<string, string>;
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const bearer = options.token && options.token.split('.').length === 3 ? options.token : null;
   const headers: Record<string, string> = {
+    ...(options.headers ?? {}),
     ...(bearer ? { Authorization: `Bearer ${bearer}` } : {})
   };
   let body: BodyInit | undefined;

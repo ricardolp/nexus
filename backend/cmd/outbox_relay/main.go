@@ -13,12 +13,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/nexus/fiscal-messaging/internal/config"
+	"github.com/nexus/fiscal-messaging/internal/email"
+	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/identity"
 	"github.com/nexus/fiscal-messaging/internal/messaging"
+	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/broker"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/mailer"
 	"github.com/nexus/fiscal-messaging/internal/platform/metrics"
+	"github.com/nexus/fiscal-messaging/internal/platform/storage"
 	"github.com/nexus/fiscal-messaging/internal/webhook"
 )
 
@@ -40,6 +44,16 @@ func main() {
 	}
 	defer pool.Close()
 
+	store, err := storage.Resolve(cfg.StorageBackend, cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
+	if err != nil {
+		logger.Error("storage", "error", err)
+		os.Exit(1)
+	}
+
+	orgs := organization.NewService(pool)
+	fiscalSvc := fiscal.NewService(pool, store, orgs, cfg.ObjectStoragePrefix)
+	emailSvc := email.NewService(pool, cfg.SecretsEncryptionKey, email.NewFiscalAdapter(fiscalSvc), store, cfg.ObjectStoragePrefix)
+
 	bus, err := broker.Resolve(cfg.BrokerBackend, cfg.RabbitMQURL, logger)
 	if err != nil {
 		logger.Error("broker", "error", err)
@@ -47,11 +61,22 @@ func main() {
 	}
 	defer bus.Close()
 	hooks := webhook.NewService(pool)
-	invites := resolveInviteSender(cfg)
+	invites, mailerKind := mailer.Resolve(mailer.ResolveInput{
+		ResendAPIKey:     cfg.ResendAPIKey,
+		MailtrapAPIToken: cfg.MailtrapAPIToken,
+		MailtrapInboxID:  cfg.MailtrapInboxID,
+		SMTP: mailer.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		},
+	})
 	metricsSrv := metrics.Start(cfg.MetricsAddr, logger)
 	defer metrics.Stop(metricsSrv)
 
-	logger.Info("outbox_relay started", "broker", cfg.BrokerBackend, "mailer", inviteSenderKind(cfg))
+	logger.Info("outbox_relay started", "broker", cfg.BrokerBackend, "mailer", mailerKind)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -61,7 +86,7 @@ func main() {
 			logger.Info("outbox_relay stopping")
 			return
 		case <-ticker.C:
-			n, err := publishBatch(ctx, pool, bus, hooks, inviteMailer{
+			n, err := publishBatch(ctx, pool, bus, hooks, emailSvc, inviteMailer{
 				sender:       invites,
 				from:         cfg.SMTPFrom,
 				publicAppURL: cfg.PublicAppURL,
@@ -85,39 +110,7 @@ type inviteMailer struct {
 	logger       *slog.Logger
 }
 
-func resolveInviteSender(cfg config.Config) mailer.Sender {
-	if cfg.MailtrapAPIToken != "" {
-		return mailer.NewMailtrapSender(mailer.MailtrapConfig{
-			APIToken: cfg.MailtrapAPIToken,
-			InboxID:  cfg.MailtrapInboxID,
-		})
-	}
-	if cfg.SMTPHost != "" {
-		return mailer.NewSMTPSender(mailer.SMTPConfig{
-			Host:     cfg.SMTPHost,
-			Port:     cfg.SMTPPort,
-			Username: cfg.SMTPUsername,
-			Password: cfg.SMTPPassword,
-			From:     cfg.SMTPFrom,
-		})
-	}
-	return nil
-}
-
-func inviteSenderKind(cfg config.Config) string {
-	if cfg.MailtrapAPIToken != "" {
-		if cfg.MailtrapInboxID != "" {
-			return "mailtrap_sandbox"
-		}
-		return "mailtrap_send"
-	}
-	if cfg.SMTPHost != "" {
-		return "smtp"
-	}
-	return "none"
-}
-
-func publishBatch(ctx context.Context, pool *db.Pool, bus broker.Publisher, hooks *webhook.Service, invites inviteMailer) (int, error) {
+func publishBatch(ctx context.Context, pool *db.Pool, bus broker.Publisher, hooks *webhook.Service, emailSvc *email.Service, invites inviteMailer) (int, error) {
 	type publishedEvent struct {
 		payload []byte
 	}
@@ -132,37 +125,58 @@ func publishBatch(ctx context.Context, pool *db.Pool, bus broker.Publisher, hook
 		for _, event := range events {
 			if event.EventType == messaging.EventUserInvited {
 				if err := deliverInviteEmail(ctx, invites, event.PayloadJSON); err != nil {
-					shift := event.AttemptCount
-					if shift > 6 {
-						shift = 6
-					}
-					backoff := time.Duration(1<<shift) * time.Second
-					if markErr := messaging.MarkFailed(ctx, tx, event.ID, err.Error(), backoff); markErr != nil {
+					if markErr := markOutboxFailed(ctx, tx, event, err); markErr != nil {
 						return markErr
 					}
 					continue
 				}
+				if err := messaging.MarkPublished(ctx, tx, event.ID); err != nil {
+					return err
+				}
+				published++
+				continue
 			}
 			if event.EventType == messaging.EventPasswordResetRequested {
 				if err := deliverPasswordResetEmail(ctx, invites, event.PayloadJSON); err != nil {
-					shift := event.AttemptCount
-					if shift > 6 {
-						shift = 6
+					if markErr := markOutboxFailed(ctx, tx, event, err); markErr != nil {
+						return markErr
 					}
-					backoff := time.Duration(1<<shift) * time.Second
-					if markErr := messaging.MarkFailed(ctx, tx, event.ID, err.Error(), backoff); markErr != nil {
+					continue
+				}
+				if err := messaging.MarkPublished(ctx, tx, event.ID); err != nil {
+					return err
+				}
+				published++
+				continue
+			}
+			if event.EventType == messaging.EventDocumentReceived ||
+				event.EventType == messaging.EventDocumentStatusChanged ||
+				strings.HasPrefix(event.EventType, "fiscal.document.authorized") ||
+				strings.HasPrefix(event.EventType, "fiscal.document.rejected") ||
+				strings.HasPrefix(event.EventType, "fiscal.document.failed") ||
+				strings.HasPrefix(event.EventType, "fiscal.document.submitted") {
+				if err := emailSvc.HandleFiscalOutbox(ctx, tx, event.PayloadJSON); err != nil {
+					if markErr := markOutboxFailed(ctx, tx, event, err); markErr != nil {
 						return markErr
 					}
 					continue
 				}
 			}
-			if err := bus.Publish(ctx, event.EventType, event.PayloadJSON); err != nil {
-				shift := event.AttemptCount
-				if shift > 6 {
-					shift = 6
+			if event.EventType == messaging.EventEmailDeliveryRequested {
+				if err := emailSvc.HandleDeliveryOutbox(ctx, event.OrganizationID, event.PayloadJSON); err != nil {
+					if markErr := markOutboxFailed(ctx, tx, event, err); markErr != nil {
+						return markErr
+					}
+					continue
 				}
-				backoff := time.Duration(1<<shift) * time.Second
-				if markErr := messaging.MarkFailed(ctx, tx, event.ID, err.Error(), backoff); markErr != nil {
+				if err := messaging.MarkPublished(ctx, tx, event.ID); err != nil {
+					return err
+				}
+				published++
+				continue
+			}
+			if err := bus.Publish(ctx, event.EventType, event.PayloadJSON); err != nil {
+				if markErr := markOutboxFailed(ctx, tx, event, err); markErr != nil {
 					return markErr
 				}
 				continue
@@ -187,6 +201,15 @@ func publishBatch(ctx context.Context, pool *db.Pool, bus broker.Publisher, hook
 		}
 	}
 	return published, nil
+}
+
+func markOutboxFailed(ctx context.Context, tx pgx.Tx, event messaging.OutboxEvent, err error) error {
+	shift := event.AttemptCount
+	if shift > 6 {
+		shift = 6
+	}
+	backoff := time.Duration(1<<shift) * time.Second
+	return messaging.MarkFailed(ctx, tx, event.ID, err.Error(), backoff)
 }
 
 func deliverInviteEmail(ctx context.Context, invites inviteMailer, payload []byte) error {

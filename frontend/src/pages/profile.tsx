@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   BellIcon,
@@ -32,16 +32,42 @@ const profileTabs: { id: ProfileTab; label: string; icon: ReactNode }[] = [
   { id: 'notifications', label: 'Notificações', icon: <BellIcon className="size-4" /> }
 ];
 
+function parseProfileTab(value: string | null): ProfileTab {
+  if (
+    value === 'appearance' ||
+    value === 'security' ||
+    value === 'activity' ||
+    value === 'notifications'
+  ) {
+    return value;
+  }
+  return 'general';
+}
+
 export default function ProfilePage() {
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
   const organization = useAuthStore((s) => s.organization);
   const mfaSetupRequired = useAuthStore((s) => s.mfaSetupRequired);
   const setUserProfile = useAuthStore((s) => s.setUserProfile);
-  const [tab, setTab] = useState<ProfileTab>(mfaSetupRequired ? 'security' : 'general');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseProfileTab(searchParams.get('tab'));
+
+  function setTab(next: ProfileTab) {
+    setSearchParams(
+      (prev) => {
+        const nextParams = new URLSearchParams(prev);
+        if (next === 'general') nextParams.delete('tab');
+        else nextParams.set('tab', next);
+        return nextParams;
+      },
+      { replace: true }
+    );
+  }
 
   useEffect(() => {
     if (mfaSetupRequired) setTab('security');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to MFA gate
   }, [mfaSetupRequired]);
 
   const meQuery = useQuery({
@@ -103,7 +129,7 @@ export default function ProfilePage() {
   if (!authUser || !token) return null;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6" data-tour="profile-page">
       <div className="flex items-center gap-4">
         <Avatar className="size-16">
           {avatarUrl && <AvatarImage src={avatarUrl} alt={name} />}
@@ -157,7 +183,9 @@ export default function ProfilePage() {
             />
           )}
           {tab === 'appearance' && (
-            <ProfileAppearanceTab token={token} appearance={appearance} onUser={setUserProfile} />
+            <div data-tour="profile-appearance">
+              <ProfileAppearanceTab token={token} appearance={appearance} onUser={setUserProfile} />
+            </div>
           )}
           {tab === 'security' && (
             <ProfileSecurityTab token={token} passwordChangedAt={apiUser?.password_changed_at} />

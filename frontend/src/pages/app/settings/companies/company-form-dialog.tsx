@@ -1,11 +1,16 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation } from '@tanstack/react-query';
+import { BuildingIcon, Loader2Icon, SearchIcon } from 'lucide-react';
 import { useForm } from 'react-hook-form';
-import { BuildingIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { z } from 'zod';
 
+import { ApiError } from '@/lib/api';
 import type { ApiCompany } from '@/lib/api-types';
 import { BRAZILIAN_STATES } from '@/lib/brazilian-states';
+import { lookupCNPJ } from '@/lib/endpoints';
+import { useAuthStore } from '@/store/auth-store';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -57,14 +62,41 @@ interface CompanyFormDialogProps {
 
 export function CompanyFormDialog({ open, onOpenChange, company, onSubmit, submitting }: CompanyFormDialogProps) {
   const isEditing = !!company;
+  const token = useAuthStore((s) => s.token);
+  const organizationId = useAuthStore((s) => s.organizationId);
+  const [lookupStatus, setLookupStatus] = useState<string | null>(null);
 
   const form = useForm<CompanyFormValues>({
     resolver: zodResolver(schema),
     defaultValues: emptyValues
   });
 
+  const cnpjValue = form.watch('cnpj');
+  const canLookup =
+    !isEditing && !!token && !!organizationId && cnpjValue.replace(/\D/g, '').length === 14;
+
+  const lookupMutation = useMutation({
+    mutationFn: () => lookupCNPJ(token!, organizationId!, form.getValues('cnpj')),
+    onSuccess: (data) => {
+      const legalName = (data.legal_name || '').trim();
+      const tradeName = (data.trade_name || '').trim() || legalName;
+      if (legalName) form.setValue('legal_name', legalName, { shouldDirty: true, shouldValidate: true });
+      if (tradeName) form.setValue('trade_name', tradeName, { shouldDirty: true, shouldValidate: true });
+      if (data.uf) form.setValue('uf', data.uf.toUpperCase(), { shouldDirty: true, shouldValidate: true });
+      setLookupStatus(data.status?.trim() || 'OK');
+      toast.success('Dados do CNPJ preenchidos — confirme ou ajuste antes de salvar.');
+    },
+    onError: (err) => {
+      setLookupStatus(null);
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível consultar o CNPJ');
+    }
+  });
+
   useEffect(() => {
-    if (open) form.reset(company ? valuesFromCompany(company) : emptyValues);
+    if (open) {
+      form.reset(company ? valuesFromCompany(company) : emptyValues);
+      setLookupStatus(null);
+    }
   }, [open, company, form]);
 
   function handleSubmit(values: CompanyFormValues) {
@@ -97,6 +129,53 @@ export function CompanyFormDialog({ open, onOpenChange, company, onSubmit, submi
           >
             <FormField
               control={form.control}
+              name="cnpj"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>CNPJ</FormLabel>
+                  <div className="flex gap-2">
+                    <FormControl>
+                      <Input
+                        placeholder="00.000.000/0000-00"
+                        disabled={isEditing}
+                        {...field}
+                        onChange={(e) => {
+                          setLookupStatus(null);
+                          field.onChange(e);
+                        }}
+                      />
+                    </FormControl>
+                    {!isEditing ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        disabled={!canLookup || lookupMutation.isPending}
+                        onClick={() => lookupMutation.mutate()}
+                        aria-label="Buscar CNPJ na Receita Federal"
+                        title="Buscar CNPJ"
+                      >
+                        {lookupMutation.isPending ? (
+                          <Loader2Icon className="size-4 animate-spin" />
+                        ) : (
+                          <SearchIcon className="size-4" />
+                        )}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {lookupStatus ? (
+                    <p className="text-muted-foreground text-xs">
+                      Dados sugeridos pela Receita Federal. Situação: {lookupStatus}. Revise antes de
+                      salvar.
+                    </p>
+                  ) : null}
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name="legal_name"
               render={({ field }) => (
                 <FormItem>
@@ -117,20 +196,6 @@ export function CompanyFormDialog({ open, onOpenChange, company, onSubmit, submi
                   <FormLabel>Nome fantasia</FormLabel>
                   <FormControl>
                     <Input placeholder="Opcional" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="cnpj"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>CNPJ</FormLabel>
-                  <FormControl>
-                    <Input placeholder="00.000.000/0000-00" disabled={isEditing} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

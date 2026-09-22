@@ -10,6 +10,7 @@ import (
 
 	"github.com/nexus/fiscal-messaging/internal/config"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/messaging"
 	"github.com/nexus/fiscal-messaging/internal/notification"
 	"github.com/nexus/fiscal-messaging/internal/organization"
@@ -37,7 +38,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	store, err := storage.NewLocalStore(cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
+	store, err := storage.Resolve(cfg.StorageBackend, cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
 	if err != nil {
 		logger.Error("storage", "error", err)
 		os.Exit(1)
@@ -55,7 +56,9 @@ func main() {
 
 	var provider fiscal.Provider = fiscal.StubProvider{}
 	if cfg.FiscalProvider == "messaging" {
-		provider = fiscal.NewMessagingProvider(docs, bus)
+		provider = fiscal.NewMessagingProvider(docs, bus).
+			WithOrganizations(orgs).
+			WithIntegrationLog(integrationlog.NewRecorder(pool, logger))
 	}
 	worker := fiscal.NewWorker(pool, docs, provider)
 
@@ -67,6 +70,12 @@ func main() {
 		return worker.HandleTransmissionResult(ctx, msg.Payload)
 	}); err != nil {
 		logger.Error("subscribe_transmission_result", "error", err)
+		os.Exit(1)
+	}
+	if err := bus.Subscribe(ctx, messaging.EventDocumentEventResult, func(ctx context.Context, msg broker.Message) error {
+		return worker.HandleEventResult(ctx, msg.Payload)
+	}); err != nil {
+		logger.Error("subscribe_event_result", "error", err)
 		os.Exit(1)
 	}
 

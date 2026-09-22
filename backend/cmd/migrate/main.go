@@ -101,14 +101,34 @@ func main() {
 }
 
 func extractSection(sql, section string) string {
-	marker := "-- +migrate " + section
-	idx := strings.Index(sql, marker)
-	if idx < 0 {
-		return sql
+	const (
+		upMarker   = "-- +migrate Up"
+		downMarker = "-- +migrate Down"
+	)
+	switch section {
+	case "Up":
+		start := 0
+		if idx := strings.Index(sql, upMarker); idx >= 0 {
+			start = idx + len(upMarker)
+		}
+		rest := sql[start:]
+		// Always strip Down, even when the file omitted the Up marker.
+		// Otherwise Exec applies DROP TABLE from Down and still records the version.
+		if next := strings.Index(rest, downMarker); next >= 0 {
+			rest = rest[:next]
+		}
+		return strings.TrimSpace(rest)
+	case "Down":
+		idx := strings.Index(sql, downMarker)
+		if idx < 0 {
+			return ""
+		}
+		rest := sql[idx+len(downMarker):]
+		if next := strings.Index(rest, "-- +migrate "); next >= 0 {
+			rest = rest[:next]
+		}
+		return strings.TrimSpace(rest)
+	default:
+		return strings.TrimSpace(sql)
 	}
-	rest := sql[idx+len(marker):]
-	if next := strings.Index(rest, "-- +migrate "); next >= 0 {
-		rest = rest[:next]
-	}
-	return strings.TrimSpace(rest)
 }

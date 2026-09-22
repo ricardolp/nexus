@@ -172,3 +172,33 @@ export const stepStatusLabels: Record<string, { label: string; className: string
 export function badgeFor(map: Record<string, { label: string; className: string }>, value: string) {
   return map[value] ?? { label: value, className: '' };
 }
+
+/** Pulls the SAP business message out of a stored CPI error (raw JSON or `sap cpi: {...}`). */
+export function extractSapErrorMessage(raw?: string | null): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const body = JSON.parse(jsonMatch[0]) as {
+        erros?: Array<{ message?: string }>;
+        ERROS?: Array<{ message?: string }>;
+      };
+      const msgs = [...(body.erros ?? []), ...(body.ERROS ?? [])]
+        .map((entry) => entry.message?.trim())
+        .filter((msg): msg is string => Boolean(msg))
+        .filter((msg) => !/tabela erros|delivery n[aã]o criada/i.test(msg));
+      if (msgs.length > 0) return [...new Set(msgs)].join('; ');
+      if (typeof (body as { message?: unknown }).message === 'string') {
+        const top = (body as { message: string }).message.trim();
+        if (top) return top;
+      }
+    } catch {
+      // fall through to the stripped prefix
+    }
+  }
+  return trimmed
+    .replace(/^sap cpi:\s*/i, '')
+    .replace(/\s*\((?:sap_error|authentication_failure|sap_timeout)(?:,\s*http \d+)?\)\s*$/i, '')
+    .trim() || trimmed;
+}

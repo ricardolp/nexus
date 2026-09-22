@@ -1,7 +1,8 @@
 # Ignore
 bin/
-data/
+/data/
 .env
 *.exe
 *.test
 coverage.out
+scripts/postman/*environment*.json

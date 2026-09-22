@@ -8,6 +8,7 @@ import {
   login as apiLogin,
   logout as apiLogout,
   refreshAuthToken,
+  switchOrganization as apiSwitchOrganization,
   verifyMfaLogin
 } from '@/lib/endpoints';
 import type { ApiOrganization, ApiUser, LoginResponse, PlatformRole } from '@/lib/api-types';
@@ -48,6 +49,7 @@ interface AuthState {
   completeMfaSetup: () => void;
   clearMfaChallenge: () => void;
   applySession: (res: LoginResponse, role: UserRole) => Promise<'ok' | 'mfa_setup'>;
+  switchOrganization: (organizationId: string) => Promise<void>;
   refreshSession: () => Promise<boolean>;
   signOut: () => void;
   setUserProfile: (user: ApiUser) => void;
@@ -133,6 +135,38 @@ export const useAuthStore = create<AuthState>()(
       rememberBrowser: true,
 
       applySession: (res, role) => finishLogin(res, role, set),
+
+      switchOrganization: async (organizationId) => {
+        const res = await apiSwitchOrganization('cookie', organizationId);
+        const role = get().user?.role ?? (res.user?.platform_role === 'member' ? 'user' : 'admin');
+        if (!res.organization_id) {
+          throw new ApiError({
+            type: 'about:blank',
+            title: 'Erro',
+            status: 500,
+            code: 'invalid_switch_response',
+            detail: 'Resposta de troca de organização incompleta.',
+            trace_id: ''
+          });
+        }
+        set({
+          token: 'cookie',
+          refreshToken: null,
+          tokenExpiresAt: res.expires_at ?? null,
+          user: res.user ? mapUser(res.user, role) : get().user,
+          organizationId: res.organization_id,
+          organization: null,
+          orgLoadError: null
+        });
+        try {
+          const org = await getOrganization('cookie', res.organization_id);
+          set({ organization: org });
+        } catch (err) {
+          set({
+            orgLoadError: err instanceof ApiError ? err.message : 'Não foi possível carregar a organização.'
+          });
+        }
+      },
 
       loginAsAdmin: async (email, password, rememberBrowser = true) => {
         const res = await apiLogin(email, password, rememberBrowser);
@@ -230,13 +264,27 @@ export const useAuthStore = create<AuthState>()(
           const res = await refreshAuthToken();
           if (!res.user) return false;
           const role = get().user?.role ?? (res.user.platform_role === 'member' ? 'user' : 'admin');
+          const nextOrgId = res.organization_id ?? null;
+          const prevOrgId = get().organizationId;
           set({
             token: 'cookie',
             refreshToken: null,
             tokenExpiresAt: res.expires_at ?? null,
             user: mapUser(res.user, role),
-            organizationId: res.organization_id ?? get().organizationId
+            organizationId: nextOrgId
           });
+          if (nextOrgId && nextOrgId !== prevOrgId) {
+            try {
+              const org = await getOrganization('cookie', nextOrgId);
+              set({ organization: org, orgLoadError: null });
+            } catch (err) {
+              set({
+                orgLoadError: err instanceof ApiError ? err.message : 'Não foi possível carregar a organização.'
+              });
+            }
+          } else if (!nextOrgId) {
+            set({ organization: null, orgLoadError: null });
+          }
           return true;
         } catch {
           return false;

@@ -1,13 +1,20 @@
 import { useState } from 'react';
-import { Building2Icon } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Building2Icon, CheckIcon } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { NexusMark } from '@/components/brand/nexus-mark';
 
 import type { ApiOrganization } from '@/lib/api-types';
+import { ApiError } from '@/lib/api';
+import { listMyOrganizations } from '@/lib/endpoints';
+import { useAuthStore } from '@/store/auth-store';
 import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger
@@ -82,6 +89,36 @@ export function OrgHeader({
   organization: ApiOrganization | null;
   loadError: string | null;
 }) {
+  const token = useAuthStore((s) => s.token);
+  const switchOrganization = useAuthStore((s) => s.switchOrganization);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+
+  const orgsQuery = useQuery({
+    queryKey: ['my-organizations'],
+    queryFn: () => listMyOrganizations(token!),
+    enabled: Boolean(token)
+  });
+
+  const items = orgsQuery.data?.items ?? [];
+  const canSwitch = items.length > 1;
+
+  async function handleSwitch(orgId: string) {
+    if (!organization || orgId === organization.id || switchingId) return;
+    setSwitchingId(orgId);
+    try {
+      await switchOrganization(orgId);
+      queryClient.clear();
+      navigate('/app/overview', { replace: true });
+      toast.success('Organização alterada');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível trocar de organização.');
+    } finally {
+      setSwitchingId(null);
+    }
+  }
+
   if (!organization) {
     return (
       <SidebarMenu>
@@ -142,6 +179,35 @@ export function OrgHeader({
               </span>
               <Badge variant="outline">{statusLabels[organization.status] ?? organization.status}</Badge>
             </div>
+            {canSwitch ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-muted-foreground text-xs font-normal">
+                  Trocar organização
+                </DropdownMenuLabel>
+                {items.map((org) => {
+                  const name = org.trade_name || org.legal_name;
+                  const selected = org.id === organization.id;
+                  return (
+                    <DropdownMenuItem
+                      key={org.id}
+                      disabled={selected || switchingId === org.id}
+                      onClick={() => {
+                        void handleSwitch(org.id);
+                      }}
+                      className="gap-2"
+                    >
+                      <OrganizationMark organization={org} displayName={name} />
+                      <div className="grid min-w-0 flex-1 leading-tight">
+                        <span className="truncate font-medium">{name}</span>
+                        <span className="text-muted-foreground truncate text-xs">{org.slug}</span>
+                      </div>
+                      {selected ? <CheckIcon className="text-primary size-4 shrink-0" /> : null}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

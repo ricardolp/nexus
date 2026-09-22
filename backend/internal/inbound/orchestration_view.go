@@ -51,13 +51,18 @@ func (s *Service) GetOrchestrationView(ctx context.Context, organizationID, docu
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	if plan != nil && err == nil {
+	allSteps, err := listPlanSteps(ctx, s.pool, organizationID, documentID)
+	if err != nil {
+		return nil, err
+	}
+	view.HasGeneratedSAPDocument = hasGeneratedSAPDocument(allSteps)
+	if plan != nil && plan.Status != PlanStatusCancelled {
 		view.Plan = plan
-		steps, err := listPlanSteps(ctx, s.pool, organizationID, documentID)
-		if err != nil {
-			return nil, err
+		for _, st := range allSteps {
+			if st.ExecutionPlanID == plan.ID {
+				view.Steps = append(view.Steps, st)
+			}
 		}
-		view.Steps = steps
 	}
 
 	return view, nil

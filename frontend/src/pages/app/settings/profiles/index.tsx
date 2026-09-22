@@ -146,7 +146,7 @@ export default function AccessProfilesPage() {
   const columns = useMemo(() => getRoleColumns(openEdit, setDeletingRole), []);
 
   return (
-    <Card>
+    <Card data-tour="profiles-page">
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div>
           <CardTitle className="flex items-center gap-2">

@@ -2,6 +2,7 @@ package mailer
 
 import (
 	"context"
+	"encoding/base64"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -11,12 +12,20 @@ import (
 	"time"
 )
 
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 type Message struct {
-	From      mail.Address
-	To        []string
-	Subject   string
-	PlainBody string
-	HTMLBody  string
+	From        mail.Address
+	To          []string
+	Cc          []string
+	Subject     string
+	PlainBody   string
+	HTMLBody    string
+	Attachments []Attachment
 }
 
 type Sender interface {
@@ -112,7 +121,9 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 	if err := client.Mail(from); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
 	}
-	for _, to := range msg.To {
+	recipients := append([]string{}, msg.To...)
+	recipients = append(recipients, msg.Cc...)
+	for _, to := range recipients {
 		if err := client.Rcpt(to); err != nil {
 			return fmt.Errorf("smtp rcpt %s: %w", to, err)
 		}
@@ -135,22 +146,73 @@ func (m Message) Bytes() []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", m.From.String())
 	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(m.To, ", "))
+	if len(m.Cc) > 0 {
+		fmt.Fprintf(&b, "Cc: %s\r\n", strings.Join(m.Cc, ", "))
+	}
 	fmt.Fprintf(&b, "Subject: %s\r\n", sanitizeHeader(m.Subject))
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
+
+	body := m.buildBodyPart()
+	if len(m.Attachments) == 0 {
+		b.WriteString(body)
+		return []byte(b.String())
+	}
+
+	const mixed = "nexus-mixed"
+	fmt.Fprintf(&b, "Content-Type: multipart/mixed; boundary=%s\r\n\r\n", mixed)
+	fmt.Fprintf(&b, "--%s\r\n%s", mixed, body)
+	for _, att := range m.Attachments {
+		if len(att.Data) == 0 {
+			continue
+		}
+		ct := att.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		name := att.Filename
+		if name == "" {
+			name = "attachment.bin"
+		}
+		fmt.Fprintf(&b, "--%s\r\nContent-Type: %s\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"%s\"\r\n\r\n",
+			mixed, ct, sanitizeHeader(name))
+		b.WriteString(base64EncodeLines(att.Data))
+		b.WriteString("\r\n")
+	}
+	fmt.Fprintf(&b, "--%s--\r\n", mixed)
+	return []byte(b.String())
+}
+
+func (m Message) buildBodyPart() string {
 	if m.HTMLBody != "" && m.PlainBody != "" {
-		const boundary = "nexus-invite"
+		const boundary = "nexus-alt"
+		var b strings.Builder
 		fmt.Fprintf(&b, "Content-Type: multipart/alternative; boundary=%s\r\n\r\n", boundary)
 		fmt.Fprintf(&b, "--%s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n", boundary, m.PlainBody)
 		fmt.Fprintf(&b, "--%s\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n", boundary, m.HTMLBody)
 		fmt.Fprintf(&b, "--%s--\r\n", boundary)
-		return []byte(b.String())
+		return b.String()
 	}
+	var b strings.Builder
 	if m.HTMLBody != "" {
 		fmt.Fprintf(&b, "Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n", m.HTMLBody)
-		return []byte(b.String())
+		return b.String()
 	}
 	fmt.Fprintf(&b, "Content-Type: text/plain; charset=UTF-8\r\n\r\n%s\r\n", m.PlainBody)
-	return []byte(b.String())
+	return b.String()
+}
+
+func base64EncodeLines(data []byte) string {
+	encoded := base64.StdEncoding.EncodeToString(data)
+	const lineLen = 76
+	var parts []string
+	for i := 0; i < len(encoded); i += lineLen {
+		end := i + lineLen
+		if end > len(encoded) {
+			end = len(encoded)
+		}
+		parts = append(parts, encoded[i:end])
+	}
+	return strings.Join(parts, "\r\n")
 }
 
 func authenticateSMTP(client *smtp.Client, cfg SMTPConfig) error {

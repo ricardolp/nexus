@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nexus/fiscal-messaging/internal/platform/audit"
+	"github.com/nexus/fiscal-messaging/internal/platform/catalogs"
 	"github.com/nexus/fiscal-messaging/internal/platform/crypto"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
@@ -84,8 +85,9 @@ func (s *Service) CreateOrganization(ctx context.Context, in CreateOrganizationI
 			{"member", "invite"}, {"member", "suspend"},
 			{"role", "manage"}, {"company", "manage"},
 			{"nfe", "read"}, {"nfe", "create"}, {"nfe", "cancel"},
-			{"nfse", "read"}, {"nfse", "create"},
+			{"nfse", "read"}, {"nfse", "create"}, {"nfse", "cancel"},
 			{"nfe_inbound", "read"}, {"nfe_inbound", "manage"},
+			{"email", "read"}, {"email", "manage"},
 			{"integration", "manage"}, {"webhook", "manage"}, {"audit", "read"},
 		}
 		for _, p := range perms {
@@ -112,6 +114,10 @@ func (s *Service) CreateOrganization(ctx context.Context, in CreateOrganizationI
 			on conflict (organization_id) do nothing
 		`, org.ID)
 		if err != nil {
+			return err
+		}
+
+		if err := seedOrganizationContractServices(ctx, tx, org.ID, now); err != nil {
 			return err
 		}
 
@@ -445,6 +451,60 @@ func (s *Service) UpdateMemberStatus(ctx context.Context, in UpdateMemberStatusI
 	return &member, nil
 }
 
+// UnlinkSupportMember soft-removes a platform staff membership and allows
+// self-unlink (unlike RemoveMember, which blocks removing yourself).
+func (s *Service) UnlinkSupportMember(ctx context.Context, in RemoveMemberInput) error {
+	if in.MemberID == uuid.Nil || in.OrganizationID == uuid.Nil {
+		return domainerr.Validation("invalid_member_id", "member_id is required")
+	}
+	if in.ActorUserID == uuid.Nil {
+		return domainerr.Validation("actor_required", "actor is required")
+	}
+
+	return s.pool.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var userID uuid.UUID
+		var currentStatus, email, platformRole string
+		row := tx.QueryRow(ctx, `
+			select m.user_id, m.status, u.email, u.platform_role
+			from organization_members m
+			join users u on u.id = m.user_id
+			where m.id = $1 and m.organization_id = $2
+			for update of m
+		`, in.MemberID, in.OrganizationID)
+		if err := row.Scan(&userID, &currentStatus, &email, &platformRole); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domainerr.NotFound("member_not_found", "Member not found")
+			}
+			return err
+		}
+		if currentStatus == "removed" {
+			return domainerr.NotFound("member_not_found", "Member not found")
+		}
+		switch platformRole {
+		case "admin", "system", "support":
+		default:
+			return domainerr.Validation("not_support_member", "Member is not platform staff")
+		}
+
+		if _, err := tx.Exec(ctx, `
+			update organization_members set status = 'removed', suspended_at = null where id = $1
+		`, in.MemberID); err != nil {
+			return err
+		}
+
+		return audit.Write(ctx, tx, audit.Event{
+			OrganizationID: &in.OrganizationID,
+			ActorType:      "user",
+			ActorID:        in.ActorUserID.String(),
+			Action:         "member.support_unlink",
+			ResourceType:   "organization_members",
+			ResourceID:     in.MemberID.String(),
+			Before:         map[string]any{"user_id": userID, "email": email, "status": currentStatus},
+			After:          map[string]any{"status": "removed"},
+		})
+	})
+}
+
 func (s *Service) ListOrganizations(ctx context.Context) ([]Organization, error) {
 	rows, err := s.pool.Query(ctx, `
 		select id, legal_name, trade_name, slug, tax_identifier, logo_url, status, timezone, default_locale, created_at, updated_at
@@ -553,26 +613,6 @@ func (s *Service) CreateCompany(ctx context.Context, in CreateCompanyInput) (*Co
 			return err
 		}
 
-		// Ativa serviços padrão outbound/inbound nfe e nfse.
-		rows, err := tx.Query(ctx, `select id from services where code in ('nfe_outbound','nfse_outbound','nfe_inbound','nfse_inbound') and status = 'active'`)
-		if err != nil {
-			return err
-		}
-		serviceIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-		if err != nil {
-			return err
-		}
-		for _, serviceID := range serviceIDs {
-			_, err = tx.Exec(ctx, `
-				insert into organization_company_services (
-					id, organization_id, organization_company_id, service_id, status, activated_at, created_at
-				) values ($1,$2,$3,$4,'active',$5,$5)
-			`, ids.New(), in.OrganizationID, company.ID, serviceID, now)
-			if err != nil {
-				return err
-			}
-		}
-
 		return audit.Write(ctx, tx, audit.Event{
 			OrganizationID: &in.OrganizationID,
 			ActorType:      "user",
@@ -594,7 +634,7 @@ func (s *Service) CreateCompany(ctx context.Context, in CreateCompanyInput) (*Co
 
 func (s *Service) ListCompanies(ctx context.Context, organizationID uuid.UUID) ([]Company, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, organization_id, legal_name, trade_name, cnpj, uf, environment, status, metadata_json, created_at, updated_at
+		select `+companySelectColumns+`
 		from organization_companies
 		where organization_id = $1
 		order by created_at desc
@@ -603,16 +643,7 @@ func (s *Service) ListCompanies(ctx context.Context, organizationID uuid.UUID) (
 		return nil, err
 	}
 	defer rows.Close()
-
-	var out []Company
-	for rows.Next() {
-		var c Company
-		if err := rows.Scan(&c.ID, &c.OrganizationID, &c.LegalName, &c.TradeName, &c.CNPJ, &c.UF, &c.Environment, &c.Status, &c.MetadataJSON, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, nil
+	return scanCompanyRows(rows)
 }
 
 var allowedCompanyStatuses = map[string]bool{"active": true, "disabled": true}
@@ -652,11 +683,13 @@ func (s *Service) UpdateCompanyStatus(ctx context.Context, in UpdateCompanyStatu
 		}
 
 		row = tx.QueryRow(ctx, `
-			select id, organization_id, legal_name, trade_name, cnpj, uf, environment, status, metadata_json, created_at, updated_at
+			select `+companySelectColumns+`
 			from organization_companies
 			where id = $1
 		`, in.CompanyID)
-		if err := row.Scan(&company.ID, &company.OrganizationID, &company.LegalName, &company.TradeName, &company.CNPJ, &company.UF, &company.Environment, &company.Status, &company.MetadataJSON, &company.CreatedAt, &company.UpdatedAt); err != nil {
+		var err error
+		company, err = scanCompany(row)
+		if err != nil {
 			return err
 		}
 
@@ -691,6 +724,27 @@ func (s *Service) UpdateCompanyDetails(ctx context.Context, in UpdateCompanyDeta
 	if err != nil {
 		return nil, err
 	}
+	ibge := normalizeDigits(in.IBGEMunicipalityCode)
+	if ibge != "" && len(ibge) != 7 {
+		return nil, domainerr.Validation("invalid_ibge_municipality_code", "ibge_municipality_code must be 7 digits")
+	}
+	if ibge != "" {
+		if cat, catErr := catalogs.Get(); catErr == nil {
+			if _, ok := cat.LookupMunicipality(ibge); !ok {
+				return nil, domainerr.Validation("unknown_ibge_municipality_code", "ibge_municipality_code is not in the IBGE catalog")
+			}
+		}
+	}
+	taxRegime := strings.TrimSpace(in.TaxRegime)
+	if taxRegime != "" && taxRegime != "1" && taxRegime != "2" && taxRegime != "3" {
+		return nil, domainerr.Validation("invalid_tax_regime", "tax_regime must be 1 (Não Optante), 2 (MEI) or 3 (ME/EPP)")
+	}
+	specialRegime := strings.TrimSpace(in.SpecialTaxRegime)
+	if specialRegime != "" {
+		if len(specialRegime) != 1 || specialRegime[0] < '0' || specialRegime[0] > '7' {
+			return nil, domainerr.Validation("invalid_special_tax_regime", "special_tax_regime must be a digit 0-7")
+		}
+	}
 
 	var company Company
 	err = s.pool.WithTenant(ctx, in.OrganizationID, func(ctx context.Context, tx pgx.Tx) error {
@@ -713,21 +767,33 @@ func (s *Service) UpdateCompanyDetails(ctx context.Context, in UpdateCompanyDeta
 		}
 
 		now := time.Now().UTC()
+		munReg := optionalTrimmed(in.MunicipalRegistration)
+		var ibgePtr *string
+		if ibge != "" {
+			ibgePtr = &ibge
+		}
+		taxRegimePtr := optionalTrimmed(taxRegime)
+		specialRegimePtr := optionalTrimmed(specialRegime)
+
 		if _, err := tx.Exec(ctx, `
 			update organization_companies
-			set legal_name = $1, trade_name = $2, uf = $3, environment = $4, updated_at = $5
-			where id = $6
-		`, legalName, tradeNamePtr, ufPtr, environment, now, in.CompanyID); err != nil {
+			set legal_name = $1, trade_name = $2, uf = $3, environment = $4,
+			    municipal_registration = $5, ibge_municipality_code = $6,
+			    tax_regime = $7, special_tax_regime = $8, updated_at = $9
+			where id = $10
+		`, legalName, tradeNamePtr, ufPtr, environment, munReg, ibgePtr, taxRegimePtr, specialRegimePtr, now, in.CompanyID); err != nil {
 			return err
 		}
 
 		row := tx.QueryRow(ctx, `
-			select id, organization_id, legal_name, trade_name, cnpj, uf, environment, status, metadata_json, created_at, updated_at
+			select `+companySelectColumns+`
 			from organization_companies
 			where id = $1
 		`, in.CompanyID)
-		if err := row.Scan(&company.ID, &company.OrganizationID, &company.LegalName, &company.TradeName, &company.CNPJ, &company.UF, &company.Environment, &company.Status, &company.MetadataJSON, &company.CreatedAt, &company.UpdatedAt); err != nil {
-			return err
+		var scanErr error
+		company, scanErr = scanCompany(row)
+		if scanErr != nil {
+			return scanErr
 		}
 
 		return audit.Write(ctx, tx, audit.Event{
@@ -746,38 +812,74 @@ func (s *Service) UpdateCompanyDetails(ctx context.Context, in UpdateCompanyDeta
 	return &company, nil
 }
 
-// ListCompanyServices returns the full active service catalog joined with
-// this company's activation state — every catalog service is represented
-// even if the company has never activated it (status "disabled").
-func (s *Service) ListCompanyServices(ctx context.Context, organizationID, companyID uuid.UUID) ([]CompanyService, error) {
+// ContractServiceCodes are the fiscal product modules controlled at organization
+// (contract) level — menu, route access, and document receive gating.
+var ContractServiceCodes = []string{
+	"nfe_inbound",
+	"nfe_outbound",
+	"nfse_inbound",
+	"nfse_outbound",
+}
+
+func seedOrganizationContractServices(ctx context.Context, tx pgx.Tx, organizationID uuid.UUID, now time.Time) error {
+	rows, err := tx.Query(ctx, `
+		select id from services
+		where code = any($1) and status = 'active'
+	`, ContractServiceCodes)
+	if err != nil {
+		return err
+	}
+	serviceIDs, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return err
+	}
+	for _, serviceID := range serviceIDs {
+		_, err = tx.Exec(ctx, `
+			insert into organization_services (
+				id, organization_id, service_id, status, activated_at, created_at
+			) values ($1,$2,$3,'active',$4,$4)
+			on conflict (organization_id, service_id) do nothing
+		`, ids.New(), organizationID, serviceID, now)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListOrganizationServices returns the contract service catalog joined with
+// this organization's activation state — every contract code is represented
+// even if the org has never activated it (status "disabled").
+func (s *Service) ListOrganizationServices(ctx context.Context, organizationID uuid.UUID) ([]OrganizationService, error) {
 	var exists bool
 	if err := s.pool.QueryRow(ctx, `
-		select exists(select 1 from organization_companies where id = $1 and organization_id = $2)
-	`, companyID, organizationID).Scan(&exists); err != nil {
+		select exists(select 1 from organizations where id = $1)
+	`, organizationID).Scan(&exists); err != nil {
 		return nil, err
 	}
 	if !exists {
-		return nil, domainerr.NotFound("company_not_found", "Company not found")
+		return nil, domainerr.NotFound("organization_not_found", "Organization not found")
 	}
 
 	rows, err := s.pool.Query(ctx, `
 		select svc.id, svc.code, svc.name,
-		       coalesce(ocs.status, 'disabled') as status,
-		       ocs.activated_at, ocs.deactivated_at
+		       coalesce(os.status, 'disabled') as status,
+		       os.activated_at, os.deactivated_at
 		from services svc
-		left join organization_company_services ocs
-			on ocs.service_id = svc.id and ocs.organization_company_id = $1
+		left join organization_services os
+			on os.service_id = svc.id and os.organization_id = $1
 		where svc.status = 'active'
+		  and svc.code = any($2)
 		order by svc.code
-	`, companyID)
+	`, organizationID, ContractServiceCodes)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []CompanyService
+	var out []OrganizationService
 	for rows.Next() {
-		var cs CompanyService
+		var cs OrganizationService
 		if err := rows.Scan(&cs.ServiceID, &cs.ServiceCode, &cs.ServiceName, &cs.Status, &cs.ActivatedAt, &cs.DeactivatedAt); err != nil {
 			return nil, err
 		}
@@ -786,31 +888,31 @@ func (s *Service) ListCompanyServices(ctx context.Context, organizationID, compa
 	return out, nil
 }
 
-var allowedCompanyServiceStatuses = map[string]bool{"active": true, "disabled": true}
+var allowedOrganizationServiceStatuses = map[string]bool{"active": true, "disabled": true}
 
-// UpdateCompanyServiceStatus activates or deactivates a single catalog
-// service (e.g. nfe_inbound/nfe_outbound) for a company, upserting the
-// organization_company_services row since a service may never have been
-// activated before. activated_at/deactivated_at are only touched on the
-// side matching the new status, preserving prior history on the other side.
-func (s *Service) UpdateCompanyServiceStatus(ctx context.Context, in UpdateCompanyServiceStatusInput) (*CompanyService, error) {
-	if !allowedCompanyServiceStatuses[in.Status] {
+// UpdateOrganizationServiceStatus activates or deactivates a contract catalog
+// service for an organization, upserting the organization_services row.
+func (s *Service) UpdateOrganizationServiceStatus(ctx context.Context, in UpdateOrganizationServiceStatusInput) (*OrganizationService, error) {
+	if !allowedOrganizationServiceStatuses[in.Status] {
 		return nil, domainerr.Validation("invalid_status", "status must be 'active' or 'disabled'")
 	}
 
-	var result CompanyService
+	var result OrganizationService
 	err := s.pool.WithTenant(ctx, in.OrganizationID, func(ctx context.Context, tx pgx.Tx) error {
-		var companyExists bool
+		var orgExists bool
 		if err := tx.QueryRow(ctx, `
-			select exists(select 1 from organization_companies where id = $1 and organization_id = $2)
-		`, in.CompanyID, in.OrganizationID).Scan(&companyExists); err != nil {
+			select exists(select 1 from organizations where id = $1)
+		`, in.OrganizationID).Scan(&orgExists); err != nil {
 			return err
 		}
-		if !companyExists {
-			return domainerr.NotFound("company_not_found", "Company not found")
+		if !orgExists {
+			return domainerr.NotFound("organization_not_found", "Organization not found")
 		}
 
-		row := tx.QueryRow(ctx, `select code, name from services where id = $1 and status = 'active'`, in.ServiceID)
+		row := tx.QueryRow(ctx, `
+			select code, name from services
+			where id = $1 and status = 'active' and code = any($2)
+		`, in.ServiceID, ContractServiceCodes)
 		if err := row.Scan(&result.ServiceCode, &result.ServiceName); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return domainerr.NotFound("service_not_found", "Service not found")
@@ -827,32 +929,32 @@ func (s *Service) UpdateCompanyServiceStatus(ctx context.Context, in UpdateCompa
 		}
 
 		err := tx.QueryRow(ctx, `
-			insert into organization_company_services (
-				id, organization_id, organization_company_id, service_id, status, activated_at, deactivated_at, created_at
-			) values ($1,$2,$3,$4,$5,$6,$7,$8)
-			on conflict (organization_company_id, service_id) do update
+			insert into organization_services (
+				id, organization_id, service_id, status, activated_at, deactivated_at, created_at
+			) values ($1,$2,$3,$4,$5,$6,$7)
+			on conflict (organization_id, service_id) do update
 				set status = excluded.status,
-					activated_at = case when excluded.status = 'active' then excluded.activated_at else organization_company_services.activated_at end,
-					deactivated_at = case when excluded.status = 'disabled' then excluded.deactivated_at else organization_company_services.deactivated_at end
+					activated_at = case when excluded.status = 'active' then excluded.activated_at else organization_services.activated_at end,
+					deactivated_at = case when excluded.status = 'disabled' then excluded.deactivated_at else organization_services.deactivated_at end
 			returning status, activated_at, deactivated_at
-		`, ids.New(), in.OrganizationID, in.CompanyID, in.ServiceID, in.Status, activatedAt, deactivatedAt, now).
+		`, ids.New(), in.OrganizationID, in.ServiceID, in.Status, activatedAt, deactivatedAt, now).
 			Scan(&result.Status, &result.ActivatedAt, &result.DeactivatedAt)
 		if err != nil {
 			return err
 		}
 		result.ServiceID = in.ServiceID
 
-		action := "company_service.disable"
+		action := "organization_service.disable"
 		if in.Status == "active" {
-			action = "company_service.activate"
+			action = "organization_service.activate"
 		}
 		return audit.Write(ctx, tx, audit.Event{
 			OrganizationID: &in.OrganizationID,
 			ActorType:      "user",
 			ActorID:        in.ActorUserID.String(),
 			Action:         action,
-			ResourceType:   "organization_company_services",
-			ResourceID:     in.CompanyID.String() + ":" + result.ServiceCode,
+			ResourceType:   "organization_services",
+			ResourceID:     in.OrganizationID.String() + ":" + result.ServiceCode,
 			After:          result,
 		})
 	})
@@ -864,12 +966,12 @@ func (s *Service) UpdateCompanyServiceStatus(ctx context.Context, in UpdateCompa
 
 func (s *Service) GetCompany(ctx context.Context, organizationID, companyID uuid.UUID) (*Company, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, organization_id, legal_name, trade_name, cnpj, uf, environment, status, metadata_json, created_at, updated_at
+		select `+companySelectColumns+`
 		from organization_companies
 		where organization_id = $1 and id = $2
 	`, organizationID, companyID)
-	var c Company
-	if err := row.Scan(&c.ID, &c.OrganizationID, &c.LegalName, &c.TradeName, &c.CNPJ, &c.UF, &c.Environment, &c.Status, &c.MetadataJSON, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	c, err := scanCompany(row)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domainerr.NotFound("company_not_found", "Company not found")
 		}
@@ -880,12 +982,12 @@ func (s *Service) GetCompany(ctx context.Context, organizationID, companyID uuid
 
 func (s *Service) GetCompanyByCNPJ(ctx context.Context, organizationID uuid.UUID, cnpj string) (*Company, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, organization_id, legal_name, trade_name, cnpj, uf, environment, status, metadata_json, created_at, updated_at
+		select `+companySelectColumns+`
 		from organization_companies
 		where organization_id = $1 and cnpj = $2
 	`, organizationID, NormalizeCNPJ(cnpj))
-	var c Company
-	if err := row.Scan(&c.ID, &c.OrganizationID, &c.LegalName, &c.TradeName, &c.CNPJ, &c.UF, &c.Environment, &c.Status, &c.MetadataJSON, &c.CreatedAt, &c.UpdatedAt); err != nil {
+	c, err := scanCompany(row)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domainerr.Validation("company_not_found", "No company registered for this organization with the given CNPJ")
 		}
@@ -930,6 +1032,218 @@ func (s *Service) ResolveUserOrganization(ctx context.Context, userID uuid.UUID)
 		return uuid.Nil, err
 	}
 	return organizationID, nil
+}
+
+// ListOrganizationsForUser returns active organizations the user belongs to
+// (used by the org switcher and admin staff-link UI).
+func (s *Service) ListOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]Organization, error) {
+	rows, err := s.pool.Query(ctx, `
+		select o.id, o.legal_name, o.trade_name, o.slug, o.tax_identifier, o.logo_url,
+		       o.status, o.timezone, o.default_locale, o.created_at, o.updated_at
+		from organization_members m
+		join organizations o on o.id = m.organization_id
+		where m.user_id = $1
+		  and m.status = 'active'
+		order by o.legal_name asc, o.created_at desc
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Organization
+	for rows.Next() {
+		var org Organization
+		if err := rows.Scan(
+			&org.ID, &org.LegalName, &org.TradeName, &org.Slug, &org.TaxIdentifier, &org.LogoURL,
+			&org.Status, &org.Timezone, &org.DefaultLocale, &org.CreatedAt, &org.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, org)
+	}
+	return out, rows.Err()
+}
+
+// GetRoleBySlug returns a role row by slug within an organization.
+func (s *Service) GetRoleBySlug(ctx context.Context, organizationID uuid.UUID, slug string) (*Role, error) {
+	row := s.pool.QueryRow(ctx, `
+		select id, organization_id, name, slug, description, is_system, is_default, status, created_at, updated_at
+		from organization_roles
+		where organization_id = $1 and slug = $2
+	`, organizationID, strings.TrimSpace(strings.ToLower(slug)))
+	var role Role
+	if err := row.Scan(
+		&role.ID, &role.OrganizationID, &role.Name, &role.Slug, &role.Description,
+		&role.IsSystem, &role.IsDefault, &role.Status, &role.CreatedAt, &role.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domainerr.NotFound("role_not_found", "Role not found")
+		}
+		return nil, err
+	}
+	return &role, nil
+}
+
+// AddSupportMember links a platform staff user to the organization as an
+// active member and grants the system Administrador role so they can run
+// initial tenant setup from /app.
+func (s *Service) AddSupportMember(ctx context.Context, in AddSupportMemberInput) (*MemberWithUser, error) {
+	if in.OrganizationID == uuid.Nil || in.ActorUserID == uuid.Nil {
+		return nil, domainerr.Validation("invalid_input", "organization_id and actor are required")
+	}
+	email := strings.TrimSpace(in.Email)
+	if email == "" && in.UserID == uuid.Nil {
+		return nil, domainerr.Validation("invalid_input", "email or user_id is required")
+	}
+
+	var member *MemberWithUser
+	err := s.pool.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		var userID uuid.UUID
+		var userEmail, platformRole string
+		var row pgx.Row
+		if in.UserID != uuid.Nil {
+			row = tx.QueryRow(ctx, `
+				select id, email, platform_role from users
+				where id = $1 and deleted_at is null
+			`, in.UserID)
+		} else {
+			row = tx.QueryRow(ctx, `
+				select id, email, platform_role from users
+				where email_normalized = $1 and deleted_at is null
+			`, strings.ToLower(email))
+		}
+		if err := row.Scan(&userID, &userEmail, &platformRole); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domainerr.NotFound("user_not_found", "No platform staff user found")
+			}
+			return err
+		}
+		switch platformRole {
+		case "admin", "system", "support":
+		default:
+			return domainerr.Validation("not_platform_staff", "Only platform staff can be linked as support members")
+		}
+
+		now := time.Now().UTC()
+		var memberID uuid.UUID
+		var currentStatus string
+		var createdAt time.Time
+		var joinedAt *time.Time
+		err := tx.QueryRow(ctx, `
+			select id, status, created_at, joined_at from organization_members
+			where organization_id = $1 and user_id = $2
+			for update
+		`, in.OrganizationID, userID).Scan(&memberID, &currentStatus, &createdAt, &joinedAt)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			if currentStatus != "active" {
+				if _, err := tx.Exec(ctx, `
+					update organization_members
+					set status = 'active', joined_at = $2, suspended_at = null
+					where id = $1
+				`, memberID, now); err != nil {
+					return err
+				}
+				joinedAt = &now
+			}
+		} else {
+			memberID = ids.New()
+			createdAt = now
+			joinedAt = &now
+			if _, err := tx.Exec(ctx, `
+				insert into organization_members (id, organization_id, user_id, status, joined_at, created_by_user_id, created_at)
+				values ($1,$2,$3,'active',$4,$5,$4)
+			`, memberID, in.OrganizationID, userID, now, in.ActorUserID); err != nil {
+				return err
+			}
+		}
+
+		var roleID uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			select id from organization_roles
+			where organization_id = $1 and slug = 'administrador' and status = 'active'
+		`, in.OrganizationID).Scan(&roleID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return domainerr.NotFound("admin_role_missing", "Organization Administrador role not found")
+			}
+			return err
+		}
+
+		var hasRole bool
+		if err := tx.QueryRow(ctx, `
+			select exists(
+				select 1 from organization_member_roles
+				where organization_member_id = $1
+				  and organization_role_id = $2
+				  and organization_company_id is null
+			)
+		`, memberID, roleID).Scan(&hasRole); err != nil {
+			return err
+		}
+		if !hasRole {
+			if _, err := tx.Exec(ctx, `
+				insert into organization_member_roles (
+					id, organization_id, organization_member_id, organization_role_id, organization_company_id, valid_from, created_at
+				) values ($1,$2,$3,$4,null,$5,$5)
+			`, ids.New(), in.OrganizationID, memberID, roleID, now); err != nil {
+				return err
+			}
+		}
+
+		joined := joinedAt
+		if joined == nil {
+			joined = &now
+		}
+		member = &MemberWithUser{
+			ID: memberID, UserID: userID, Email: userEmail, PlatformRole: platformRole,
+			Status: "active", JoinedAt: joined, CreatedAt: createdAt,
+		}
+		return audit.Write(ctx, tx, audit.Event{
+			OrganizationID: &in.OrganizationID,
+			ActorType:      "user",
+			ActorID:        in.ActorUserID.String(),
+			Action:         "member.support_link",
+			ResourceType:   "organization_members",
+			ResourceID:     memberID.String(),
+			After:          member,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return member, nil
+}
+
+// ListSupportMembers returns active organization members whose platform role
+// is admin/system/support (linked for tenant setup / support).
+func (s *Service) ListSupportMembers(ctx context.Context, organizationID uuid.UUID) ([]MemberWithUser, error) {
+	rows, err := s.pool.Query(ctx, `
+		select m.id, m.user_id, u.email, u.platform_role, m.status, m.joined_at, m.created_at, u.last_login_at
+		from organization_members m
+		join users u on u.id = m.user_id
+		where m.organization_id = $1
+		  and m.status = 'active'
+		  and u.deleted_at is null
+		  and u.platform_role in ('admin', 'system', 'support')
+		order by u.email asc
+	`, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []MemberWithUser
+	for rows.Next() {
+		var m MemberWithUser
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Email, &m.PlatformRole, &m.Status, &m.JoinedAt, &m.CreatedAt, &m.LastLoginAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 func (s *Service) EnsureActiveOrganization(ctx context.Context, organizationID uuid.UUID) error {
@@ -1547,19 +1861,22 @@ func (s *Service) resetAuthAttempts(ctx context.Context, clientID string) {
 	_, _ = s.pool.Exec(ctx, `delete from organization_api_client_auth_attempts where client_id = $1`, clientID)
 }
 
+// HasCompanyService reports whether the organization's contract includes the
+// given catalog service as active. companyID is kept for call-site compatibility
+// but enablement is organization-scoped.
 func (s *Service) HasCompanyService(ctx context.Context, organizationID, companyID uuid.UUID, serviceCode string) (bool, error) {
+	_ = companyID
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
 		select exists(
 			select 1
-			from organization_company_services ocs
-			join services svc on svc.id = ocs.service_id
-			where ocs.organization_id = $1
-			  and ocs.organization_company_id = $2
-			  and ocs.status = 'active'
-			  and svc.code = $3
+			from organization_services os
+			join services svc on svc.id = os.service_id
+			where os.organization_id = $1
+			  and os.status = 'active'
+			  and svc.code = $2
 			  and svc.status = 'active'
 		)
-	`, organizationID, companyID, serviceCode).Scan(&exists)
+	`, organizationID, serviceCode).Scan(&exists)
 	return exists, err
 }

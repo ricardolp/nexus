@@ -39,6 +39,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Integration, err
 		return nil, err
 	}
 
+	in.Configuration.Capabilities = ResolveCapabilities(in.Configuration.Capabilities)
 	configJSON, err := json.Marshal(in.Configuration)
 	if err != nil {
 		return nil, err
@@ -143,6 +144,14 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*Integration, err
 	if _, ok := allowedStatuses[status]; !ok {
 		return nil, domainerr.Validation("invalid_status", "status must be active, disabled or error")
 	}
+
+	var existingCfg Configuration
+	if len(existing.ConfigurationJSON) > 0 {
+		if err := json.Unmarshal(existing.ConfigurationJSON, &existingCfg); err != nil {
+			return nil, err
+		}
+	}
+	in.Configuration.Capabilities = MergeCapabilities(in.Configuration.Capabilities, existingCfg.Capabilities)
 
 	configJSON, err := json.Marshal(in.Configuration)
 	if err != nil {

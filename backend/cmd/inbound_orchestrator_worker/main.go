@@ -12,6 +12,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/inbound"
 	"github.com/nexus/fiscal-messaging/internal/integration"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/metrics"
@@ -40,7 +41,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	store, err := storage.NewLocalStore(cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
+	store, err := storage.Resolve(cfg.StorageBackend, cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
 	if err != nil {
 		logger.Error("storage", "error", err)
 		os.Exit(1)
@@ -53,7 +54,7 @@ func main() {
 	orgs := organization.NewService(pool)
 	fiscalSvc := fiscal.NewService(pool, store, orgs, cfg.ObjectStoragePrefix)
 	integrations := integration.NewService(pool, cfg.SecretsEncryptionKey)
-	svc := inbound.NewService(pool, fiscalSvc, orgs, integrations)
+	svc := inbound.NewService(pool, fiscalSvc, orgs, integrations).WithIntegrationLog(integrationlog.NewRecorder(pool, logger))
 	worker := inbound.NewWorker(svc)
 
 	metricsSrv := metrics.Start(cfg.MetricsAddr, logger)

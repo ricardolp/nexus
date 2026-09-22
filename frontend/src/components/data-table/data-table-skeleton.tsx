@@ -3,14 +3,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 
 export function DataTableSkeleton({
   columnCount,
-  rowCount = 5
+  rowCount = 5,
+  includeToolbar = true
 }: {
   columnCount: number;
   rowCount?: number;
+  includeToolbar?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <Skeleton className="h-9 w-full max-w-sm" />
+      {includeToolbar ? <Skeleton className="h-9 w-full max-w-sm" /> : null}
       <div className="overflow-hidden rounded-md border">
         <Table>
           <TableHeader>

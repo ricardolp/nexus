@@ -55,6 +55,11 @@ type Configuration struct {
 // to configure a scenario step for (spec §36) — the engine must refuse to
 // resolve a step whose required capability is false rather than fail at
 // call time against SAP.
+//
+// An omitted / all-false object is treated as "no restriction configured"
+// (see ResolveCapabilities). The settings UI historically never wrote these
+// flags, so the Go zero value would otherwise block every mutating call with
+// sap.ErrNotSupported.
 type Capabilities struct {
 	PurchaseOrder          bool `json:"purchaseOrder"`
 	InboundDelivery        bool `json:"inboundDelivery"`
@@ -64,6 +69,50 @@ type Capabilities struct {
 	ServiceEntry           bool `json:"serviceEntry"`
 	DirectGoodsReceipt     bool `json:"directGoodsReceipt"`
 	AutomaticPurchaseOrder bool `json:"automaticPurchaseOrder"`
+}
+
+// DefaultCapabilities enables every adapter operation. Applied when an
+// integration was saved without an explicit capabilities object.
+func DefaultCapabilities() Capabilities {
+	return Capabilities{
+		PurchaseOrder:          true,
+		InboundDelivery:        true,
+		GoodsReceipt:           true,
+		SupplierInvoice:        true,
+		EWM:                    true,
+		ServiceEntry:           true,
+		DirectGoodsReceipt:     true,
+		AutomaticPurchaseOrder: true,
+	}
+}
+
+func (c Capabilities) configured() bool {
+	return c.PurchaseOrder || c.InboundDelivery || c.GoodsReceipt || c.SupplierInvoice ||
+		c.EWM || c.ServiceEntry || c.DirectGoodsReceipt || c.AutomaticPurchaseOrder
+}
+
+// ResolveCapabilities returns c when at least one flag is set, otherwise
+// DefaultCapabilities. Empty JSON (`{}` or omitted) means "no restriction",
+// not "every operation forbidden".
+func ResolveCapabilities(c Capabilities) Capabilities {
+	if !c.configured() {
+		return DefaultCapabilities()
+	}
+	return c
+}
+
+// MergeCapabilities keeps an existing explicit capability set when the
+// incoming payload omitted the object. The integration form round-trips
+// client_id/token_url without capabilities and would otherwise wipe a
+// previously stored gate.
+func MergeCapabilities(incoming, existing Capabilities) Capabilities {
+	if incoming.configured() {
+		return incoming
+	}
+	if existing.configured() {
+		return existing
+	}
+	return DefaultCapabilities()
 }
 
 type CreateInput struct {

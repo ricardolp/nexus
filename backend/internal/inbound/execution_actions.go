@@ -38,13 +38,14 @@ func (s *Service) RebuildExecutionPlan(ctx context.Context, organizationID, docu
 // document (spec §31 "POST /fiscal-documents/{id}/execute") — the coarse
 // counterpart to advancing a specific step_id directly.
 func (s *Service) ExecuteNext(ctx context.Context, organizationID, documentID uuid.UUID, actorType, actorID string) (*PlanStep, error) {
-	if _, err := getLatestPlan(ctx, s.pool, organizationID, documentID); err != nil {
+	plan, err := getLatestPlan(ctx, s.pool, organizationID, documentID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domainerr.Conflict("no_execution_plan", "No execution plan exists for this document yet")
 		}
 		return nil, err
 	}
-	steps, err := listPlanSteps(ctx, s.pool, organizationID, documentID)
+	steps, err := listPlanStepsForPlan(ctx, s.pool, organizationID, plan.ID)
 	if err != nil {
 		return nil, err
 	}

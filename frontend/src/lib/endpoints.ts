@@ -3,13 +3,16 @@ import type {
   ApiAuthSettings,
   ApiCertificate,
   ApiCompany,
-  ApiCompanyService,
+  ApiCompanyNFSeService,
+  ApiOrganizationService,
+  ApiCustomer,
   ApiDocumentEvent,
   ApiExecutionPlan,
   ApiFiscalDocument,
   ApiFiscalDocumentQuery,
   ApiFiscalDocumentQueryDetail,
   ApiInboundOverride,
+  ApiInboundItem,
   ApiInboundScenarioWithRule,
   ApiAPIClient,
   ApiIntegration,
@@ -19,6 +22,8 @@ import type {
   ApiInvitation,
   ApiMember,
   ApiMemberRole,
+  ApiMaterial,
+  ApiMaterialUOM,
   ApiNfeDistributionStatus,
   ApiNotification,
   ApiOrchestrationView,
@@ -26,6 +31,10 @@ import type {
   ApiOrganizationUsage,
   ApiCompanyUsage,
   ApiBillingStatement,
+  ApiEmailCredentials,
+  ApiEmailMessage,
+  ApiEmailTemplate,
+  ApiEmailToken,
   ApiPasswordPolicy,
   ApiPendingFiscalDocument,
   ApiPlanStep,
@@ -33,6 +42,8 @@ import type {
   ApiPlatformStatus,
   ApiPurchaseOrder,
   ApiRequestTrace,
+  ApiIntegrationLog,
+  ApiIntegrationLogList,
   ApiRole,
   ApiAuditEvent,
   ApiSecurityEvent,
@@ -255,6 +266,109 @@ export function updateAuthSettings(
   );
 }
 
+export function getEmailCredentials(token: string, organizationId: string) {
+  return apiFetch<ApiEmailCredentials>(`/v1/organizations/${organizationId}/email-credentials`, { token });
+}
+
+export function updateEmailCredentials(
+  token: string,
+  organizationId: string,
+  body: {
+    host: string;
+    port: number;
+    username: string;
+    password?: string | null;
+    from_name: string;
+    from_address: string;
+    status: string;
+  }
+) {
+  return apiFetch<ApiEmailCredentials>(`/v1/organizations/${organizationId}/email-credentials`, {
+    method: 'PUT',
+    token,
+    body
+  });
+}
+
+export function testEmailCredentials(token: string, organizationId: string, to: string) {
+  return apiFetch<{ status: string }>(`/v1/organizations/${organizationId}/email-credentials/test`, {
+    method: 'POST',
+    token,
+    body: { to }
+  });
+}
+
+export function listEmailTokens(token: string, organizationId: string) {
+  return apiFetch<{ items: ApiEmailToken[] }>(`/v1/organizations/${organizationId}/email-tokens`, { token });
+}
+
+export function listCompanyEmailTemplates(token: string, organizationId: string, companyId: string) {
+  return apiFetch<{ items: ApiEmailTemplate[] }>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/email-templates`,
+    { token }
+  );
+}
+
+export function updateCompanyEmailTemplate(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  processCode: string,
+  body: Partial<{
+    enabled: boolean;
+    subject: string;
+    to_addresses: string[];
+    cc_addresses: string[];
+    body_html: string;
+    from_name: string | null;
+    from_address: string | null;
+    clear_from_override: boolean;
+    attach_xml: boolean;
+    attach_danfe_sefaz: boolean;
+    attach_danfe_custom: boolean;
+    use_partner_email: boolean;
+    use_recipient_email: boolean;
+  }>
+) {
+  return apiFetch<ApiEmailTemplate>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/email-templates/${processCode}`,
+    { method: 'PATCH', token, body }
+  );
+}
+
+export function listEmailMessages(
+  token: string,
+  organizationId: string,
+  params?: { company_id?: string; process_code?: string; status?: string; q?: string; limit?: number }
+) {
+  const qs = new URLSearchParams();
+  if (params?.company_id) qs.set('company_id', params.company_id);
+  if (params?.process_code) qs.set('process_code', params.process_code);
+  if (params?.status) qs.set('status', params.status);
+  if (params?.q) qs.set('q', params.q);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const suffix = qs.toString() ? `?${qs}` : '';
+  return apiFetch<{ items: ApiEmailMessage[] }>(`/v1/organizations/${organizationId}/email-messages${suffix}`, {
+    token
+  });
+}
+
+export function getEmailMessage(token: string, organizationId: string, messageId: string) {
+  return apiFetch<ApiEmailMessage>(`/v1/organizations/${organizationId}/email-messages/${messageId}`, { token });
+}
+
+export function downloadEmailAttachment(
+  token: string,
+  organizationId: string,
+  messageId: string,
+  attachmentId: string
+) {
+  return apiFetchBlob(
+    `/v1/organizations/${organizationId}/email-messages/${messageId}/attachments/${attachmentId}/download`,
+    { token }
+  );
+}
+
 export function getOrganization(token: string, organizationId: string) {
   return apiFetch<ApiOrganization>(`/v1/organizations/${organizationId}`, { token });
 }
@@ -279,6 +393,63 @@ export function updateOrganization(
 
 export function listOrganizations(token: string) {
   return apiFetch<{ items: ApiOrganization[] }>('/v1/organizations', { token });
+}
+
+export function createOrganization(
+  token: string,
+  body: {
+    legal_name: string;
+    trade_name?: string;
+    slug: string;
+    tax_identifier?: string;
+  }
+) {
+  return apiFetch<ApiOrganization>('/v1/organizations', {
+    method: 'POST',
+    token,
+    body
+  });
+}
+
+export function listMyOrganizations(token: string) {
+  return apiFetch<{ items: ApiOrganization[] }>('/v1/users/me/organizations', { token });
+}
+
+export function listUserOrganizations(token: string, userId: string) {
+  return apiFetch<{ items: ApiOrganization[] }>(`/v1/users/${userId}/organizations`, { token });
+}
+
+export function switchOrganization(token: string, organizationId: string) {
+  return apiFetch<LoginResponse>('/v1/auth/switch-organization', {
+    method: 'POST',
+    token,
+    body: { organization_id: organizationId }
+  });
+}
+
+export function listSupportMembers(token: string, organizationId: string) {
+  return apiFetch<{ items: ApiMember[] }>(`/v1/organizations/${organizationId}/support-members`, {
+    token
+  });
+}
+
+export function addSupportMember(
+  token: string,
+  organizationId: string,
+  body: { email?: string; user_id?: string }
+) {
+  return apiFetch<ApiMember>(`/v1/organizations/${organizationId}/support-members`, {
+    method: 'POST',
+    token,
+    body
+  });
+}
+
+export function removeSupportMember(token: string, organizationId: string, memberId: string) {
+  return apiFetch<void>(`/v1/organizations/${organizationId}/support-members/${memberId}`, {
+    method: 'DELETE',
+    token
+  });
 }
 
 export function listPlatformUsers(token: string) {
@@ -441,6 +612,37 @@ export function listRequestTraces(
 
 export function getRequestTrace(token: string, traceId: string) {
   return apiFetch<ApiRequestTrace>(`/v1/request_traces/${traceId}`, { token });
+}
+
+export function listIntegrationLogs(
+  token: string,
+  organizationId: string,
+  params?: {
+    page?: number;
+    limit?: number;
+    level?: string;
+    direction?: string;
+    q?: string;
+  }
+) {
+  const qs = new URLSearchParams();
+  if (params?.page != null) qs.set('page', String(params.page));
+  if (params?.limit != null) qs.set('limit', String(params.limit));
+  if (params?.level) qs.set('level', params.level);
+  if (params?.direction) qs.set('direction', params.direction);
+  if (params?.q) qs.set('q', params.q);
+  const query = qs.toString();
+  return apiFetch<ApiIntegrationLogList>(
+    `/v1/organizations/${organizationId}/integration_logs${query ? `?${query}` : ''}`,
+    { token }
+  );
+}
+
+export function getIntegrationLog(token: string, organizationId: string, logId: string) {
+  return apiFetch<ApiIntegrationLog>(
+    `/v1/organizations/${organizationId}/integration_logs/${logId}`,
+    { token }
+  );
 }
 
 export function listPlatformErrors(
@@ -619,6 +821,12 @@ export function updateIntegration(
 export interface ListFiscalDocumentsParams {
   documentType: 'nfe' | 'nfse';
   status?: string;
+  direction?: 'inbound' | 'outbound';
+  q?: string;
+  fields?: string;
+  number?: string;
+  partner?: string;
+  accessKey?: string;
   limit?: number;
 }
 
@@ -629,6 +837,12 @@ export function listFiscalDocuments(
 ) {
   const query = new URLSearchParams({ document_type: params.documentType });
   if (params.status) query.set('status', params.status);
+  if (params.direction) query.set('direction', params.direction);
+  if (params.q) query.set('q', params.q);
+  if (params.fields) query.set('fields', params.fields);
+  if (params.number) query.set('number', params.number);
+  if (params.partner) query.set('partner', params.partner);
+  if (params.accessKey) query.set('access_key', params.accessKey);
   if (params.limit) query.set('limit', String(params.limit));
   return apiFetch<{ items: ApiFiscalDocument[] }>(
     `/v1/organizations/${organizationId}/fiscal_documents?${query.toString()}`,
@@ -643,6 +857,7 @@ export interface UploadFiscalDocumentXMLResult {
   replayed: boolean;
 }
 
+/** Uploads one inbound NF-e XML. 409 duplicate_access_key when the chave already exists. */
 export function uploadFiscalDocumentXML(
   token: string,
   organizationId: string,
@@ -659,6 +874,32 @@ export function uploadFiscalDocumentXML(
   });
 }
 
+export interface CreateOutboundNFSeResult {
+  document_id: string;
+  trace_id: string;
+  status: string;
+  replayed?: boolean;
+}
+
+/** Emits NFS-e de saída from the Nexus UI (nested SAP JSON body). */
+export function createOutboundNFSe(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  payload: Record<string, unknown>,
+  idempotencyKey: string
+) {
+  return apiFetch<CreateOutboundNFSeResult>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/fiscal_documents/nfse`,
+    {
+      method: 'POST',
+      token,
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: payload
+    }
+  );
+}
+
 // Only documents brought in through uploadFiscalDocumentXML (source_system
 // "manual_upload") can be deleted — the backend rejects anything else, so
 // re-importing a test XML doesn't collide on its own idempotency key.
@@ -667,6 +908,26 @@ export function deleteFiscalDocument(token: string, organizationId: string, docu
     method: 'DELETE',
     token
   });
+}
+
+export function resubmitOutboundDocument(token: string, organizationId: string, documentId: string) {
+  return apiFetch<{ document_id: string; status: string; processing_status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/resubmit`,
+    { method: 'POST', token }
+  );
+}
+
+/** Requests SEFIN cancelamento (101101) for an authorized outbound NFS-e. */
+export function cancelOutboundNFSe(
+  token: string,
+  organizationId: string,
+  documentId: string,
+  body: { c_motivo: '1' | '2' | '9'; justificativa: string }
+) {
+  return apiFetch<{ document_id: string; status: string; processing_status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/cancel`,
+    { method: 'POST', token, body }
+  );
 }
 
 export function getFiscalDocument(token: string, organizationId: string, documentId: string) {
@@ -682,12 +943,31 @@ export function listDocumentEvents(token: string, organizationId: string, docume
   );
 }
 
-export async function downloadFiscalDocument(token: string, organizationId: string, documentId: string) {
+export async function downloadFiscalDocument(
+  token: string,
+  organizationId: string,
+  documentId: string,
+  payloadType?: string
+) {
+  const qs = payloadType ? `?payload_type=${encodeURIComponent(payloadType)}` : '';
   const { blob, filename } = await apiFetchBlob(
-    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/download`,
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/download${qs}`,
     { token }
   );
   triggerBlobDownload(blob, filename);
+}
+
+export async function readFiscalDocumentPayload(
+  token: string,
+  organizationId: string,
+  documentId: string,
+  payloadType: string
+) {
+  const { blob, filename } = await apiFetchBlob(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/download?payload_type=${encodeURIComponent(payloadType)}`,
+    { token }
+  );
+  return { text: await blob.text(), filename, contentType: blob.type };
 }
 
 export async function downloadFiscalDocumentsZip(token: string, organizationId: string, documentIds: string[]) {
@@ -816,6 +1096,10 @@ export interface UpdateCompanyDetailsInput {
   trade_name?: string;
   uf: string;
   environment: 'production' | 'homologation';
+  municipal_registration?: string;
+  ibge_municipality_code?: string;
+  tax_regime?: string;
+  special_tax_regime?: string;
 }
 
 export function updateCompanyDetails(
@@ -831,22 +1115,439 @@ export function updateCompanyDetails(
   });
 }
 
-export function listCompanyServices(token: string, organizationId: string, companyId: string) {
-  return apiFetch<{ items: ApiCompanyService[] }>(
-    `/v1/organizations/${organizationId}/companies/${companyId}/services`,
+export function listCustomers(
+  token: string,
+  organizationId: string,
+  q?: string,
+  opts?: { includeHistory?: boolean }
+) {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set('q', q.trim());
+  if (opts?.includeHistory === false) params.set('include_history', 'false');
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return apiFetch<{ items: ApiCustomer[] }>(`/v1/organizations/${organizationId}/customers${qs}`, { token });
+}
+
+export type CreateCustomerInput = {
+  cpf?: string;
+  cnpj?: string;
+  nif?: string;
+  legal_name: string;
+  email?: string;
+  phone?: string;
+  municipal_registration?: string;
+  street?: string;
+  street_type?: string;
+  number?: string;
+  complement?: string;
+  district?: string;
+  municipality_code?: string;
+  uf?: string;
+  cep?: string;
+};
+
+export function lookupCNPJ(token: string, organizationId: string, cnpj: string) {
+  const digits = cnpj.replace(/\D/g, '');
+  return apiFetch<ApiCNPJLookup>(`/v1/organizations/${organizationId}/lookups/cnpj/${digits}`, { token });
+}
+
+export function lookupCEP(token: string, organizationId: string, cep: string) {
+  const digits = cep.replace(/\D/g, '');
+  return apiFetch<ApiCEPLookup>(`/v1/organizations/${organizationId}/lookups/cep/${digits}`, { token });
+}
+
+export interface ApiCNPJLookup {
+  cnpj: string;
+  legal_name: string;
+  trade_name?: string | null;
+  status?: string;
+  email?: string | null;
+  phone?: string | null;
+  street?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  district?: string | null;
+  municipality_code?: string | null;
+  city?: string | null;
+  uf?: string | null;
+  cep?: string | null;
+  main_activity?: { code: string; description: string; is_primary?: boolean } | null;
+  side_activities?: { code: string; description: string; is_primary?: boolean }[];
+  source?: string;
+}
+
+export interface ApiCEPLookup {
+  cep: string;
+  street: string;
+  complement?: string | null;
+  district: string;
+  city: string;
+  uf: string;
+  municipality_code: string;
+  source?: string;
+}
+
+export interface ApiCatalogCNAE {
+  code: string;
+  description: string;
+}
+
+export interface ApiCatalogNBS {
+  code: string;
+  code_digits?: string;
+  description: string;
+  suggested?: boolean;
+}
+
+export interface ApiCatalogLC116 {
+  code: string;
+  description: string;
+  suggested?: boolean;
+}
+
+export interface ApiCatalogMunicipality {
+  code: string;
+  name: string;
+  uf: string;
+}
+
+export interface ApiCompanyCNAE {
+  id: string;
+  organization_id: string;
+  organization_company_id: string;
+  cnae_code: string;
+  cnae_description?: string | null;
+  is_primary: boolean;
+  enabled: boolean;
+  source?: string;
+}
+
+export function searchCatalogCNAE(token: string, organizationId: string, q: string, limit = 40) {
+  const qs = new URLSearchParams({ q, limit: String(limit) });
+  return apiFetch<{ items: ApiCatalogCNAE[] }>(
+    `/v1/organizations/${organizationId}/catalogs/cnae?${qs}`,
     { token }
   );
 }
 
-export function updateCompanyServiceStatus(
+export function searchCatalogNBS(
+  token: string,
+  organizationId: string,
+  opts: { q?: string; cnae?: string; lc116?: string; suggestedOnly?: boolean; limit?: number } = {}
+) {
+  const qs = new URLSearchParams();
+  if (opts.q) qs.set('q', opts.q);
+  if (opts.cnae) qs.set('cnae', opts.cnae);
+  if (opts.lc116) qs.set('lc116', opts.lc116);
+  if (opts.suggestedOnly) qs.set('suggested_only', '1');
+  qs.set('limit', String(opts.limit ?? 50));
+  return apiFetch<{ items: ApiCatalogNBS[]; suggested_prefixes?: string[] }>(
+    `/v1/organizations/${organizationId}/catalogs/nbs?${qs}`,
+    { token }
+  );
+}
+
+export function searchCatalogLC116(
+  token: string,
+  organizationId: string,
+  opts: { q?: string; cnae?: string; nbs?: string; suggestedOnly?: boolean; limit?: number } = {}
+) {
+  const qs = new URLSearchParams();
+  if (opts.q) qs.set('q', opts.q);
+  if (opts.cnae) qs.set('cnae', opts.cnae);
+  if (opts.nbs) qs.set('nbs', opts.nbs);
+  if (opts.suggestedOnly) qs.set('suggested_only', '1');
+  qs.set('limit', String(opts.limit ?? 50));
+  return apiFetch<{ items: ApiCatalogLC116[]; suggested_codes?: string[] }>(
+    `/v1/organizations/${organizationId}/catalogs/lc116?${qs}`,
+    { token }
+  );
+}
+
+export function searchCatalogMunicipalities(
+  token: string,
+  organizationId: string,
+  opts: { q?: string; uf?: string; limit?: number } = {}
+) {
+  const qs = new URLSearchParams();
+  if (opts.q) qs.set('q', opts.q);
+  if (opts.uf) qs.set('uf', opts.uf);
+  qs.set('limit', String(opts.limit ?? 40));
+  return apiFetch<{ items: ApiCatalogMunicipality[] }>(
+    `/v1/organizations/${organizationId}/catalogs/municipalities?${qs}`,
+    { token }
+  );
+}
+
+export function listCompanyCNAEs(token: string, organizationId: string, companyId: string) {
+  return apiFetch<{ items: ApiCompanyCNAE[] }>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/cnaes`,
+    { token }
+  );
+}
+
+export function syncCompanyCNAEs(token: string, organizationId: string, companyId: string) {
+  return apiFetch<{ items: ApiCompanyCNAE[] }>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/cnaes/sync`,
+    { method: 'POST', token }
+  );
+}
+
+export function updateCompanyCNAE(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  cnaeId: string,
+  input: { enabled: boolean }
+) {
+  return apiFetch<ApiCompanyCNAE>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/cnaes/${cnaeId}`,
+    { method: 'PATCH', token, body: input }
+  );
+}
+
+export function getCustomer(token: string, organizationId: string, customerId: string) {
+  return apiFetch<ApiCustomer>(`/v1/organizations/${organizationId}/customers/${customerId}`, { token });
+}
+
+export function createCustomer(token: string, organizationId: string, input: CreateCustomerInput) {
+  return apiFetch<ApiCustomer>(`/v1/organizations/${organizationId}/customers`, {
+    method: 'POST',
+    token,
+    body: input
+  });
+}
+
+export function updateCustomer(
+  token: string,
+  organizationId: string,
+  customerId: string,
+  input: CreateCustomerInput & { status?: string }
+) {
+  return apiFetch<ApiCustomer>(`/v1/organizations/${organizationId}/customers/${customerId}`, {
+    method: 'PATCH',
+    token,
+    body: input
+  });
+}
+
+export function listMaterials(token: string, organizationId: string, q?: string, code?: string) {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set('q', q.trim());
+  if (code?.trim()) params.set('code', code.trim());
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return apiFetch<{ items: ApiMaterial[] }>(`/v1/organizations/${organizationId}/materials${qs}`, { token });
+}
+
+export function getMaterial(token: string, organizationId: string, materialId: string) {
+  return apiFetch<ApiMaterial>(`/v1/organizations/${organizationId}/materials/${materialId}`, { token });
+}
+
+export type UpsertMaterialInput = {
+  material_code?: string;
+  supplier_material_code?: string;
+  description?: string;
+  base_unit?: string;
+  ncm?: string;
+};
+
+export function createMaterial(token: string, organizationId: string, input: UpsertMaterialInput) {
+  return apiFetch<ApiMaterial>(`/v1/organizations/${organizationId}/materials`, {
+    method: 'POST',
+    token,
+    body: input
+  });
+}
+
+export function updateMaterial(
+  token: string,
+  organizationId: string,
+  materialId: string,
+  input: UpsertMaterialInput
+) {
+  return apiFetch<ApiMaterial>(`/v1/organizations/${organizationId}/materials/${materialId}`, {
+    method: 'PATCH',
+    token,
+    body: input
+  });
+}
+
+export type UpsertMaterialUOMInput = {
+  alternative_unit: string;
+  base_unit?: string;
+  numerator: number;
+  denominator: number;
+};
+
+export function createMaterialUOM(
+  token: string,
+  organizationId: string,
+  materialId: string,
+  input: UpsertMaterialUOMInput
+) {
+  return apiFetch<ApiMaterialUOM>(`/v1/organizations/${organizationId}/materials/${materialId}/uoms`, {
+    method: 'POST',
+    token,
+    body: input
+  });
+}
+
+export function updateMaterialUOM(
+  token: string,
+  organizationId: string,
+  materialId: string,
+  uomId: string,
+  input: UpsertMaterialUOMInput
+) {
+  return apiFetch<ApiMaterialUOM>(
+    `/v1/organizations/${organizationId}/materials/${materialId}/uoms/${uomId}`,
+    { method: 'PATCH', token, body: input }
+  );
+}
+
+export function deleteMaterialUOM(token: string, organizationId: string, materialId: string, uomId: string) {
+  return apiFetch<void>(`/v1/organizations/${organizationId}/materials/${materialId}/uoms/${uomId}`, {
+    method: 'DELETE',
+    token
+  });
+}
+
+export function listCompanyNFSeServices(token: string, organizationId: string, companyId: string) {
+  return apiFetch<{ items: ApiCompanyNFSeService[] }>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse_services`,
+    { token }
+  );
+}
+
+export type UpsertCompanyNFSeServiceInput = {
+  cnae_code: string;
+  cnae_description?: string;
+  service_list_item?: string;
+  service_description?: string;
+  nbs_code?: string;
+  nbs_description?: string;
+  default_iss_aliquot?: number | null;
+  default_discrimination?: string;
+  is_primary?: boolean;
+  is_favorite?: boolean;
+  sort_order?: number;
+  status?: string;
+};
+
+export function createCompanyNFSeService(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  input: UpsertCompanyNFSeServiceInput
+) {
+  return apiFetch<ApiCompanyNFSeService>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse_services`,
+    { method: 'POST', token, body: input }
+  );
+}
+
+export function updateCompanyNFSeService(
   token: string,
   organizationId: string,
   companyId: string,
   serviceId: string,
+  input: UpsertCompanyNFSeServiceInput
+) {
+  return apiFetch<ApiCompanyNFSeService>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse_services/${serviceId}`,
+    { method: 'PATCH', token, body: input }
+  );
+}
+
+export function deleteCompanyNFSeService(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  serviceId: string
+) {
+  return apiFetch<void>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse_services/${serviceId}`,
+    { method: 'DELETE', token }
+  );
+}
+
+export function suggestNextRPS(token: string, organizationId: string, companyId: string) {
+  return apiFetch<{ serie_rps: string; numero_rps: string; from_last: boolean }>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse/next_rps`,
+    { token }
+  );
+}
+
+export function getLastNFSeClassification(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  cnae?: string
+) {
+  const qs = new URLSearchParams();
+  if (cnae) qs.set('cnae', cnae);
+  const suffix = qs.toString() ? `?${qs}` : '';
+  return apiFetch<{
+    found: boolean;
+    cnae_code?: string;
+    item_lista_servico?: string;
+    codigo_nbs?: string;
+    nbs_description?: string | null;
+  }>(`/v1/organizations/${organizationId}/companies/${companyId}/nfse/last_classification${suffix}`, {
+    token
+  });
+}
+
+export type SuggestNFSeClassificationInput = {
+  cnae_code: string;
+  draft_discrimination?: string;
+  current_nbs?: string;
+  current_lc116?: string;
+  customer_id?: string;
+};
+
+export type SuggestNFSeClassificationResult = {
+  codigo_nbs: string;
+  nbs_description: string;
+  item_lista_servico: string;
+  lc116_description: string;
+  discriminacao: string;
+  rationale: string;
+  confidence: number;
+  source: string;
+};
+
+export function suggestNFSeClassification(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  body: SuggestNFSeClassificationInput
+) {
+  return apiFetch<SuggestNFSeClassificationResult>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse/suggest_classification`,
+    {
+      method: 'POST',
+      token,
+      body
+    }
+  );
+}
+
+export function listOrganizationServices(token: string, organizationId: string) {
+  return apiFetch<{ items: ApiOrganizationService[] }>(
+    `/v1/organizations/${organizationId}/services`,
+    { token }
+  );
+}
+
+export function updateOrganizationServiceStatus(
+  token: string,
+  organizationId: string,
+  serviceId: string,
   status: 'active' | 'disabled'
 ) {
-  return apiFetch<ApiCompanyService>(
-    `/v1/organizations/${organizationId}/companies/${companyId}/services/${serviceId}`,
+  return apiFetch<ApiOrganizationService>(
+    `/v1/organizations/${organizationId}/services/${serviceId}`,
     { method: 'PATCH', token, body: { status } }
   );
 }
@@ -1071,6 +1772,19 @@ export function patchInboundItem(
   );
 }
 
+export function setInboundItemAlternativeUnit(
+  token: string,
+  organizationId: string,
+  documentId: string,
+  itemId: string,
+  unit: string
+) {
+  return apiFetch<ApiInboundItem>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/items/${itemId}/alternative_unit`,
+    { method: 'PATCH', token, body: { unit } }
+  );
+}
+
 export type InboundOverrideType =
   | 'VENDOR'
   | 'MATERIAL'
@@ -1120,6 +1834,13 @@ export function searchPurchaseOrders(
 export function reprocessInboundDocument(token: string, organizationId: string, documentId: string) {
   return apiFetch<ApiOrchestrationView>(
     `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/reprocess`,
+    { method: 'POST', token }
+  );
+}
+
+export function resetInboundDocument(token: string, organizationId: string, documentId: string) {
+  return apiFetch<ApiOrchestrationView>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/reset`,
     { method: 'POST', token }
   );
 }

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
-	"github.com/nexus/fiscal-messaging/internal/integration/sap"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 )
 
@@ -22,15 +22,16 @@ type nfeHeader struct {
 	Model             string
 	IssuerCNPJ        string
 	RecipientDocument string
+	IssuedAt          *time.Time
 }
 
 func getNFeHeader(ctx context.Context, tx pgx.Tx, documentID uuid.UUID) (nfeHeader, error) {
 	var h nfeHeader
 	var accessKey, series, number, model, issuerCNPJ, recipientDoc *string
 	err := tx.QueryRow(ctx, `
-		select access_key, series, number, model, issuer_cnpj, recipient_document
+		select access_key, series, number, model, issuer_cnpj, recipient_document, issued_at
 		from organization_nfe where organization_document_id = $1
-	`, documentID).Scan(&accessKey, &series, &number, &model, &issuerCNPJ, &recipientDoc)
+	`, documentID).Scan(&accessKey, &series, &number, &model, &issuerCNPJ, &recipientDoc, &h.IssuedAt)
 	if err != nil {
 		return h, err
 	}
@@ -138,11 +139,12 @@ func (s *Service) processDocument(ctx context.Context, tx pgx.Tx, organizationID
 		items[i].ResolvedMaterialCode = nil
 		items[i].ResolvedPurchaseOrderNumber = nil
 		items[i].ResolvedPurchaseOrderItem = nil
+		items[i].ResolvedPurchaseOrderUnit = nil
 		items[i].Status = ItemStatusPending
 	}
 
 	companyIDCopy := companyID
-	adapter, err := sap.Resolve(ctx, s.integrations, organizationID, &companyIDCopy)
+	adapter, err := s.resolveSAP(ctx, organizationID, &companyIDCopy)
 	if err != nil {
 		return err
 	}
@@ -189,6 +191,7 @@ func (s *Service) processDocument(ctx context.Context, tx pgx.Tx, organizationID
 		if poResolution.ResolvedNumber != "" {
 			item.ResolvedPurchaseOrderNumber = nullEmptyStr(poResolution.ResolvedNumber)
 			item.ResolvedPurchaseOrderItem = nullEmptyStr(poResolution.ResolvedItem)
+			item.ResolvedPurchaseOrderUnit = nullEmptyStr(poResolution.ResolvedUnit)
 		}
 
 		materialMatch, err := matchMaterial(ctx, tx, adapter, organizationID, &companyIDCopy, header.IssuerCNPJ, branchCNPJ, vendorMatchCode(vendorMatch), item)

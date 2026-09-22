@@ -72,7 +72,11 @@ func (s *Service) ListRequestTraces(ctx context.Context, in ListTracesInput) ([]
 	query := fmt.Sprintf(`
 		select id, organization_id, correlation_id, trace_id, span_name, actor_type, actor_id,
 		       http_method, http_path, http_status, duration_ms, request_hash, storage_object_key,
-		       metadata_json, started_at, finished_at, created_at
+		       metadata_json, started_at, finished_at, created_at,
+		       direction, origin, destination, level, summary,
+		       request_headers_json, response_headers_json,
+		       request_body_preview, response_body_preview,
+		       request_payload_key, response_payload_key
 		from request_traces
 		where %s
 		order by started_at desc
@@ -87,20 +91,9 @@ func (s *Service) ListRequestTraces(ctx context.Context, in ListTracesInput) ([]
 
 	items := make([]RequestTrace, 0)
 	for rows.Next() {
-		var t RequestTrace
-		var meta []byte
-		if err := rows.Scan(
-			&t.ID, &t.OrganizationID, &t.CorrelationID, &t.TraceID, &t.SpanName,
-			&t.ActorType, &t.ActorID, &t.HTTPMethod, &t.HTTPPath, &t.HTTPStatus,
-			&t.DurationMs, &t.RequestHash, &t.StorageObjectKey, &meta,
-			&t.StartedAt, &t.FinishedAt, &t.CreatedAt,
-		); err != nil {
+		t, err := scanRequestTrace(rows)
+		if err != nil {
 			return nil, nil, err
-		}
-		if len(meta) == 0 {
-			t.MetadataJSON = json.RawMessage(`{}`)
-		} else {
-			t.MetadataJSON = meta
 		}
 		items = append(items, t)
 	}
@@ -118,32 +111,63 @@ func (s *Service) ListRequestTraces(ctx context.Context, in ListTracesInput) ([]
 }
 
 func (s *Service) GetRequestTrace(ctx context.Context, id uuid.UUID) (*RequestTrace, error) {
-	var t RequestTrace
-	var meta []byte
-	err := s.pool.QueryRow(ctx, `
+	row := s.pool.QueryRow(ctx, `
 		select id, organization_id, correlation_id, trace_id, span_name, actor_type, actor_id,
 		       http_method, http_path, http_status, duration_ms, request_hash, storage_object_key,
-		       metadata_json, started_at, finished_at, created_at
+		       metadata_json, started_at, finished_at, created_at,
+		       direction, origin, destination, level, summary,
+		       request_headers_json, response_headers_json,
+		       request_body_preview, response_body_preview,
+		       request_payload_key, response_payload_key
 		from request_traces
 		where id = $1
-	`, id).Scan(
-		&t.ID, &t.OrganizationID, &t.CorrelationID, &t.TraceID, &t.SpanName,
-		&t.ActorType, &t.ActorID, &t.HTTPMethod, &t.HTTPPath, &t.HTTPStatus,
-		&t.DurationMs, &t.RequestHash, &t.StorageObjectKey, &meta,
-		&t.StartedAt, &t.FinishedAt, &t.CreatedAt,
-	)
+	`, id)
+	t, err := scanRequestTrace(row)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, domainerr.NotFound("request_trace_not_found", "Request trace not found")
 		}
 		return nil, err
 	}
+	return &t, nil
+}
+
+type traceScannable interface {
+	Scan(dest ...any) error
+}
+
+func scanRequestTrace(row traceScannable) (RequestTrace, error) {
+	var t RequestTrace
+	var meta, reqH, respH []byte
+	err := row.Scan(
+		&t.ID, &t.OrganizationID, &t.CorrelationID, &t.TraceID, &t.SpanName,
+		&t.ActorType, &t.ActorID, &t.HTTPMethod, &t.HTTPPath, &t.HTTPStatus,
+		&t.DurationMs, &t.RequestHash, &t.StorageObjectKey, &meta,
+		&t.StartedAt, &t.FinishedAt, &t.CreatedAt,
+		&t.Direction, &t.Origin, &t.Destination, &t.Level, &t.Summary,
+		&reqH, &respH,
+		&t.RequestBodyPreview, &t.ResponseBodyPreview,
+		&t.RequestPayloadKey, &t.ResponsePayloadKey,
+	)
+	if err != nil {
+		return RequestTrace{}, err
+	}
 	if len(meta) == 0 {
 		t.MetadataJSON = json.RawMessage(`{}`)
 	} else {
 		t.MetadataJSON = meta
 	}
-	return &t, nil
+	if len(reqH) == 0 {
+		t.RequestHeadersJSON = json.RawMessage(`{}`)
+	} else {
+		t.RequestHeadersJSON = reqH
+	}
+	if len(respH) == 0 {
+		t.ResponseHeadersJSON = json.RawMessage(`{}`)
+	} else {
+		t.ResponseHeadersJSON = respH
+	}
+	return t, nil
 }
 
 func (s *Service) ListPlatformErrors(ctx context.Context, in ListErrorsInput) ([]PlatformError, *time.Time, error) {

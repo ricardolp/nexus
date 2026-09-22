@@ -2,9 +2,13 @@
 name = "nfe-gateway"
 version = "0.1.0"
 description = "Serviço de mensageria fiscal (SEFAZ/NF-e) baseado em PyNFe, ligado ao backend Go via RabbitMQ."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
-    "pynfe>=0.5",
+    # PyPI 0.6.5 lacks reforma IBS/CBS (NT 2025.002-RTC). Pin a GitHub SHA
+    # via requirements-pynfe.txt / pip install -e ".[dev]" with that file.
+    # Declared here so imports resolve; install with:
+    #   pip install -r requirements-pynfe.txt && pip install -e ".[dev]"
+    "pynfe @ git+https://github.com/TadaSoftware/PyNFe.git@e1e5e7ece6c9a4564d0fc63eba1be85119a3f0ea",
     # PyNFe's own package metadata declares no install_requires (confirmed
     # via `pip show pynfe` — Requires: is empty even though its source
     # imports all of these) — a fresh `pip install -e .` silently omits
@@ -14,6 +18,9 @@ dependencies = [
     "requests>=2.31",
     "signxml>=3.2",
     "pyOpenSSL>=24.0",
+    "certifi>=2024.0",
+    # Mozilla CA bundle + ICP-Brasil roots (SEFAZ/SVRS TLS chains).
+    "certifi-icpbr>=2023.7.3",
     "asyncpg>=0.29",
     "aio-pika>=9.4",
     "httpx>=0.27",
@@ -21,6 +28,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "azure-identity>=1.16",
     "azure-storage-blob>=12.20",
+    "boto3>=1.34",
     "cryptography>=42",
     "structlog>=24.1",
     "prometheus-client>=0.21",

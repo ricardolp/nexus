@@ -6,7 +6,7 @@ import { ApiError } from '@/lib/api';
 import { postLoginPath } from '@/lib/mfa-onboarding';
 import { useAuthStore } from '@/store/auth-store';
 import { MfaChallengeForm } from '@/components/auth/mfa-challenge-form';
-import { AuthShell } from '@/components/brand/auth-shell';
+import { AuthShell, authCardClassName } from '@/components/brand/auth-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -67,7 +67,7 @@ export default function SignInPage() {
 
   return (
     <AuthShell>
-      <Card className="w-full border-white/10 bg-card/95 shadow-2xl shadow-black/40 backdrop-blur-sm">
+      <Card className={authCardClassName}>
         <CardHeader className="text-center">
           <CardTitle className="text-xl">{pendingMfa ? 'Verificação em duas etapas' : 'Entrar'}</CardTitle>
           <CardDescription>

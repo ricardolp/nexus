@@ -7,6 +7,7 @@ package sap
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotSupported is returned by an Adapter method the current
@@ -86,11 +87,19 @@ type OrderRef struct {
 	MaterialCode        string  `json:"material_code,omitempty"`
 	Quantity            float64 `json:"quantity"`
 	UnitPrice           float64 `json:"unit_price"`
+	ItemAmount          float64 `json:"item_amount,omitempty"`
+	Unit                string  `json:"unit,omitempty"`    // NF commercial unit (uCom)
+	POUnit              string  `json:"po_unit,omitempty"` // SAP PO line UOM (MEINS)
+	NFItem              int     `json:"nf_item,omitempty"`
 }
 
 type CreateInboundDeliveryInput struct {
 	PurchaseOrderNumber string     `json:"purchase_order_number"`
 	Items               []OrderRef `json:"items"`
+	Number              string     `json:"number,omitempty"` // NF-e nNF
+	Series              string     `json:"series,omitempty"`
+	DocDate             time.Time  `json:"doc_date,omitempty"`
+	AccessKey           string     `json:"access_key,omitempty"`
 }
 
 type CreateInboundDeliveryResult struct {
@@ -102,6 +111,9 @@ type PostGoodsReceiptInput struct {
 	DeliveryNumber       string     `json:"delivery_number,omitempty"` // empty when receipt_mode=DIRECT_GOODS_RECEIPT (no delivery step)
 	MovementType         string     `json:"movement_type"`
 	Items                []OrderRef `json:"items"`
+	Number               string     `json:"number,omitempty"`
+	Series               string     `json:"series,omitempty"`
+	DocDate              time.Time  `json:"doc_date,omitempty"`
 	ManualDocumentNumber string     `json:"-"` // set when the user posted GR outside the platform (legacy "register-migo" pattern) — never sent to SAP
 }
 
@@ -123,6 +135,11 @@ type PostSupplierInvoiceInput struct {
 	GrossAmount         float64    `json:"gross_amount"`
 	Currency            string     `json:"currency"`
 	Items               []OrderRef `json:"items"`
+	Number              string     `json:"number,omitempty"`
+	Series              string     `json:"series,omitempty"`
+	DocDate             time.Time  `json:"doc_date,omitempty"`
+	AccessKey           string     `json:"access_key,omitempty"`
+	CompanyCode         string     `json:"company_code,omitempty"`
 }
 
 type PostSupplierInvoiceResult struct {

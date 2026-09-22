@@ -9,6 +9,7 @@ import (
 
 const (
 	EventDocumentReceived      = "fiscal.document.received.v1"
+	EventDocumentRetryScheduled = "fiscal.document.retry_scheduled.v1"
 	EventDocumentStatusChanged = "fiscal.document.status_changed.v1"
 	EventWebhookDeliver        = "webhook.delivery_requested.v1"
 	EventUserInvited           = "identity.user_invited.v1"
@@ -22,6 +23,12 @@ const (
 	EventDocumentTransmissionRequested = "fiscal.document.transmission_requested.v1"
 	EventDocumentTransmissionResult    = "fiscal.document.transmission_result.v1"
 
+	EventDocumentCancelRequested         = "fiscal.document.cancel_requested.v1"
+	EventDocumentCCeRequested            = "fiscal.document.cce_requested.v1"
+	EventDocumentInutilizationRequested  = "fiscal.document.inutilization_requested.v1"
+	EventDocumentEventResult             = "fiscal.document.event_result.v1"
+	EventSefazStatusChanged              = "sefaz.status.changed.v1"
+
 	// EventDocumentQueryRequested/Result are the on-demand SEFAZ query
 	// handoff to nfe-gateway (consulta por NSU/chave/lote, disparada pelo
 	// usuário na tela de notas fiscais) — distinta do poller automático de
@@ -29,6 +36,8 @@ const (
 	// Result is consumed by fiscal.QueryConsumer.HandleQueryResult.
 	EventDocumentQueryRequested = "fiscal.document.query_requested.v1"
 	EventDocumentQueryResult    = "fiscal.document.query_result.v1"
+
+	EventEmailDeliveryRequested = "email.delivery_requested.v1"
 )
 
 type CloudEvent struct {

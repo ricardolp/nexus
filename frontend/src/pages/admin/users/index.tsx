@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { getUserColumns } from './columns';
 import { DeleteUserDialog } from './delete-user-dialog';
 import { UserFormSheet, type InviteFormValues } from './user-form-sheet';
+import { UserOrganizationsSheet } from './user-organizations-sheet';
 import { SetPasswordDialog } from '@/components/auth/set-password-dialog';
 import { UserHistorySheet, type UserHistoryTarget } from '@/components/user-history-sheet';
 
@@ -26,6 +27,7 @@ export default function UsersPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [passwordUser, setPasswordUser] = useState<ApiUser | null>(null);
   const [historyUser, setHistoryUser] = useState<ApiUser | null>(null);
+  const [orgsUser, setOrgsUser] = useState<ApiUser | null>(null);
   const [deletingUser, setDeletingUser] = useState<ApiUser | null>(null);
 
   const {
@@ -92,6 +94,7 @@ export default function UsersPage() {
         currentUserId,
         (user) => setPasswordUser(user),
         (user) => setHistoryUser(user),
+        (user) => setOrgsUser(user),
         (user) => setDeletingUser(user)
       ),
     [currentUserId]
@@ -164,6 +167,12 @@ export default function UsersPage() {
         target={historyTarget}
         open={!!historyUser}
         onOpenChange={(open) => !open && setHistoryUser(null)}
+      />
+
+      <UserOrganizationsSheet
+        user={orgsUser}
+        open={!!orgsUser}
+        onOpenChange={(open) => !open && setOrgsUser(null)}
       />
 
       <DeleteUserDialog

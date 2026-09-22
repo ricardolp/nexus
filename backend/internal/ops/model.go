@@ -7,25 +7,36 @@ import (
 	"github.com/google/uuid"
 )
 
-// RequestTrace is a searchable row from request_traces (inbound fiscal today).
+// RequestTrace is a searchable row from request_traces (integration logs).
 type RequestTrace struct {
-	ID               uuid.UUID       `json:"id"`
-	OrganizationID   *uuid.UUID      `json:"organization_id,omitempty"`
-	CorrelationID    uuid.UUID       `json:"correlation_id"`
-	TraceID          uuid.UUID       `json:"trace_id"`
-	SpanName         string          `json:"span_name"`
-	ActorType        *string         `json:"actor_type,omitempty"`
-	ActorID          *string         `json:"actor_id,omitempty"`
-	HTTPMethod       *string         `json:"http_method,omitempty"`
-	HTTPPath         *string         `json:"http_path,omitempty"`
-	HTTPStatus       *int            `json:"http_status,omitempty"`
-	DurationMs       *int            `json:"duration_ms,omitempty"`
-	RequestHash      *string         `json:"request_hash,omitempty"`
-	StorageObjectKey *string         `json:"storage_object_key,omitempty"`
-	MetadataJSON     json.RawMessage `json:"metadata_json"`
-	StartedAt        time.Time       `json:"started_at"`
-	FinishedAt       *time.Time      `json:"finished_at,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
+	ID                  uuid.UUID       `json:"id"`
+	OrganizationID      *uuid.UUID      `json:"organization_id,omitempty"`
+	CorrelationID       uuid.UUID       `json:"correlation_id"`
+	TraceID             uuid.UUID       `json:"trace_id"`
+	SpanName            string          `json:"span_name"`
+	ActorType           *string         `json:"actor_type,omitempty"`
+	ActorID             *string         `json:"actor_id,omitempty"`
+	HTTPMethod          *string         `json:"http_method,omitempty"`
+	HTTPPath            *string         `json:"http_path,omitempty"`
+	HTTPStatus          *int            `json:"http_status,omitempty"`
+	DurationMs          *int            `json:"duration_ms,omitempty"`
+	RequestHash         *string         `json:"request_hash,omitempty"`
+	StorageObjectKey    *string         `json:"storage_object_key,omitempty"`
+	MetadataJSON        json.RawMessage `json:"metadata_json"`
+	StartedAt           time.Time       `json:"started_at"`
+	FinishedAt          *time.Time      `json:"finished_at,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	Direction           *string         `json:"direction,omitempty"`
+	Origin              *string         `json:"origin,omitempty"`
+	Destination         *string         `json:"destination,omitempty"`
+	Level               *string         `json:"level,omitempty"`
+	Summary             *string         `json:"summary,omitempty"`
+	RequestHeadersJSON  json.RawMessage `json:"request_headers_json,omitempty"`
+	ResponseHeadersJSON json.RawMessage `json:"response_headers_json,omitempty"`
+	RequestBodyPreview  *string         `json:"request_body_preview,omitempty"`
+	ResponseBodyPreview *string         `json:"response_body_preview,omitempty"`
+	RequestPayloadKey   *string         `json:"request_payload_key,omitempty"`
+	ResponsePayloadKey  *string         `json:"response_payload_key,omitempty"`
 }
 
 // PlatformError is a unified error row from attempts, inbound steps, or NF-e polls.

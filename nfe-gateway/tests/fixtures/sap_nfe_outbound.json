@@ -1,0 +1,141 @@
+{
+  "natureza_operacao": "VENDA DE MERCADORIA",
+  "serie": "1",
+  "numero": "12345",
+  "codigo_unico": "12345678",
+  "data_emissao": "2026-09-03T10:00:00-03:00",
+  "tipo_documento": "1",
+  "consumidor_final": "1",
+  "presenca_comprador": "1",
+  "finalidade_emissao": "1",
+  "tipo_emissao": "1",
+  "local_destino": "1",
+  "codigo_municipio_fato_gerador": "3550308",
+  "codigo_municipio_fato_gerador_ibs": "3550308",
+  "valor_troco": 0.00,
+  
+  "cnpj_emitente": "12345678000195",
+  "nome_emitente": "EMPRESA EMISSORA LTDA",
+  "nome_fantasia_emitente": "Emissora",
+  "inscricao_estadual_emitente": "123456789012",
+  "regime_tributario_emitente": "3",
+  "logradouro_emitente": "RUA DAS FLORES",
+  "numero_emitente": "123",
+  "bairro_emitente": "CENTRO",
+  "municipio_emitente": "SAO PAULO",
+  "codigo_municipio_emitente": "3550308",
+  "uf_emitente": "SP",
+  "cep_emitente": "01310100",
+  "telefone_emitente": "11999999999",
+  
+  "cnpj_destinatario": "98765432000188",
+  "nome_destinatario": "EMPRESA DESTINATARIA LTDA",
+  "inscricao_estadual_destinatario": "987654321098",
+  "logradouro_destinatario": "AV PRINCIPAL",
+  "numero_destinatario": "456",
+  "bairro_destinatario": "TIJUCA",
+  "codigo_municipio_destinatario": "3304557",
+  "municipio_destinatario": "RIO DE JANEIRO",
+  "uf_destinatario": "RJ",
+  "cep_destinatario": "20000000",
+  "email_destinatario": "contato@destinataria.com.br",
+  
+  "icms_base_calculo": 1000.00,
+  "icms_valor_total": 180.00,
+  "valor_produtos": 1000.00,
+  "valor_frete": 0.00,
+  "valor_seguro": 0.00,
+  "valor_desconto": 0.00,
+  "valor_total_ii": 0.00,
+  "valor_ipi": 0.00,
+  "valor_ipi_devolvido": 0.00,
+  "valor_pis": 16.50,
+  "valor_cofins": 76.00,
+  "valor_outras_despesas": 0.00,
+  "valor_total": 1180.00,
+  "valor_total_tributos": 272.50,
+  
+  "numero_fatura": "FAT-001",
+  "valor_original_fatura": 1180.00,
+  "valor_liquido_fatura": 1180.00,
+  
+  "duplicatas": [
+    {
+      "numero": "001",
+      "data_vencimento": "2026-10-03",
+      "valor": 590.00
+    },
+    {
+      "numero": "002",
+      "data_vencimento": "2026-11-03",
+      "valor": 590.00
+    }
+  ],
+  
+  "formas_pagamento": [
+    {
+      "forma_pagamento": "15",
+      "valor_pagamento": 1180.00
+    }
+  ],
+  
+  "modalidade_frete": "0",
+  "cnpj_transportador": "11222333000144",
+  "nome_transportador": "TRANSPORTADORA XYZ LTDA",
+  "inscricao_estadual_transportador": "111222333444",
+  
+  "informacoes_adicionais_contribuinte": "Nota fiscal de exemplo para testes do SAP outbound",
+  
+  "items": [
+    {
+      "numero_item": 1,
+      "codigo_produto": "PROD-001",
+      "descricao": "PRODUTO DE TESTE",
+      "codigo_ncm": "12345678",
+      "cfop": "5102",
+      "quantidade_comercial": 10.00,
+      "unidade_comercial": "UN",
+      "valor_unitario_comercial": "100.0000000",
+      "valor_bruto": 1000.00,
+      "quantidade_tributavel": 10.00,
+      "unidade_tributavel": "UN",
+      "valor_unitario_tributavel": 100.00,
+      
+      "icms_origem": "0",
+      "icms_cst": "00",
+      "icms_modalidade": "0",
+      "icms_base": 1000.00,
+      "icms_aliquota": 0.18,
+      "icms_valor": 180.00,
+      
+      "ibs_cst": "000",
+      "ibs_c_class_trib": "000001",
+      "ibs_base": 1000.00,
+      "ibs_aliquota_uf": 0.001,
+      "ibs_valor_uf": 1.00,
+      "ibs_aliquota_mun": 0.0,
+      "ibs_valor_mun": 0.0,
+      "ibs_valor": 1.00,
+      "cbs_cst": "000",
+      "cbs_c_class_trib": "000001",
+      "cbs_base": 1000.00,
+      "cbs_aliquota": 0.009,
+      "cbs_valor": 9.00,
+      
+      "ipi_cst": "50",
+      "ipi_base": 1000.00,
+      "ipi_aliquota": 0.00,
+      "ipi_valor": 0.00,
+      
+      "pis_cst": "01",
+      "pis_base": 1000.00,
+      "pis_aliquota": 0.0165,
+      "pis_valor": 16.50,
+      
+      "cofins_cst": "01",
+      "cofins_base": 1000.00,
+      "cofins_aliquota": 0.076,
+      "cofins_valor": 76.00
+    }
+  ]
+}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/platform/crypto"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
@@ -24,6 +25,7 @@ var eventTypePattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 type Service struct {
 	pool   *db.Pool
 	client *http.Client
+	logs   *integrationlog.Recorder
 }
 
 func NewService(pool *db.Pool) *Service {
@@ -36,6 +38,11 @@ func NewService(pool *db.Pool) *Service {
 			},
 		},
 	}
+}
+
+func (s *Service) WithIntegrationLog(rec *integrationlog.Recorder) *Service {
+	s.logs = rec
+	return s
 }
 
 func (s *Service) CreateEndpoint(ctx context.Context, in CreateEndpointInput) (*CreatedEndpoint, error) {
@@ -289,6 +296,7 @@ func (s *Service) deliverOne(ctx context.Context, item pendingDelivery) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, item.URL, bytes.NewReader(item.PayloadJSON))
 	if err != nil {
+		s.recordDeliveryLog(ctx, item, http.MethodPost, item.URL, nil, nil, 0, 0, nil, nil, err)
 		return s.finishDelivery(ctx, item, attempt, 0, 0, "failed", err.Error(), true)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -306,10 +314,12 @@ func (s *Service) deliverOne(ctx context.Context, item pendingDelivery) error {
 	resp, err := client.Do(req)
 	duration := int(time.Since(start).Milliseconds())
 	if err != nil {
+		s.recordDeliveryLog(ctx, item, req.Method, item.URL, req.Header, nil, 0, duration, item.PayloadJSON, nil, err)
 		return s.finishDelivery(ctx, item, attempt, 0, duration, "retry_scheduled", err.Error(), true)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	s.recordDeliveryLog(ctx, item, req.Method, item.URL, req.Header, resp.Header, resp.StatusCode, duration, item.PayloadJSON, respBody, nil)
 
 	if IsSuccessHTTPStatus(resp.StatusCode) {
 		return s.finishDelivery(ctx, item, attempt, resp.StatusCode, duration, "delivered", "", false)
@@ -320,6 +330,54 @@ func (s *Service) deliverOne(ctx context.Context, item pendingDelivery) error {
 		outcome = "retry_scheduled"
 	}
 	return s.finishDelivery(ctx, item, attempt, resp.StatusCode, duration, outcome, fmt.Sprintf("http_%d", resp.StatusCode), retryable)
+}
+
+func (s *Service) recordDeliveryLog(
+	ctx context.Context,
+	item pendingDelivery,
+	method, rawURL string,
+	reqHeader, respHeader http.Header,
+	status, durationMS int,
+	reqBody, respBody []byte,
+	callErr error,
+) {
+	if s.logs == nil {
+		return
+	}
+	orgID := item.OrgID
+	started := time.Now().UTC().Add(-time.Duration(durationMS) * time.Millisecond)
+	finished := time.Now().UTC()
+	summary := method + " " + integrationlog.SanitizeURL(rawURL)
+	level := integrationlog.LevelFromStatus(status)
+	if callErr != nil {
+		level = integrationlog.LevelError
+		summary = summary + ": " + callErr.Error()
+	}
+	var statusPtr *int
+	if status > 0 {
+		statusPtr = &status
+	}
+	path := integrationlog.SanitizeURL(rawURL)
+	s.logs.Record(ctx, integrationlog.Entry{
+		OrganizationID:      &orgID,
+		SpanName:            "outbound.webhook",
+		Direction:           integrationlog.DirectionOutbound,
+		Origin:              "nexus",
+		Destination:         "customer_webhook",
+		Level:               level,
+		Summary:             summary,
+		HTTPMethod:          method,
+		HTTPPath:            path,
+		HTTPStatus:          statusPtr,
+		DurationMs:          &durationMS,
+		RequestHash:         integrationlog.HashBody(reqBody),
+		RequestHeaders:      integrationlog.HeadersJSON(reqHeader),
+		ResponseHeaders:     integrationlog.HeadersJSON(respHeader),
+		RequestBodyPreview:  integrationlog.TruncateBody(reqBody, integrationlog.DefaultBodyPreviewLimit),
+		ResponseBodyPreview: integrationlog.TruncateBody(respBody, integrationlog.DefaultBodyPreviewLimit),
+		StartedAt:           started,
+		FinishedAt:          &finished,
+	})
 }
 
 func (s *Service) finishDelivery(ctx context.Context, item pendingDelivery, attempt, httpStatus, durationMS int, outcome, errMsg string, retryable bool) error {

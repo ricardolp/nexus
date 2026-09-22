@@ -1,0 +1,56 @@
+{
+  "info": {
+    "_postman_id": "5d2dfa46-9923-429f-aefe-c8cbaa2e3d78",
+    "name": "Nexus — SAP NF-e Saída",
+    "description": "SAP envia JSON de NF-e de saída para o Nexus emitir na SEFAZ.\n\nURL: `{{sap_nfe_url}}`\n\n- Auth: header `X-Org-Token`\n- Body: JSON SAP sem envelope\n- Empresa resolvida por `cnpj_emitente`\n\nAtenção: sem barra no final (`/sap/` = 404). Não concatenate path se a URL já estiver completa.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Emitir NF-e (JSON SAP → SEFAZ)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code === 202 || pm.response.code === 200) {",
+              "  const body = pm.response.json();",
+              "  if (body.document_id) pm.environment.set('document_id', body.document_id);",
+              "  if (body.trace_id) pm.environment.set('trace_id', body.trace_id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Org-Token",
+            "value": "{{x_org_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"natureza_operacao\": \"VENDA DE MERCADORIA\",\n  \"serie\": \"{{nfe_series}}\",\n  \"numero\": \"{{nfe_number}}\",\n  \"codigo_unico\": \"12345678\",\n  \"data_emissao\": \"2026-09-03T10:00:00-03:00\",\n  \"tipo_documento\": \"1\",\n  \"consumidor_final\": \"1\",\n  \"presenca_comprador\": \"1\",\n  \"finalidade_emissao\": \"1\",\n  \"tipo_emissao\": \"1\",\n  \"local_destino\": \"1\",\n  \"codigo_municipio_fato_gerador\": \"3550308\",\n  \"codigo_municipio_fato_gerador_ibs\": \"3550308\",\n  \"valor_troco\": 0.0,\n  \"cnpj_emitente\": \"{{company_cnpj_digits}}\",\n  \"nome_emitente\": \"EMPRESA EMISSORA LTDA\",\n  \"nome_fantasia_emitente\": \"Emissora\",\n  \"inscricao_estadual_emitente\": \"123456789012\",\n  \"regime_tributario_emitente\": \"3\",\n  \"logradouro_emitente\": \"RUA DAS FLORES\",\n  \"numero_emitente\": \"123\",\n  \"bairro_emitente\": \"CENTRO\",\n  \"municipio_emitente\": \"SAO PAULO\",\n  \"codigo_municipio_emitente\": \"3550308\",\n  \"uf_emitente\": \"SP\",\n  \"cep_emitente\": \"01310100\",\n  \"telefone_emitente\": \"11999999999\",\n  \"cnpj_destinatario\": \"98765432000188\",\n  \"nome_destinatario\": \"EMPRESA DESTINATARIA LTDA\",\n  \"inscricao_estadual_destinatario\": \"987654321098\",\n  \"logradouro_destinatario\": \"AV PRINCIPAL\",\n  \"numero_destinatario\": \"456\",\n  \"bairro_destinatario\": \"TIJUCA\",\n  \"codigo_municipio_destinatario\": \"3304557\",\n  \"municipio_destinatario\": \"RIO DE JANEIRO\",\n  \"uf_destinatario\": \"RJ\",\n  \"cep_destinatario\": \"20000000\",\n  \"email_destinatario\": \"contato@destinataria.com.br\",\n  \"icms_base_calculo\": 1000.0,\n  \"icms_valor_total\": 180.0,\n  \"valor_produtos\": 1000.0,\n  \"valor_frete\": 0.0,\n  \"valor_seguro\": 0.0,\n  \"valor_desconto\": 0.0,\n  \"valor_total_ii\": 0.0,\n  \"valor_ipi\": 0.0,\n  \"valor_ipi_devolvido\": 0.0,\n  \"valor_pis\": 16.5,\n  \"valor_cofins\": 76.0,\n  \"valor_outras_despesas\": 0.0,\n  \"valor_total\": 1180.0,\n  \"valor_total_tributos\": 272.5,\n  \"numero_fatura\": \"FAT-001\",\n  \"valor_original_fatura\": 1180.0,\n  \"valor_liquido_fatura\": 1180.0,\n  \"duplicatas\": [\n    {\n      \"numero\": \"001\",\n      \"data_vencimento\": \"2026-10-03\",\n      \"valor\": 590.0\n    },\n    {\n      \"numero\": \"002\",\n      \"data_vencimento\": \"2026-11-03\",\n      \"valor\": 590.0\n    }\n  ],\n  \"formas_pagamento\": [\n    {\n      \"forma_pagamento\": \"15\",\n      \"valor_pagamento\": 1180.0\n    }\n  ],\n  \"modalidade_frete\": \"0\",\n  \"cnpj_transportador\": \"11222333000144\",\n  \"nome_transportador\": \"TRANSPORTADORA XYZ LTDA\",\n  \"inscricao_estadual_transportador\": \"111222333444\",\n  \"informacoes_adicionais_contribuinte\": \"Nota fiscal de exemplo para testes do SAP outbound\",\n  \"items\": [\n    {\n      \"numero_item\": 1,\n      \"codigo_produto\": \"PROD-001\",\n      \"descricao\": \"PRODUTO DE TESTE\",\n      \"codigo_ncm\": \"12345678\",\n      \"cfop\": \"5102\",\n      \"quantidade_comercial\": 10.0,\n      \"unidade_comercial\": \"UN\",\n      \"valor_unitario_comercial\": \"100.0000000\",\n      \"valor_bruto\": 1000.0,\n      \"quantidade_tributavel\": 10.0,\n      \"unidade_tributavel\": \"UN\",\n      \"valor_unitario_tributavel\": 100.0,\n      \"icms_origem\": \"0\",\n      \"icms_cst\": \"00\",\n      \"icms_modalidade\": \"0\",\n      \"icms_base\": 1000.0,\n      \"icms_aliquota\": 0.18,\n      \"icms_valor\": 180.0,\n      \"ibs_cst\": \"000\",\n      \"ibs_c_class_trib\": \"000001\",\n      \"ibs_base\": 1000.0,\n      \"ibs_aliquota_uf\": 0.001,\n      \"ibs_valor_uf\": 1.0,\n      \"ibs_aliquota_mun\": 0.0,\n      \"ibs_valor_mun\": 0.0,\n      \"ibs_valor\": 1.0,\n      \"cbs_cst\": \"000\",\n      \"cbs_c_class_trib\": \"000001\",\n      \"cbs_base\": 1000.0,\n      \"cbs_aliquota\": 0.009,\n      \"cbs_valor\": 9.0,\n      \"ipi_cst\": \"50\",\n      \"ipi_base\": 1000.0,\n      \"ipi_aliquota\": 0.0,\n      \"ipi_valor\": 0.0,\n      \"pis_cst\": \"01\",\n      \"pis_base\": 1000.0,\n      \"pis_aliquota\": 0.0165,\n      \"pis_valor\": 16.5,\n      \"cofins_cst\": \"01\",\n      \"cofins_base\": 1000.0,\n      \"cofins_aliquota\": 0.076,\n      \"cofins_valor\": 76.0\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{sap_nfe_url}}",
+        "description": "SAP → Nexus → SEFAZ (direction=outbound).\n\nURL completa em `sap_nfe_url` (não concatene path de novo).\nNão use barra no final — `/sap/` retorna 404.\n\nAuth: header `X-Org-Token`.\nAjuste `company_cnpj_digits` para o CNPJ da empresa emissora."
+      },
+      "response": []
+    }
+  ]
+}

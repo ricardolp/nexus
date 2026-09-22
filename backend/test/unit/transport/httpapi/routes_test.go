@@ -394,13 +394,198 @@ func TestResendMemberInvitationRejectsMemberFromDifferentOrg(t *testing.T) {
 	}
 }
 
-func TestUploadCertificateRequiresAuthentication(t *testing.T) {
+func TestCreateOutboundNFSeRequiresAuthentication(t *testing.T) {
 	t.Parallel()
 
 	req := httptest.NewRequest(
 		http.MethodPost,
-		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/certificates",
+		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/fiscal_documents/nfse",
 		strings.NewReader(`{}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestResubmitOutboundDocumentRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/resubmit",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestCancelOutboundNFSeRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/cancel",
+		strings.NewReader(`{"c_motivo":"1","justificativa":"Erro na emissao da nota"}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListCustomersRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+uuid.NewString()+"/customers", nil)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListMaterialsRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+uuid.NewString()+"/materials", nil)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestUpdateCompanyCNAERequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/cnaes/"+uuid.NewString(),
+		strings.NewReader(`{"enabled":false}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListOrganizationServicesRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/services",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestUpdateOrganizationServiceStatusRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/organizations/"+uuid.NewString()+"/services/"+uuid.NewString(),
+		strings.NewReader(`{"status":"active"}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListCompanyNFSeServicesRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/nfse_services",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestSuggestNextRPSRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/nfse/next_rps",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestLastNFSeClassificationRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/nfse/last_classification?cnae=3314711",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestSuggestNFSeClassificationRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/companies/"+uuid.NewString()+"/nfse/suggest_classification",
+		strings.NewReader(`{"cnae_code":"6201501"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestSearchCatalogLC116RequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/catalogs/lc116?cnae=3314711",
+		nil,
 	)
 	rec := httptest.NewRecorder()
 	testControlPlane().Routes().ServeHTTP(rec, req)
@@ -581,6 +766,38 @@ func TestSetLegacyOrgTokenRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestListIntegrationLogsRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/integration_logs",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestGetIntegrationLogRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/organizations/"+uuid.NewString()+"/integration_logs/"+uuid.NewString(),
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestRotateInboundTokenRequiresAuthentication(t *testing.T) {
 	t.Parallel()
 
@@ -670,6 +887,56 @@ func TestCreateOrganizationRejectsMemberRole(t *testing.T) {
 
 	cp := testControlPlaneWithLiveTokens()
 	req := httptest.NewRequest(http.MethodPost, "/v1/organizations", strings.NewReader(`{"legal_name":"Acme","slug":"acme"}`))
+	req.Header.Set("Authorization", "Bearer "+bearerToken(t, cp, identity.PlatformRoleMember))
+	rec := httptest.NewRecorder()
+	cp.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestListMyOrganizationsRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/users/me/organizations", nil)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestSwitchOrganizationRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/auth/switch-organization", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListSupportMembersRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+uuid.NewString()+"/support-members", nil)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestListUserOrganizationsRejectsMemberRole(t *testing.T) {
+	t.Parallel()
+
+	cp := testControlPlaneWithLiveTokens()
+	req := httptest.NewRequest(http.MethodGet, "/v1/users/"+uuid.NewString()+"/organizations", nil)
 	req.Header.Set("Authorization", "Bearer "+bearerToken(t, cp, identity.PlatformRoleMember))
 	rec := httptest.NewRecorder()
 	cp.Routes().ServeHTTP(rec, req)

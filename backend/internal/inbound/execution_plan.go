@@ -155,7 +155,7 @@ func (s *Service) buildExecutionPlanTx(ctx context.Context, tx pgx.Tx, organizat
 				StepType:               p.stepType,
 				Mode:                   p.mode,
 				DependencyStepID:       previousStepID,
-				IdempotencyKey:         idempotencyKey(documentID, p.stepType, i+1),
+				IdempotencyKey:         idempotencyKey(documentID, plan.Version, p.stepType, i+1),
 				RequestPayloadJSON:     json.RawMessage(`{}`),
 				ResponsePayloadJSON:    json.RawMessage(`{}`),
 				CreatedAt:              now,
@@ -194,8 +194,8 @@ func (s *Service) buildExecutionPlanTx(ctx context.Context, tx pgx.Tx, organizat
 	return &plan, steps, nil
 }
 
-func idempotencyKey(documentID uuid.UUID, stepType string, sequence int) string {
-	return documentID.String() + ":" + stepType + ":" + strconv.Itoa(sequence)
+func idempotencyKey(documentID uuid.UUID, version int, stepType string, sequence int) string {
+	return documentID.String() + ":" + strconv.Itoa(version) + ":" + stepType + ":" + strconv.Itoa(sequence)
 }
 
 func listPlanSteps(ctx context.Context, tx dbtx, organizationID, documentID uuid.UUID) ([]PlanStep, error) {
@@ -210,6 +210,25 @@ func listPlanSteps(ctx context.Context, tx dbtx, organizationID, documentID uuid
 	if err != nil {
 		return nil, err
 	}
+	return collectPlanSteps(rows)
+}
+
+func listPlanStepsForPlan(ctx context.Context, tx dbtx, organizationID, planID uuid.UUID) ([]PlanStep, error) {
+	rows, err := tx.Query(ctx, `
+		select id, organization_id, organization_execution_plan_id, organization_document_id, sequence, step_type,
+		       mode, status, dependency_step_id, idempotency_key, request_payload_json, response_payload_json,
+		       sap_document_number, error_code, error_message_sanitized, started_at, finished_at, created_at, updated_at
+		from organization_execution_plan_steps
+		where organization_id = $1 and organization_execution_plan_id = $2
+		order by sequence
+	`, organizationID, planID)
+	if err != nil {
+		return nil, err
+	}
+	return collectPlanSteps(rows)
+}
+
+func collectPlanSteps(rows pgx.Rows) ([]PlanStep, error) {
 	defer rows.Close()
 	var out []PlanStep
 	for rows.Next() {
@@ -219,7 +238,7 @@ func listPlanSteps(ctx context.Context, tx dbtx, organizationID, documentID uuid
 		}
 		out = append(out, s)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func scanPlanStep(row rowScanner) (PlanStep, error) {

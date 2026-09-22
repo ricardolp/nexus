@@ -32,18 +32,26 @@ type Company struct {
 	// select their endpoint by UF, not just by environment). Nullable
 	// because existing companies predate this field; nfe-gateway can't do
 	// anything real for a company without it set.
-	UF           *string         `json:"uf,omitempty"`
-	Environment  string          `json:"environment"`
-	Status       string          `json:"status"`
-	MetadataJSON json.RawMessage `json:"metadata_json"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	UF *string `json:"uf,omitempty"`
+	// MunicipalRegistration is the Inscrição Municipal used as prestador IM on NFS-e.
+	MunicipalRegistration *string `json:"municipal_registration,omitempty"`
+	// IBGEMunicipalityCode is the 7-digit IBGE code for DPS cLocEmi.
+	IBGEMunicipalityCode *string `json:"ibge_municipality_code,omitempty"`
+	// TaxRegime is NFS-e opSimpNac: 1=Não Optante, 2=MEI, 3=ME/EPP.
+	TaxRegime *string `json:"tax_regime,omitempty"`
+	// SpecialTaxRegime is NFS-e regEspTrib: 0=Nenhum … 7=Específicos municipais.
+	SpecialTaxRegime *string         `json:"special_tax_regime,omitempty"`
+	Environment      string          `json:"environment"`
+	Status           string          `json:"status"`
+	MetadataJSON     json.RawMessage `json:"metadata_json"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
-// CompanyService is a row in the service catalog joined with its activation
-// state for a specific company — status is "disabled" both when explicitly
-// deactivated and when the company has never activated that service.
-type CompanyService struct {
+// OrganizationService is a contract catalog row joined with its activation
+// state for an organization — status is "disabled" both when explicitly
+// deactivated and when the org has never activated that service.
+type OrganizationService struct {
 	ServiceID     uuid.UUID  `json:"service_id"`
 	ServiceCode   string     `json:"service_code"`
 	ServiceName   string     `json:"service_name"`
@@ -142,6 +150,14 @@ type AddMemberInput struct {
 	ActorUserID    uuid.UUID
 }
 
+// AddSupportMemberInput links a platform staff account to a tenant for setup/support.
+type AddSupportMemberInput struct {
+	OrganizationID uuid.UUID
+	Email          string
+	UserID         uuid.UUID
+	ActorUserID    uuid.UUID
+}
+
 type UpdateMemberStatusInput struct {
 	OrganizationID uuid.UUID
 	MemberID       uuid.UUID
@@ -171,13 +187,17 @@ type CreateCompanyInput struct {
 // stays on its own dedicated transition (UpdateCompanyStatus/
 // UpdateCompanyStatusInput), unaffected by this.
 type UpdateCompanyDetailsInput struct {
-	OrganizationID uuid.UUID
-	CompanyID      uuid.UUID
-	LegalName      string
-	TradeName      string
-	UF             string
-	Environment    string
-	ActorUserID    uuid.UUID
+	OrganizationID        uuid.UUID
+	CompanyID             uuid.UUID
+	LegalName             string
+	TradeName             string
+	UF                    string
+	Environment           string
+	MunicipalRegistration string
+	IBGEMunicipalityCode  string
+	TaxRegime             string
+	SpecialTaxRegime      string
+	ActorUserID           uuid.UUID
 }
 
 type UpdateCompanyStatusInput struct {
@@ -187,9 +207,8 @@ type UpdateCompanyStatusInput struct {
 	ActorUserID    uuid.UUID
 }
 
-type UpdateCompanyServiceStatusInput struct {
+type UpdateOrganizationServiceStatusInput struct {
 	OrganizationID uuid.UUID
-	CompanyID      uuid.UUID
 	ServiceID      uuid.UUID
 	Status         string
 	ActorUserID    uuid.UUID

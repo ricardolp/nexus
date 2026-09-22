@@ -1,10 +1,19 @@
 package certificate_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"errors"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/nexus/fiscal-messaging/internal/certificate"
+	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 	"github.com/nexus/fiscal-messaging/test/helpers"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 func TestParseA1CertificateRejectsEmptyFile(t *testing.T) {
@@ -16,7 +25,7 @@ func TestParseA1CertificateRejectsEmptyFile(t *testing.T) {
 
 func TestParseA1CertificateRejectsOversizedFile(t *testing.T) {
 	t.Parallel()
-	_, err := certificate.ParseA1Certificate(make([]byte, 40*1024), "any")
+	_, err := certificate.ParseA1Certificate(make([]byte, 200*1024), "any")
 	helpers.AssertDomainCode(t, err, "invalid_certificate")
 }
 
@@ -26,50 +35,64 @@ func TestParseA1CertificateRejectsGarbage(t *testing.T) {
 	helpers.AssertDomainCode(t, err, "invalid_certificate")
 }
 
-func TestParseA1CertificateExtractsRealICPBrasilSubjectFields(t *testing.T) {
+func TestPrepareA1UploadRejectsWrongPassword(t *testing.T) {
 	t.Parallel()
 
-	pfx := helpers.ReadTestdata(t, "certificate", "test_a1_sp.pfx")
-	cert, err := certificate.ParseA1Certificate(pfx, "test1234")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	pfx, password := mustSyntheticA1PFX(t, "EMPRESA TESTE:11222333000181", "SP", false)
+	_, err := certificate.PrepareA1Upload(pfx, password+"nope")
+	if err == nil {
+		t.Fatal("expected wrong password to fail")
 	}
-
-	cnpj, ok := certificate.CertificateCNPJ(cert.Subject.CommonName)
-	if !ok || cnpj != "11222333000181" {
-		t.Fatalf("cnpj=%s ok=%v, want 11222333000181/true", cnpj, ok)
+	var de *domainerr.Error
+	if !errors.As(err, &de) {
+		t.Fatalf("expected domainerr, got %T (%v)", err, err)
 	}
-
-	uf, ok := certificate.CertificateUF(cert.Subject.Province)
-	if !ok || uf != "SP" {
-		t.Fatalf("uf=%s ok=%v, want SP/true", uf, ok)
+	if de.Code != "invalid_certificate_password" && de.Code != "invalid_certificate" {
+		t.Fatalf("code=%q, want invalid_certificate_password or invalid_certificate", de.Code)
 	}
 }
 
-// TestParseA1CertificateAcceptsFullChainPFX is a regression test for a real
-// bug: some CAs (confirmed with a real Certisign-issued e-CNPJ certificate)
-// export the leaf cert bundled with the full CA chain (3+ safe bags), which
-// both golang.org/x/crypto/pkcs12 and this package's plain Decode() reject
-// outright with "expected exactly two safe bags in the PFX PDU" — despite
-// the password being correct. ParseA1Certificate must use DecodeChain, not
-// Decode, or every certificate from a CA that bundles its chain fails to
-// upload with a misleading "check the file and password" error.
-func TestParseA1CertificateAcceptsFullChainPFX(t *testing.T) {
+func TestPrepareA1UploadAcceptsSyntheticA1(t *testing.T) {
 	t.Parallel()
 
-	pfx := helpers.ReadTestdata(t, "certificate", "test_a1_chain.pfx")
-	cert, err := certificate.ParseA1Certificate(pfx, "test1234")
+	pfx, password := mustSyntheticA1PFX(t, "EMPRESA TESTE:11222333000181", "SP", false)
+	prepared, err := certificate.PrepareA1Upload(pfx, password)
 	if err != nil {
-		t.Fatalf("expected a full-chain PFX to parse, got: %v", err)
+		t.Fatalf("PrepareA1Upload: %v", err)
+	}
+	if prepared.Certificate == nil {
+		t.Fatal("expected leaf certificate")
+	}
+	if len(prepared.PFX) == 0 {
+		t.Fatal("expected canonical PFX bytes")
+	}
+	cnpj, ok := certificate.CertificateCNPJ(prepared.Certificate.Subject.CommonName)
+	if !ok || cnpj != "11222333000181" {
+		t.Fatalf("cnpj=%s ok=%v", cnpj, ok)
+	}
+}
+
+func TestPrepareA1UploadFixesReversedChainOrder(t *testing.T) {
+	t.Parallel()
+
+	leafKey, leaf, ca := mustLeafAndCA(t, "EMPRESA TESTE:11222333000181", "RJ")
+	password := "test1234"
+	// CA as first cert bag — DecodeChain would treat it as the leaf.
+	reversed, err := pkcs12.LegacyDES.Encode(leafKey, ca, []*x509.Certificate{leaf}, password)
+	if err != nil {
+		t.Fatalf("encode reversed: %v", err)
 	}
 
-	cnpj, ok := certificate.CertificateCNPJ(cert.Subject.CommonName)
-	if !ok || cnpj != "11222333000181" {
-		t.Fatalf("cnpj=%s ok=%v, want 11222333000181/true", cnpj, ok)
+	prepared, err := certificate.PrepareA1Upload(reversed, password)
+	if err != nil {
+		t.Fatalf("PrepareA1Upload: %v", err)
 	}
-	uf, ok := certificate.CertificateUF(cert.Subject.Province)
-	if !ok || uf != "SC" {
-		t.Fatalf("uf=%s ok=%v, want SC/true", uf, ok)
+	if prepared.Certificate.Subject.CommonName != leaf.Subject.CommonName {
+		t.Fatalf("leaf CN=%q, want %q", prepared.Certificate.Subject.CommonName, leaf.Subject.CommonName)
+	}
+	cnpj, ok := certificate.CertificateCNPJ(prepared.Certificate.Subject.CommonName)
+	if !ok || cnpj != "11222333000181" {
+		t.Fatalf("cnpj=%s ok=%v", cnpj, ok)
 	}
 }
 
@@ -102,4 +125,76 @@ func TestCertificateUFNormalizesCase(t *testing.T) {
 	if !ok || uf != "SP" {
 		t.Fatalf("uf=%s ok=%v, want SP/true", uf, ok)
 	}
+}
+
+func mustSyntheticA1PFX(t *testing.T, cn, uf string, withCA bool) (pfx []byte, password string) {
+	t.Helper()
+	password = "test1234"
+	key, leaf, ca := mustLeafAndCA(t, cn, uf)
+	var err error
+	if withCA {
+		pfx, err = pkcs12.LegacyDES.Encode(key, leaf, []*x509.Certificate{ca}, password)
+	} else {
+		pfx, err = pkcs12.LegacyDES.Encode(key, leaf, nil, password)
+	}
+	if err != nil {
+		t.Fatalf("encode pfx: %v", err)
+	}
+	return pfx, password
+}
+
+func mustLeafAndCA(t *testing.T, cn, uf string) (*rsa.PrivateKey, *x509.Certificate, *x509.Certificate) {
+	t.Helper()
+
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("ca key: %v", err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test CA", Organization: []string{"ICP-Brasil"}, Country: []string{"BR"}},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create ca: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse ca: %v", err)
+	}
+
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("leaf key: %v", err)
+	}
+	leafTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{
+			CommonName:   cn,
+			Organization: []string{"ICP-Brasil"},
+			Country:      []string{"BR"},
+			Province:     []string{uf},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+			x509.ExtKeyUsageEmailProtection,
+		},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	leafCert, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	return leafKey, leafCert, caCert
 }

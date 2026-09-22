@@ -1,7 +1,11 @@
 .env
 .env.*
-data
+/data
 bin
 *.exe
+*.pfx
+*.p12
 .git
 **/*_test.go
+scripts/*.pfx
+scripts/up-leg-certificate.pfx

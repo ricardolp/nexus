@@ -71,6 +71,7 @@ const itemColumns = `
 	ncm, cfop, quantity, unit, unit_price, total_amount,
 	purchase_order_reference_raw, purchase_order_item_reference_raw, taxes_json,
 	resolved_material_code, resolved_purchase_order_number, resolved_purchase_order_item,
+	resolved_purchase_order_unit, alternative_unit, alternative_quantity,
 	status, created_at, updated_at
 `
 
@@ -82,6 +83,7 @@ func scanItem(row rowScanner) (Item, error) {
 		&it.NCM, &it.CFOP, &it.Quantity, &it.Unit, &it.UnitPrice, &it.TotalAmount,
 		&it.PurchaseOrderReferenceRaw, &it.PurchaseOrderItemReferenceRaw, &taxesRaw,
 		&it.ResolvedMaterialCode, &it.ResolvedPurchaseOrderNumber, &it.ResolvedPurchaseOrderItem,
+		&it.ResolvedPurchaseOrderUnit, &it.AlternativeUnit, &it.AlternativeQuantity,
 		&it.Status, &it.CreatedAt, &it.UpdatedAt,
 	)
 	if err != nil {
@@ -151,12 +153,21 @@ func updateItemFields(ctx context.Context, tx dbtx, item Item) error {
 			supplier_material_code = $3, description = $4, ncm = $5, cfop = $6, quantity = $7, unit = $8,
 			unit_price = $9, total_amount = $10, purchase_order_reference_raw = $11, purchase_order_item_reference_raw = $12,
 			resolved_material_code = $13, resolved_purchase_order_number = $14, resolved_purchase_order_item = $15,
-			status = $16, updated_at = $17
+			resolved_purchase_order_unit = $16, status = $17, updated_at = $18
 		where organization_id = $1 and id = $2
 	`, item.OrganizationID, item.ID, item.SupplierMaterialCode, item.Description, item.NCM, item.CFOP, item.Quantity, item.Unit,
 		item.UnitPrice, item.TotalAmount, item.PurchaseOrderReferenceRaw, item.PurchaseOrderItemReferenceRaw,
 		item.ResolvedMaterialCode, item.ResolvedPurchaseOrderNumber, item.ResolvedPurchaseOrderItem,
-		item.Status, time.Now().UTC())
+		item.ResolvedPurchaseOrderUnit, item.Status, time.Now().UTC())
+	return err
+}
+
+func updateItemAlternativeUnit(ctx context.Context, tx dbtx, item Item) error {
+	_, err := tx.Exec(ctx, `
+		update organization_nfe_items set
+			alternative_unit = $3, alternative_quantity = $4, updated_at = $5
+		where organization_id = $1 and id = $2
+	`, item.OrganizationID, item.ID, item.AlternativeUnit, item.AlternativeQuantity, time.Now().UTC())
 	return err
 }
 
@@ -181,6 +192,7 @@ func resetDocumentMatchingState(ctx context.Context, tx dbtx, organizationID, do
 			resolved_material_code = null,
 			resolved_purchase_order_number = null,
 			resolved_purchase_order_item = null,
+			resolved_purchase_order_unit = null,
 			status = $3,
 			updated_at = $4
 		where organization_id = $1 and organization_document_id = $2

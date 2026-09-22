@@ -1,5 +1,13 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { CheckIcon, CopyIcon, HistoryIcon, KeyRoundIcon, MoreHorizontalIcon, Trash2Icon } from 'lucide-react';
+import {
+  Building2Icon,
+  CheckIcon,
+  CopyIcon,
+  HistoryIcon,
+  KeyRoundIcon,
+  MoreHorizontalIcon,
+  Trash2Icon
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import type { ApiUser } from '@/lib/api-types';
@@ -34,6 +42,7 @@ export function getUserColumns(
   currentUserId: string | undefined,
   onSetPassword: (user: ApiUser) => void,
   onHistory: (user: ApiUser) => void,
+  onOrganizations: (user: ApiUser) => void,
   onDelete: (user: ApiUser) => void
 ): ColumnDef<ApiUser>[] {
   return [
@@ -102,6 +111,10 @@ export function getUserColumns(
               >
                 <CopyIcon />
                 Copiar ID
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onOrganizations(user)}>
+                <Building2Icon />
+                Organizações
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onHistory(user)}>
                 <HistoryIcon />

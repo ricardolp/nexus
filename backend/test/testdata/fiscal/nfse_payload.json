@@ -1,7 +1,32 @@
 {
-  "rps": {
-    "numero": "100",
-    "serie": "A",
-    "municipio": "3550308"
+  "data_emissao": "2024-01-15T10:30:00-03:00",
+  "natureza_operacao": "1",
+  "serie_rps": "1",
+  "numero_rps": "100",
+  "optante_simples_nacional": true,
+  "prestador": {
+    "cnpj": "12345678000123",
+    "inscricao_municipal": "123456",
+    "codigo_municipio": "3550308"
+  },
+  "tomador": {
+    "cnpj": "98765432000188",
+    "razao_social": "Empresa Tomadora LTDA",
+    "endereco": {
+      "logradouro": "Rua das Flores",
+      "numero": "123",
+      "bairro": "Centro",
+      "codigo_municipio": "3550308",
+      "uf": "SP",
+      "cep": "01311000"
+    }
+  },
+  "servico": {
+    "valor_servicos": 100,
+    "iss_retido": false,
+    "item_lista_servico": "0107",
+    "codigo_tributario_municipio": "0107",
+    "discriminacao": "Serviço de consultoria em informática",
+    "codigo_municipio": "3550308"
   }
 }

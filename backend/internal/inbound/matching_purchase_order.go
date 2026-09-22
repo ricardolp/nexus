@@ -16,6 +16,7 @@ type POResolution struct {
 	Match          *Match
 	ResolvedNumber string
 	ResolvedItem   string
+	ResolvedUnit   string
 	Outcome        string // resolved | created | continue_without_po | missing_reject | missing_wait | not_found_reject | not_found_wait
 }
 
@@ -44,7 +45,8 @@ func matchPurchaseOrder(ctx context.Context, tx dbtx, adapter sap.Adapter, organ
 			MatchType: MatchTypePurchaseOrder, SourceValue: nullEmptyStr(strVal(item.PurchaseOrderReferenceRaw)),
 			ResolvedValue: nullEmptyStr(poNumber), Strategy: nullEmptyStr("manual_override"), Confidence: floatPtr(1), Status: MatchStatusManualMap,
 		})
-		return POResolution{Match: &m, ResolvedNumber: poNumber, ResolvedItem: poItem, Outcome: "resolved"}, err
+		unit := lookupPOLineUnit(ctx, adapter, vendorCNPJ, branchCNPJ, poNumber, poItem)
+		return POResolution{Match: &m, ResolvedNumber: poNumber, ResolvedItem: poItem, ResolvedUnit: unit, Outcome: "resolved"}, err
 	}
 
 	rawNumber := strVal(item.PurchaseOrderReferenceRaw)
@@ -82,15 +84,17 @@ func matchPurchaseOrder(ctx context.Context, tx dbtx, adapter sap.Adapter, organ
 
 	if po, line, found := findPOLine(orders, rawNumber, rawItem, rule.POReferenceLevel); found {
 		lineItem := ""
+		lineUnit := ""
 		if line != nil {
 			lineItem = line.ItemNumber
+			lineUnit = strings.TrimSpace(line.Unit)
 		}
 		m, err := insertMatch(ctx, tx, Match{
 			OrganizationID: organizationID, OrganizationDocumentID: item.OrganizationDocumentID, OrganizationNFeItemID: &item.ID,
 			MatchType: MatchTypePurchaseOrder, SourceValue: nullEmptyStr(rawNumber), ResolvedValue: nullEmptyStr(po.Number),
 			Strategy: nullEmptyStr("xped_nitem"), Confidence: floatPtr(1), Status: MatchStatusMatched,
 		})
-		return POResolution{Match: &m, ResolvedNumber: po.Number, ResolvedItem: lineItem, Outcome: "resolved"}, err
+		return POResolution{Match: &m, ResolvedNumber: po.Number, ResolvedItem: lineItem, ResolvedUnit: lineUnit, Outcome: "resolved"}, err
 	}
 
 	notFoundMatch, err := insertMatch(ctx, tx, Match{
@@ -129,7 +133,7 @@ func findPOLine(orders []sap.PurchaseOrder, number, itemRef, level string) (*sap
 		}
 		for j := range po.Items {
 			line := &po.Items[j]
-			if strings.EqualFold(strings.TrimSpace(line.ItemNumber), strings.TrimSpace(itemRef)) {
+			if sameSAPItem(line.ItemNumber, itemRef) {
 				return po, line, true
 			}
 		}
@@ -145,4 +149,42 @@ func strVal(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func sameSAPItem(a, b string) bool {
+	na := strings.TrimLeft(strings.TrimSpace(a), "0")
+	nb := strings.TrimLeft(strings.TrimSpace(b), "0")
+	if na == "" {
+		na = "0"
+	}
+	if nb == "" {
+		nb = "0"
+	}
+	return strings.EqualFold(na, nb)
+}
+
+func lookupPOLineUnit(ctx context.Context, adapter sap.Adapter, vendorCNPJ, branchCNPJ, poNumber, poItem string) string {
+	poNumber = strings.TrimSpace(poNumber)
+	if adapter == nil || poNumber == "" {
+		return ""
+	}
+	orders, err := adapter.SearchPurchaseOrders(ctx, sap.SearchPurchaseOrdersInput{
+		VendorCNPJ:    vendorCNPJ,
+		BranchCNPJ:    branchCNPJ,
+		PurchaseOrder: poNumber,
+	})
+	if err != nil {
+		return ""
+	}
+	po, line, found := findPOLine(orders, poNumber, poItem, POReferenceLevelDocumentOrItem)
+	if !found {
+		return ""
+	}
+	if line != nil {
+		return strings.TrimSpace(line.Unit)
+	}
+	if po != nil && len(po.Items) == 1 {
+		return strings.TrimSpace(po.Items[0].Unit)
+	}
+	return ""
 }

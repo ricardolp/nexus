@@ -253,7 +253,7 @@ export default function OrganizationUsersPage() {
   const availableRolesForAssign = allRoles.filter((r) => !assignedRoleIds.has(r.id));
 
   return (
-    <Card>
+    <Card data-tour="users-page">
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div>
           <CardTitle className="flex items-center gap-2">

@@ -1,6 +1,9 @@
 import { Outlet } from 'react-router-dom';
+import { useMemo } from 'react';
 
-import type { NavGroup } from '@/config/nav-items';
+import { filterNavGroupsByServices, type NavGroup } from '@/config/nav-items';
+import { ProductTour } from '@/components/onboarding/product-tour';
+import { useActiveContractServices } from '@/components/layout/require-org-service';
 import { useAuthStore } from '@/store/auth-store';
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import { SiteHeader } from '@/components/layout/site-header';
@@ -23,6 +26,11 @@ export function DashboardLayout({
 }) {
   const organization = useAuthStore((s) => s.organization);
   const orgLoadError = useAuthStore((s) => s.orgLoadError);
+  const activeServices = useActiveContractServices();
+  const filteredGroups = useMemo(
+    () => (showOrganization ? filterNavGroupsByServices(groups, activeServices) : groups),
+    [groups, showOrganization, activeServices]
+  );
 
   return (
     <SidebarProvider
@@ -34,7 +42,7 @@ export function DashboardLayout({
       }
     >
       <AppSidebar
-        groups={groups}
+        groups={filteredGroups}
         profileUrl={profileUrl}
         helpUrl={helpUrl}
         supportUrl={supportUrl}
@@ -44,7 +52,7 @@ export function DashboardLayout({
       />
       <SidebarInset>
         <SiteHeader
-          groups={groups}
+          groups={filteredGroups}
           homeUrl={homeUrl}
           profileUrl={profileUrl}
           helpUrl={helpUrl}
@@ -54,6 +62,7 @@ export function DashboardLayout({
           <Outlet />
         </div>
       </SidebarInset>
+      {showOrganization ? <ProductTour /> : null}
     </SidebarProvider>
   );
 }

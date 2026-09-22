@@ -132,7 +132,8 @@ export function CompanyCertificateTab({ company }: { company: ApiCompany }) {
             Certificado ativo
           </CardTitle>
           <CardDescription>
-            A1 (PKCS#12) usado para assinar NF-e e NFS-e desta empresa em produção e homologação.
+            A1 (PKCS#12) usado para assinar NF-e e NFS-e. Basta enviar o arquivo da AC/Windows e a senha —
+            o Nexus normaliza o formato automaticamente.
           </CardDescription>
           {!certificateQuery.isLoading && (
             <CardAction>
@@ -187,7 +188,7 @@ export function CompanyCertificateTab({ company }: { company: ApiCompany }) {
           <GradientDialogHeader
             icon={FileBadgeIcon}
             title={activeCertificate ? 'Modificar certificado' : 'Criar certificado'}
-            description="Arquivo .pfx ou .p12 e a senha. O CNPJ e a UF do certificado precisam bater com os desta empresa."
+            description="Envie o .pfx/.p12 e a senha de instalação. O sistema aceita exportações do Windows e das ACs; CNPJ e UF precisam bater com esta empresa."
           />
           <div className="flex flex-col gap-4 px-6 py-4">
             <div className="grid gap-2">
@@ -217,7 +218,7 @@ export function CompanyCertificateTab({ company }: { company: ApiCompany }) {
             </Button>
             <Button
               type="button"
-              disabled={!file || !password || uploadMutation.isPending}
+              disabled={!file || uploadMutation.isPending}
               onClick={() => uploadMutation.mutate()}
             >
               <UploadIcon />

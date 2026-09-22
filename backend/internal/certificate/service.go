@@ -34,10 +34,17 @@ func NewService(pool *db.Pool, vault keyvault.CertificateStore) *Service {
 func (s *Service) UploadCertificate(ctx context.Context, in UploadCertificateInput) (*Certificate, error) {
 	defer zeroBytes(in.PFX)
 
-	cert, err := ParseA1Certificate(in.PFX, in.Password)
+	prepared, err := PrepareA1Upload(in.PFX, in.Password)
 	if err != nil {
 		return nil, err
 	}
+	cert := prepared.Certificate
+	// Prefer the normalized PFX (OpenSSL re-export when needed) so the
+	// local store / Key Vault import path always sees a DecodeChain-friendly
+	// bundle — Windows AC exports often fail raw go-pkcs12 decode.
+	in.PFX = prepared.PFX
+	in.Password = prepared.Password
+	defer zeroBytes(prepared.PFX)
 
 	var companyCNPJ, companyStatus string
 	var companyUF *string
@@ -79,7 +86,7 @@ func (s *Service) UploadCertificate(ctx context.Context, in UploadCertificateInp
 	}
 
 	kvName := keyVaultCertificateName(in.OrganizationCompanyID)
-	info, err := s.vault.ImportCertificate(ctx, kvName, in.PFX, in.Password)
+	info, err := s.vault.ImportCertificate(ctx, kvName, prepared.PFX, prepared.Password)
 	if err != nil {
 		return nil, WrapStoreError(err)
 	}

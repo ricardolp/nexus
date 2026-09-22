@@ -11,10 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/nexus/fiscal-messaging/internal/billing"
 	"github.com/nexus/fiscal-messaging/internal/certificate"
+	"github.com/nexus/fiscal-messaging/internal/email"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/identity"
 	"github.com/nexus/fiscal-messaging/internal/inbound"
 	"github.com/nexus/fiscal-messaging/internal/integration"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/notification"
 	"github.com/nexus/fiscal-messaging/internal/ops"
 	"github.com/nexus/fiscal-messaging/internal/organization"
@@ -22,6 +24,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/platform/crypto"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
+	"github.com/nexus/fiscal-messaging/internal/platform/llm"
 	"github.com/nexus/fiscal-messaging/internal/support"
 	"github.com/nexus/fiscal-messaging/internal/webhook"
 )
@@ -30,6 +33,7 @@ type ControlPlane struct {
 	Identity         *identity.Service
 	Orgs             *organization.Service
 	Ops              *ops.Service
+	IntegrationLogs  *integrationlog.Service
 	Webhooks         *webhook.Service
 	Certificates     *certificate.Service
 	Notifications    *notification.Service
@@ -40,7 +44,9 @@ type ControlPlane struct {
 	PendingDocuments *fiscal.PendingDocumentService
 	Support          *support.Service
 	Billing          *billing.Service
+	Email            *email.Service
 	Tokens           *auth.TokenService
+	LLM              *llm.Client
 }
 
 func (a *ControlPlane) Routes() http.Handler {
@@ -63,6 +69,8 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Use(auth.RequireUser)
 		r.Use(a.sessionGuard)
 		r.Get("/v1/users/me", a.me)
+		r.Get("/v1/users/me/organizations", a.listMyOrganizations)
+		r.Post("/v1/auth/switch-organization", a.switchOrganization)
 		r.Patch("/v1/users/me", a.patchMe)
 		r.Post("/v1/users/me/password", a.changePassword)
 		r.Get("/v1/users/me/password-policy", a.myPasswordPolicy)
@@ -85,6 +93,7 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Post("/v1/users/{user_id}/password", a.adminSetUserPassword)
 		r.Get("/v1/users/{user_id}/security-events", a.adminListUserSecurityEvents)
 		r.Get("/v1/users/{user_id}/audit-events", a.adminListUserAuditEvents)
+		r.Get("/v1/users/{user_id}/organizations", a.listUserOrganizations)
 		r.Post("/v1/organizations", a.createOrganization)
 		r.Get("/v1/organizations", a.listOrganizations)
 		r.Get("/v1/organizations/usage-stats", a.listOrganizationsUsage)
@@ -101,6 +110,9 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Patch("/v1/organizations/{organization_id}/authentication_settings", a.patchAuthSettings)
 		r.Get("/v1/organizations/{organization_id}/members", a.listMembers)
 		r.Post("/v1/organizations/{organization_id}/members", a.addOrganizationMember)
+		r.Get("/v1/organizations/{organization_id}/support-members", a.listSupportMembers)
+		r.Post("/v1/organizations/{organization_id}/support-members", a.addSupportMember)
+		r.Delete("/v1/organizations/{organization_id}/support-members/{member_id}", a.removeSupportMember)
 		r.Patch("/v1/organizations/{organization_id}/members/{member_id}", a.updateMemberStatus)
 		r.Post("/v1/organizations/{organization_id}/members/{member_id}/password", a.adminSetMemberPassword)
 		r.Post("/v1/organizations/{organization_id}/members/{member_id}/resend-invite", a.resendMemberInvitation)
@@ -120,8 +132,36 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Get("/v1/organizations/{organization_id}/companies", a.listCompanies)
 		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}", a.updateCompanyStatus)
 		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/details", a.updateCompanyDetails)
-		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/services", a.listCompanyServices)
-		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/services/{service_id}", a.updateCompanyServiceStatus)
+		r.Get("/v1/organizations/{organization_id}/services", a.listOrganizationServices)
+		r.Patch("/v1/organizations/{organization_id}/services/{service_id}", a.updateOrganizationServiceStatus)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse_services", a.listCompanyNFSeServices)
+		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/nfse_services", a.createCompanyNFSeService)
+		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/nfse_services/{nfse_service_id}", a.updateCompanyNFSeService)
+		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/nfse_services/{nfse_service_id}", a.deleteCompanyNFSeService)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse/next_rps", a.suggestNextRPS)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse/last_classification", a.lastNFSeClassification)
+		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/nfse/suggest_classification", a.suggestNFSeClassification)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/cnaes", a.listCompanyCNAEs)
+		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/cnaes/{cnae_id}", a.updateCompanyCNAE)
+		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/cnaes/sync", a.syncCompanyCNAEs)
+		r.Get("/v1/organizations/{organization_id}/customers", a.listCustomers)
+		r.Post("/v1/organizations/{organization_id}/customers", a.createCustomer)
+		r.Get("/v1/organizations/{organization_id}/customers/{customer_id}", a.getCustomer)
+		r.Patch("/v1/organizations/{organization_id}/customers/{customer_id}", a.updateCustomer)
+		r.Get("/v1/organizations/{organization_id}/materials", a.listMaterials)
+		r.Post("/v1/organizations/{organization_id}/materials", a.createMaterial)
+		r.Get("/v1/organizations/{organization_id}/materials/{material_id}", a.getMaterial)
+		r.Patch("/v1/organizations/{organization_id}/materials/{material_id}", a.updateMaterial)
+		r.Post("/v1/organizations/{organization_id}/materials/{material_id}/uoms", a.createMaterialUOM)
+		r.Patch("/v1/organizations/{organization_id}/materials/{material_id}/uoms/{uom_id}", a.updateMaterialUOM)
+		r.Delete("/v1/organizations/{organization_id}/materials/{material_id}/uoms/{uom_id}", a.deleteMaterialUOM)
+		r.Get("/v1/organizations/{organization_id}/lookups/cnpj/{cnpj}", a.lookupCNPJ)
+		r.Get("/v1/organizations/{organization_id}/lookups/cep/{cep}", a.lookupCEP)
+		r.Get("/v1/organizations/{organization_id}/catalogs/cnae", a.searchCatalogCNAE)
+		r.Get("/v1/organizations/{organization_id}/catalogs/nbs", a.searchCatalogNBS)
+		r.Get("/v1/organizations/{organization_id}/catalogs/lc116", a.searchCatalogLC116)
+		r.Get("/v1/organizations/{organization_id}/catalogs/municipalities", a.searchCatalogMunicipalities)
+		r.Get("/v1/organizations/{organization_id}/catalogs/municipalities/{code}", a.getCatalogMunicipality)
 		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/certificates", a.uploadCertificate)
 		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/certificates", a.listCertificates)
 		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/certificates/active", a.getActiveCertificate)
@@ -132,13 +172,18 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Get("/v1/organizations/{organization_id}/fiscal_document_queries/{query_id}", a.getFiscalDocumentQuery)
 		r.Get("/v1/organizations/{organization_id}/fiscal_documents/pending", a.listPendingFiscalDocuments)
 		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/fiscal_documents/pending/{pending_document_id}/manifest", a.requestFiscalDocumentManifestation)
+		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/fiscal_documents/nfse", a.createOutboundNFSe)
 		r.Get("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/download", a.downloadFiscalDocument)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/download_zip", a.downloadFiscalDocumentsZip)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/resubmit", a.resubmitOutboundDocument)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/cancel", a.cancelOutboundNFSe)
 		r.Post("/v1/organizations/{organization_id}/api_clients", a.createAPIClient)
 		r.Get("/v1/organizations/{organization_id}/api_clients", a.listAPIClients)
 		r.Post("/v1/organizations/{organization_id}/api_clients/{api_client_id}/legacy_org_token", a.setAPIClientLegacyOrgToken)
 		r.Post("/v1/organizations/{organization_id}/api_clients/{api_client_id}/inbound_token", a.rotateAPIClientInboundToken)
 		r.Post("/v1/organizations/{organization_id}/api_clients/{api_client_id}/revoke", a.revokeAPIClient)
+		r.Get("/v1/organizations/{organization_id}/integration_logs", a.listIntegrationLogs)
+		r.Get("/v1/organizations/{organization_id}/integration_logs/{log_id}", a.getIntegrationLog)
 		r.Post("/v1/organizations/{organization_id}/webhook_endpoints", a.createWebhook)
 		r.Get("/v1/organizations/{organization_id}/webhook_endpoints", a.listWebhooks)
 		r.Get("/v1/notifications", a.listNotifications)
@@ -165,9 +210,11 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/canhoto", a.registerDeliveryReceipt)
 		r.Get("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/orchestration", a.getOrchestration)
 		r.Patch("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/items/{item_id}", a.patchInboundItem)
+		r.Patch("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/items/{item_id}/alternative_unit", a.setInboundItemAlternativeUnit)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/override", a.applyInboundOverride)
 		r.Get("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/purchase-orders/search", a.searchPurchaseOrders)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/reprocess", a.reprocessInboundDocument)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/reset", a.resetInboundDocument)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/plan", a.buildExecutionPlan)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/execute", a.executeNextStep)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/steps/{step_id}/advance", a.advanceInboundStep)
@@ -184,6 +231,16 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Post("/v1/organizations/{organization_id}/support/tickets/{ticket_id}/messages", a.addSupportTicketMessage)
 		r.Post("/v1/organizations/{organization_id}/support/tickets/{ticket_id}/attachments", a.uploadSupportAttachment)
 		r.Get("/v1/organizations/{organization_id}/support/tickets/{ticket_id}/attachments/{attachment_id}", a.downloadSupportAttachment)
+
+		r.Get("/v1/organizations/{organization_id}/email-credentials", a.getEmailCredentials)
+		r.Put("/v1/organizations/{organization_id}/email-credentials", a.putEmailCredentials)
+		r.Post("/v1/organizations/{organization_id}/email-credentials/test", a.testEmailCredentials)
+		r.Get("/v1/organizations/{organization_id}/email-tokens", a.listEmailTokens)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/email-templates", a.listCompanyEmailTemplates)
+		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/email-templates/{process_code}", a.patchCompanyEmailTemplate)
+		r.Get("/v1/organizations/{organization_id}/email-messages", a.listEmailMessages)
+		r.Get("/v1/organizations/{organization_id}/email-messages/{message_id}", a.getEmailMessage)
+		r.Get("/v1/organizations/{organization_id}/email-messages/{message_id}/attachments/{attachment_id}/download", a.downloadEmailAttachment)
 	})
 
 	return r
@@ -505,6 +562,160 @@ func (a *ControlPlane) createOrganization(w http.ResponseWriter, r *http.Request
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, org)
+}
+
+func (a *ControlPlane) listMyOrganizations(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		writeErr(w, r, domainerr.Forbidden("User session required"))
+		return
+	}
+	items, err := a.Orgs.ListOrganizationsForUser(r.Context(), p.UserID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if items == nil {
+		items = []organization.Organization{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *ControlPlane) listUserOrganizations(w http.ResponseWriter, r *http.Request) {
+	if _, err := requirePlatformStaff(r); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	userID, err := uuid.Parse(chi.URLParam(r, "user_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_user_id", "Invalid user_id"))
+		return
+	}
+	user, err := a.Identity.GetByID(r.Context(), userID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	switch user.PlatformRole {
+	case identity.PlatformRoleAdmin, identity.PlatformRoleSystem, identity.PlatformRoleSupport:
+	default:
+		writeErr(w, r, domainerr.Validation("not_platform_staff", "User is not platform staff"))
+		return
+	}
+	items, err := a.Orgs.ListOrganizationsForUser(r.Context(), userID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if items == nil {
+		items = []organization.Organization{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *ControlPlane) listSupportMembers(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
+		return
+	}
+	if _, err := requirePlatformStaff(r); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.Orgs.EnsureActiveOrganization(r.Context(), orgID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	items, err := a.Orgs.ListSupportMembers(r.Context(), orgID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if items == nil {
+		items = []organization.MemberWithUser{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *ControlPlane) addSupportMember(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
+		return
+	}
+	p, err := requirePlatformStaff(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.Orgs.EnsureActiveOrganization(r.Context(), orgID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body struct {
+		Email  string `json:"email"`
+		UserID string `json:"user_id"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	in := organization.AddSupportMemberInput{
+		OrganizationID: orgID,
+		Email:          body.Email,
+		ActorUserID:    p.UserID,
+	}
+	if strings.TrimSpace(body.UserID) != "" {
+		uid, err := uuid.Parse(strings.TrimSpace(body.UserID))
+		if err != nil {
+			writeErr(w, r, domainerr.Validation("invalid_user_id", "Invalid user_id"))
+			return
+		}
+		in.UserID = uid
+	}
+	member, err := a.Orgs.AddSupportMember(r.Context(), in)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, member)
+}
+
+func (a *ControlPlane) removeSupportMember(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
+		return
+	}
+	memberID, err := uuid.Parse(chi.URLParam(r, "member_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_member_id", "Invalid member_id"))
+		return
+	}
+	p, err := requirePlatformStaff(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	member, err := a.Orgs.GetMember(r.Context(), orgID, memberID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	switch member.PlatformRole {
+	case identity.PlatformRoleAdmin, identity.PlatformRoleSystem, identity.PlatformRoleSupport:
+	default:
+		writeErr(w, r, domainerr.Validation("not_support_member", "Member is not platform staff"))
+		return
+	}
+	if err := a.Orgs.UnlinkSupportMember(r.Context(), organization.RemoveMemberInput{
+		OrganizationID: orgID, MemberID: memberID, ActorUserID: p.UserID,
+	}); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *ControlPlane) getOrganization(w http.ResponseWriter, r *http.Request) {
@@ -857,19 +1068,31 @@ func (a *ControlPlane) updateCompanyDetails(w http.ResponseWriter, r *http.Reque
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	var body struct {
-		LegalName   string `json:"legal_name"`
-		TradeName   string `json:"trade_name"`
-		UF          string `json:"uf"`
-		Environment string `json:"environment"`
+		LegalName             string `json:"legal_name"`
+		TradeName             string `json:"trade_name"`
+		UF                    string `json:"uf"`
+		Environment           string `json:"environment"`
+		MunicipalRegistration string `json:"municipal_registration"`
+		IBGEMunicipalityCode  string `json:"ibge_municipality_code"`
+		TaxRegime             string `json:"tax_regime"`
+		SpecialTaxRegime      string `json:"special_tax_regime"`
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
 		return
 	}
 	company, err := a.Orgs.UpdateCompanyDetails(r.Context(), organization.UpdateCompanyDetailsInput{
-		OrganizationID: orgID, CompanyID: companyID,
-		LegalName: body.LegalName, TradeName: body.TradeName, UF: body.UF, Environment: body.Environment,
-		ActorUserID: p.UserID,
+		OrganizationID:        orgID,
+		CompanyID:             companyID,
+		LegalName:             body.LegalName,
+		TradeName:             body.TradeName,
+		UF:                    body.UF,
+		Environment:           body.Environment,
+		MunicipalRegistration: body.MunicipalRegistration,
+		IBGEMunicipalityCode:  body.IBGEMunicipalityCode,
+		TaxRegime:             body.TaxRegime,
+		SpecialTaxRegime:      body.SpecialTaxRegime,
+		ActorUserID:           p.UserID,
 	})
 	if err != nil {
 		writeErr(w, r, err)
@@ -878,13 +1101,17 @@ func (a *ControlPlane) updateCompanyDetails(w http.ResponseWriter, r *http.Reque
 	httpx.WriteJSON(w, http.StatusOK, company)
 }
 
-func (a *ControlPlane) listCompanyServices(w http.ResponseWriter, r *http.Request) {
-	orgID, companyID, err := a.companyFromURL(r)
+func (a *ControlPlane) listOrganizationServices(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
 	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
+		return
+	}
+	if err := a.ensureOrganizationAccess(r, orgID); err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	services, err := a.Orgs.ListCompanyServices(r.Context(), orgID, companyID)
+	services, err := a.Orgs.ListOrganizationServices(r.Context(), orgID)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -892,13 +1119,13 @@ func (a *ControlPlane) listCompanyServices(w http.ResponseWriter, r *http.Reques
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": services})
 }
 
-func (a *ControlPlane) updateCompanyServiceStatus(w http.ResponseWriter, r *http.Request) {
-	orgID, companyID, err := a.companyFromURL(r)
+func (a *ControlPlane) updateOrganizationServiceStatus(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
 	if err != nil {
-		writeErr(w, r, err)
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
 		return
 	}
-	if err := a.ensureOrganizationPermission(r, orgID, "company:manage"); err != nil {
+	if _, err := requirePlatformStaff(r); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -915,8 +1142,8 @@ func (a *ControlPlane) updateCompanyServiceStatus(w http.ResponseWriter, r *http
 		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
 		return
 	}
-	service, err := a.Orgs.UpdateCompanyServiceStatus(r.Context(), organization.UpdateCompanyServiceStatusInput{
-		OrganizationID: orgID, CompanyID: companyID, ServiceID: serviceID, Status: body.Status, ActorUserID: p.UserID,
+	service, err := a.Orgs.UpdateOrganizationServiceStatus(r.Context(), organization.UpdateOrganizationServiceStatusInput{
+		OrganizationID: orgID, ServiceID: serviceID, Status: body.Status, ActorUserID: p.UserID,
 	})
 	if err != nil {
 		writeErr(w, r, err)
@@ -1388,6 +1615,21 @@ func (a *ControlPlane) ensureOrganizationPermission(r *http.Request, organizatio
 		return domainerr.Forbidden("Missing permission: " + permission)
 	}
 	return nil
+}
+
+func (a *ControlPlane) ensureAnyOrganizationPermission(r *http.Request, organizationID uuid.UUID, permissions ...string) error {
+	if len(permissions) == 0 {
+		return domainerr.Forbidden("Missing permission")
+	}
+	var last error
+	for _, permission := range permissions {
+		err := a.ensureOrganizationPermission(r, organizationID, permission)
+		if err == nil {
+			return nil
+		}
+		last = err
+	}
+	return last
 }
 
 type InboundAPI struct {

@@ -4,6 +4,7 @@ RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+RUN grep -n 'nf_unit' internal/integration/sap/cpi_nexus.go
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/control_plane_api ./cmd/control_plane_api \
  && CGO_ENABLED=0 GOOS=linux go build -o /out/inbound_api ./cmd/inbound_api \
  && CGO_ENABLED=0 GOOS=linux go build -o /out/internal_api ./cmd/internal_api \
@@ -17,7 +18,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/control_plane_api ./cmd/control_pl
  && CGO_ENABLED=0 GOOS=linux go build -o /out/inbound_orchestrator_worker ./cmd/inbound_orchestrator_worker
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata
+# openssl (+ legacy provider) normalizes Windows/AC A1 PFX uploads that
+# go-pkcs12 cannot decode raw — see internal/certificate/pfx_decode.go.
+RUN apk add --no-cache ca-certificates tzdata openssl
 WORKDIR /app
 COPY --from=build /out/ /app/
 COPY migrations /app/migrations

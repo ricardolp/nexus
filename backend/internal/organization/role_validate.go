@@ -26,9 +26,10 @@ var PermissionCatalog = []string{
 	"role:manage",
 	"company:manage",
 	"nfe:read", "nfe:create", "nfe:cancel",
-	"nfse:read", "nfse:create",
+	"nfse:read", "nfse:create", "nfse:cancel",
 	"nfe_inbound:read", "nfe_inbound:manage",
 	"integration:manage", "webhook:manage",
+	"email:read", "email:manage",
 	"audit:read",
 	"document_payload:read_sensitive",
 }

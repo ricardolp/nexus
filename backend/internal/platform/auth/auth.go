@@ -136,12 +136,7 @@ func (s *TokenService) IssueClientToken(organizationID uuid.UUID, clientID, sour
 }
 
 func (s *TokenService) Parse(raw string) (*Principal, error) {
-	parsed, err := jwt.ParseWithClaims(raw, &Claims{}, func(t *jwt.Token) (any, error) {
-		if t.Method != jwt.SigningMethodHS256 {
-			return nil, fmt.Errorf("unexpected signing method")
-		}
-		return s.secret, nil
-	})
+	parsed, err := jwt.ParseWithClaims(raw, &Claims{}, s.keyFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +144,35 @@ func (s *TokenService) Parse(raw string) (*Principal, error) {
 	if !ok || !parsed.Valid {
 		return nil, errors.New("invalid token")
 	}
+	return principalFromClaims(claims), nil
+}
 
+// ParseAllowExpired verifies the signature but skips exp/nbf so refresh can
+// recover the previous organization_id from an access token that just expired.
+func (s *TokenService) ParseAllowExpired(raw string) (*Principal, error) {
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	parsed, err := parser.ParseWithClaims(raw, &Claims{}, s.keyFunc)
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := parsed.Claims.(*Claims)
+	if !ok {
+		return nil, errors.New("invalid token")
+	}
+	if claims.Kind == "" {
+		return nil, errors.New("invalid token")
+	}
+	return principalFromClaims(claims), nil
+}
+
+func (s *TokenService) keyFunc(t *jwt.Token) (any, error) {
+	if t.Method != jwt.SigningMethodHS256 {
+		return nil, fmt.Errorf("unexpected signing method")
+	}
+	return s.secret, nil
+}
+
+func principalFromClaims(claims *Claims) *Principal {
 	p := &Principal{
 		Kind:         claims.Kind,
 		ClientID:     claims.ClientID,
@@ -167,7 +190,7 @@ func (s *TokenService) Parse(raw string) (*Principal, error) {
 	if claims.SessionID != nil {
 		p.SessionID = *claims.SessionID
 	}
-	return p, nil
+	return p
 }
 
 type principalKey struct{}

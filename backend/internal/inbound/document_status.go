@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/messaging"
 	"github.com/nexus/fiscal-messaging/internal/platform/ids"
 )
@@ -42,6 +43,39 @@ func markDocumentStatus(ctx context.Context, tx pgx.Tx, organizationID, document
 		return err
 	}
 	_, err = messaging.InsertOutbox(ctx, tx, organizationID, "organization_documents", documentID, eventType, map[string]any{
+		"document_id": documentID,
+		"to_status":   toStatus,
+	})
+	return err
+}
+
+// resetDocumentToImported restores the envelope to the state fiscal.Receive
+// writes on XML import (received + queued) so the inbound pipeline can run
+// again. Unlike markDocumentStatus, this clears completed_at.
+func resetDocumentToImported(ctx context.Context, tx pgx.Tx, organizationID, documentID uuid.UUID) error {
+	now := time.Now().UTC()
+	toStatus := fiscal.StatusReceived
+	if _, err := tx.Exec(ctx, `
+		update organization_documents
+		set status = $2, processing_status = $3, completed_at = null, updated_at = $4, version = version + 1
+		where id = $1
+	`, documentID, toStatus, fiscal.ProcessingQueued, now); err != nil {
+		return err
+	}
+	metaJSON, err := marshalEventMetadata(map[string]any{
+		"reason": "Reset para recomeçar a integração a partir do pedido",
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into organization_document_events (
+			id, organization_id, organization_document_id, event_type, to_status, actor_type, metadata_json, occurred_at
+		) values ($1,$2,$3,$4,$5,'user',$6,$7)
+	`, ids.New(), organizationID, documentID, "fiscal.inbound.reset.v1", toStatus, metaJSON, now); err != nil {
+		return err
+	}
+	_, err = messaging.InsertOutbox(ctx, tx, organizationID, "organization_documents", documentID, "fiscal.inbound.reset.v1", map[string]any{
 		"document_id": documentID,
 		"to_status":   toStatus,
 	})

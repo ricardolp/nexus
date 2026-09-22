@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Building2Icon, CheckIcon, FileBarChartIcon, PencilIcon, ShieldCheckIcon, XIcon } from 'lucide-react';
+import { Building2Icon, CheckIcon, FileBarChartIcon, MailIcon, PencilIcon, ShieldCheckIcon, XIcon } from 'lucide-react';
 
 import { ApiError } from '@/lib/api';
 import {
@@ -33,13 +33,15 @@ import {
 } from './organization/helpers';
 import { OrganizationSecurityTab } from './organization/security-tab';
 import { OrganizationConsumoTab } from './organization/consumo-tab';
+import { OrganizationEmailTab } from './organization/email-tab';
 
 type Section = 'general' | 'tax' | 'defaults';
-type OrgTab = 'general' | 'consumo' | 'security';
+type OrgTab = 'general' | 'consumo' | 'security' | 'email';
 
 const orgTabs: { id: OrgTab; label: string; icon: ReactNode }[] = [
   { id: 'general', label: 'Geral', icon: <Building2Icon className="size-4" /> },
   { id: 'consumo', label: 'Consumo', icon: <FileBarChartIcon className="size-4" /> },
+  { id: 'email', label: 'E-mail', icon: <MailIcon className="size-4" /> },
   { id: 'security', label: 'Segurança', icon: <ShieldCheckIcon className="size-4" /> }
 ];
 
@@ -52,7 +54,9 @@ export default function OrganizationPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab: OrgTab =
-    searchParams.get('tab') === 'security' || searchParams.get('tab') === 'consumo'
+    searchParams.get('tab') === 'security' ||
+    searchParams.get('tab') === 'consumo' ||
+    searchParams.get('tab') === 'email'
       ? (searchParams.get('tab') as OrgTab)
       : 'general';
 
@@ -96,6 +100,13 @@ export default function OrganizationPage() {
     const roleIds = new Set(memberRolesQuery.data?.items.map((item) => item.organization_role_id) ?? []);
     return (rolesQuery.data?.items ?? []).some(
       (role) => roleIds.has(role.id) && role.permissions.includes('organization:update')
+    );
+  }, [memberRolesQuery.data, rolesQuery.data]);
+
+  const canManageEmail = useMemo(() => {
+    const roleIds = new Set(memberRolesQuery.data?.items.map((item) => item.organization_role_id) ?? []);
+    return (rolesQuery.data?.items ?? []).some(
+      (role) => roleIds.has(role.id) && role.permissions.includes('email:manage')
     );
   }, [memberRolesQuery.data, rolesQuery.data]);
 
@@ -219,7 +230,7 @@ export default function OrganizationPage() {
   const timezoneLabel = timezones.find((item) => item.value === org.timezone)?.label ?? org.timezone;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6" data-tour="org-page">
       <div className="flex items-start gap-4">
         <OrganizationMark organization={org} displayName={displayName} size="lg" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -240,6 +251,8 @@ export default function OrganizationPage() {
         <div className="min-w-0 flex-1">
           {tab === 'security' ? (
             <OrganizationSecurityTab canEdit={canEdit} />
+          ) : tab === 'email' ? (
+            <OrganizationEmailTab canEdit={canManageEmail} />
           ) : tab === 'consumo' ? (
             <OrganizationConsumoTab />
           ) : (

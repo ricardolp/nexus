@@ -137,6 +137,8 @@ Exemplos:
 - `nfe:create`
 - `nfe:cancel`
 - `nfse:read`
+- `nfse:create`
+- `nfse:cancel`
 - `nfe_inbound:read`
 - `nfe_inbound:manage`
 - `integration:manage`

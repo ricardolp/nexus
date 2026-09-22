@@ -25,22 +25,30 @@ const SEGMENT_LABELS: Record<string, string> = {
   support: 'Suporte',
   profiles: 'Perfis',
   nfe: 'NF-e Entrada',
-  saida: 'NF-e Saída',
-  nfse: 'NFSe',
+  nfse: 'NFS-e Entrada',
   settings: 'Configurações',
   companies: 'Empresas',
   integrations: 'Integrações',
   'process-flows': 'Fluxos de processo',
   security: 'Segurança e acesso',
+  'master-data': 'Dados Mestres',
+  partners: 'Parceiros',
+  materials: 'Materiais',
   'nfe-distribution': 'Distribuição NF-e',
   billing: 'Consumo',
-  new: 'Novo'
+  new: 'Novo',
+  nova: 'Nova emissão',
+  emitir: 'Emitir'
 };
 
 function labelFor(segment: string, isLast: boolean, previous?: string) {
   if (/^[0-9a-f-]{8,}$/i.test(segment)) {
     if (previous === 'companies') return 'Empresa';
+    if (previous === 'materials') return 'Material';
     return isLast ? 'Detalhe' : 'Item';
+  }
+  if (segment === 'saida') {
+    return previous === 'nfse' ? 'NFS-e Saída' : 'NF-e Saída';
   }
   return SEGMENT_LABELS[segment] ?? decodeURIComponent(segment.replace(/-/g, ' '));
 }

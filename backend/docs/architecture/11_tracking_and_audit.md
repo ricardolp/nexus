@@ -14,26 +14,20 @@ Todos devem ser pesquisáveis.
 
 ## `request_traces`
 
+Índice operacional e **Logs de Integração** (tenant UI em Integrações). Além dos campos de correlação/HTTP, a migration `048_integration_request_logs` adiciona `direction`, `origin`, `destination`, `level`, `summary`, headers sanitizados e previews de body/response. Ver [entities/request_traces.md](entities/request_traces.md).
+
+Campos históricos do desenho:
+
 - `id`
 - `organization_id`
-- `request_id`
 - `correlation_id`
 - `trace_id`
-- `source`
-- `method`
-- `route_template`
-- `client_id`
-- `user_id`
-- `organization_company_id`
-- `started_at`
-- `finished_at`
+- `span_name` / source
+- `http_method` / `http_path`
+- `started_at` / `finished_at`
 - `http_status`
 - `duration_ms`
-- `request_payload_id`
-- `response_payload_id`
-- `error_code`
-- `ip_hash`
-- `user_agent_sanitized`
+- refs de payload (`storage_object_key`, `request_payload_key`, `response_payload_key`)
 
 ## `audit_events`
 

@@ -73,9 +73,31 @@ type TransmissionResult struct {
 	DocumentID        uuid.UUID `json:"document_id"`
 	Outcome           string    `json:"outcome"`
 	Protocol          string    `json:"protocol"`
+	AccessKey         string    `json:"access_key"`
+	CStat             string    `json:"cstat"`
+	XMotivo           string    `json:"x_motivo"`
 	ErrorCode         string    `json:"error_code"`
 	ErrorMessage      string    `json:"error_message"`
+	RequestObjectKey  string    `json:"request_object_key"`
 	ResponseObjectKey string    `json:"response_object_key"`
+	Receipt           string    `json:"receipt"`
+	TpEmis            int       `json:"tp_emis"`
+	Number            string    `json:"number"`            // NFS-e number (SEFIN)
+	VerificationCode  string    `json:"verification_code"` // NFS-e codigo verificacao
+}
+
+// EventResult is the payload shape nfe-gateway publishes on
+// fiscal.document.event_result.v1 (cancel / CC-e / inutilização).
+type EventResult struct {
+	DocumentID        *uuid.UUID `json:"document_id"`
+	EventKind         string     `json:"event_kind"`
+	Outcome           string     `json:"outcome"`
+	Protocol          string     `json:"protocol"`
+	CStat             string     `json:"cstat"`
+	XMotivo           string     `json:"x_motivo"`
+	ErrorMessage      string     `json:"error_message"`
+	RequestObjectKey  string     `json:"request_object_key"`
+	ResponseObjectKey string     `json:"response_object_key"`
 }
 
 // ParseTransmissionResult decodes the CloudEvents envelope and inner data —
@@ -88,6 +110,17 @@ func ParseTransmissionResult(payload []byte) (organizationID uuid.UUID, result T
 	}
 	if err = json.Unmarshal(envelope.Data, &result); err != nil {
 		return uuid.Nil, TransmissionResult{}, err
+	}
+	return envelope.OrganizationID, result, nil
+}
+
+func ParseEventResult(payload []byte) (organizationID uuid.UUID, result EventResult, err error) {
+	var envelope messaging.CloudEvent
+	if err = json.Unmarshal(payload, &envelope); err != nil {
+		return uuid.Nil, EventResult{}, err
+	}
+	if err = json.Unmarshal(envelope.Data, &result); err != nil {
+		return uuid.Nil, EventResult{}, err
 	}
 	return envelope.OrganizationID, result, nil
 }
@@ -131,28 +164,68 @@ func (w *Worker) HandleTransmissionResult(ctx context.Context, payload []byte) e
 
 	status, processing, ok := NextStatusesFromProvider(result.Outcome)
 	if !ok {
-		// An outcome the state machine doesn't recognize (e.g. a gateway-side
-		// error outcome) must not leave the document stuck in
-		// waiting_external forever.
 		status, processing = StatusFailed, ProcessingFailed
 	}
-	eventType := EventTypeForOutcome(result.Outcome)
 
-	meta := map[string]any{}
-	if result.Outcome == "rejected" {
-		meta["error_code"] = result.ErrorCode
-	} else if result.Protocol != "" {
-		meta["protocol"] = result.Protocol
-	}
-	if result.ResponseObjectKey != "" {
-		meta["response_object_key"] = result.ResponseObjectKey
-	}
-
-	if err := w.docs.UpdateStatus(ctx, doc.OrganizationID, doc.ID, doc.Status, status, processing, "provider", "nfe_gateway", eventType, meta); err != nil {
+	if err := w.docs.ApplyTransmissionResult(ctx, *doc, status, processing, result); err != nil {
 		if IsStaleStatusConflict(err) {
 			return nil
 		}
 		return err
+	}
+	return nil
+}
+
+// HandleEventResult applies cancel / CC-e / inutilização outcomes from nfe-gateway.
+func (w *Worker) HandleEventResult(ctx context.Context, payload []byte) error {
+	organizationID, result, err := ParseEventResult(payload)
+	if err != nil {
+		return err
+	}
+	if result.DocumentID == nil {
+		return nil
+	}
+	doc, err := w.docs.GetDocument(ctx, organizationID, *result.DocumentID)
+	if err != nil {
+		return err
+	}
+	status, processing, ok := NextStatusesFromEventResult(result.EventKind, result.Outcome)
+	if !ok {
+		status, processing = StatusFailed, ProcessingFailed
+	}
+	eventType := EventTypeForOutcome(result.Outcome)
+	if result.Outcome == "accepted" {
+		switch result.EventKind {
+		case "cancel":
+			eventType = EventTypeForOutcome("cancelled")
+		case "cce":
+			eventType = EventTypeForOutcome("correction_registered")
+		case "inutilization":
+			eventType = EventTypeForOutcome("inutilized")
+		}
+	} else if result.EventKind == "cancel" && status == StatusAuthorized {
+		eventType = messaging.EventDocumentStatusChanged
+	}
+	meta := map[string]any{
+		"event_kind": result.EventKind,
+		"cstat":      result.CStat,
+		"x_motivo":   result.XMotivo,
+		"protocol":   result.Protocol,
+	}
+	if result.RequestObjectKey != "" {
+		meta["request_object_key"] = result.RequestObjectKey
+	}
+	if result.ResponseObjectKey != "" {
+		meta["response_object_key"] = result.ResponseObjectKey
+	}
+	if err := w.docs.UpdateStatus(ctx, doc.OrganizationID, doc.ID, doc.Status, status, processing, "nfe_gateway", "nfe_gateway", eventType, meta); err != nil {
+		if IsStaleStatusConflict(err) {
+			return nil
+		}
+		return err
+	}
+	if result.EventKind == "cancel" || result.EventKind == "cce" {
+		_ = w.docs.RegisterCancelPayloads(ctx, doc.OrganizationID, doc.ID, result.RequestObjectKey, result.ResponseObjectKey)
 	}
 	return nil
 }

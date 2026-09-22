@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronDownIcon,
   FileSearchIcon,
@@ -8,6 +8,7 @@ import {
   KeyRoundIcon,
   ListChecksIcon,
   SearchIcon,
+  XIcon,
   type LucideIcon
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -30,6 +31,7 @@ import { DataTableSkeleton } from '@/components/data-table/data-table-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +39,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BulkActionBar } from './bulk-action-bar';
 import { getFiscalDocumentColumns } from './columns';
@@ -51,6 +54,15 @@ import { isInboundProcessing } from './format';
 import { XMLUploadDialog } from './xml-upload-dialog';
 
 type ListTab = 'documents' | 'pending' | 'queries';
+type DocumentSearchField = 'number' | 'partner' | 'access_key';
+
+const DOCUMENT_SEARCH_FIELDS: { id: DocumentSearchField; label: string }[] = [
+  { id: 'number', label: 'Número' },
+  { id: 'partner', label: 'Parceiro' },
+  { id: 'access_key', label: 'Chave' }
+];
+
+const ALL_SEARCH_FIELDS = DOCUMENT_SEARCH_FIELDS.map((field) => field.id);
 
 const QUERY_DIALOG_CONFIG: Record<
   FiscalQueryType,
@@ -80,12 +92,16 @@ export function FiscalDocumentsPage({
   documentType,
   icon: Icon,
   title,
-  description
+  description,
+  direction = 'inbound',
+  toolbarExtra
 }: {
   documentType: 'nfe' | 'nfse';
   icon: LucideIcon;
   title: string;
   description: string;
+  direction?: 'inbound' | 'outbound';
+  toolbarExtra?: ReactNode;
 }) {
   const token = useAuthStore((s) => s.token);
   const organizationId = useAuthStore((s) => s.organizationId);
@@ -93,6 +109,12 @@ export function FiscalDocumentsPage({
   const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
+  const [draftQuery, setDraftQuery] = useState('');
+  const [draftFields, setDraftFields] = useState<DocumentSearchField[]>(ALL_SEARCH_FIELDS);
+  const [appliedSearch, setAppliedSearch] = useState<{ query: string; fields: DocumentSearchField[] }>({
+    query: '',
+    fields: ALL_SEARCH_FIELDS
+  });
   const [statusFilter, setStatusFilter] = useState<DocumentListFilter>('all');
   const [listTab, setListTab] = useState<ListTab>('documents');
   const [activeQueryDialog, setActiveQueryDialog] = useState<FiscalQueryType | null>(null);
@@ -102,17 +124,39 @@ export function FiscalDocumentsPage({
 
   const enabled = !!token && !!organizationId;
   const isNfe = documentType === 'nfe';
+  const isOutbound = direction === 'outbound';
+  const showInboundExtras = isNfe && !isOutbound;
+  const detailBasePath = isOutbound
+    ? documentType === 'nfse'
+      ? '/app/nfse/saida'
+      : '/app/nfe/saida'
+    : `/app/${documentType}`;
 
   const documentsQuery = useQuery({
-    queryKey: ['fiscal-documents', organizationId, documentType],
+    queryKey: ['fiscal-documents', organizationId, documentType, direction, appliedSearch],
     queryFn: () =>
       listFiscalDocuments(token!, organizationId!, {
         documentType,
+        direction,
+        q: appliedSearch.query || undefined,
+        fields: appliedSearch.query ? appliedSearch.fields.join(',') : undefined,
         limit: 200
       }),
+    placeholderData: keepPreviousData,
     enabled,
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
+      if (isOutbound) {
+        return items.some(
+          (d) =>
+            d.processing_status === 'queued' ||
+            d.processing_status === 'waiting_external' ||
+            d.processing_status === 'processing' ||
+            d.processing_status === 'retry_scheduled'
+        )
+          ? 2000
+          : false;
+      }
       return items.some((d) => isInboundProcessing(d.processing_status)) ? 2000 : false;
     }
   });
@@ -120,13 +164,13 @@ export function FiscalDocumentsPage({
   const pendingDocumentsQuery = useQuery({
     queryKey: ['fiscal-documents-pending', organizationId],
     queryFn: () => listPendingFiscalDocuments(token!, organizationId!, 200),
-    enabled: enabled && isNfe
+    enabled: enabled && showInboundExtras
   });
 
   const sefazQueriesQuery = useQuery({
     queryKey: ['fiscal-document-queries', organizationId],
     queryFn: () => listFiscalDocumentQueries(token!, organizationId!, 50),
-    enabled: enabled && isNfe,
+    enabled: enabled && showInboundExtras,
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
       return items.some((q) => q.status === 'pending' || q.status === 'processing') ? 2000 : false;
@@ -140,29 +184,21 @@ export function FiscalDocumentsPage({
   const inFlightQueryCount = sefazQueries.filter((q) => q.status === 'pending' || q.status === 'processing').length;
 
   const filteredDocuments = useMemo(() => {
-    const byStatus =
-      statusFilter === 'all' ? documents : documents.filter((d) => documentListBucket(d.status) === statusFilter);
-    const query = search.trim().toLowerCase();
-    if (!query) return byStatus;
-    return byStatus.filter(
-      (d) =>
-        (d.document_key ?? '').toLowerCase().includes(query) ||
-        (d.access_key ?? '').toLowerCase().includes(query) ||
-        (d.number ?? '').toLowerCase().includes(query) ||
-        (d.external_id ?? '').toLowerCase().includes(query) ||
-        (d.issuer_name ?? '').toLowerCase().includes(query) ||
-        d.source_system.toLowerCase().includes(query)
-    );
-  }, [documents, search, statusFilter]);
+    if (statusFilter === 'all') return documents;
+    return documents.filter((d) => documentListBucket(d.status) === statusFilter);
+  }, [documents, statusFilter]);
 
   const filteredPendingDocuments = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return pendingDocuments;
+    const digits = query.replace(/\D/g, '');
     return pendingDocuments.filter(
       (d) =>
         d.chave.toLowerCase().includes(query) ||
+        (digits.length >= 8 && d.chave.replace(/\D/g, '').includes(digits)) ||
         (d.nome_emitente ?? '').toLowerCase().includes(query) ||
-        (d.cnpj_emitente ?? '').toLowerCase().includes(query)
+        (d.cnpj_emitente ?? '').toLowerCase().includes(query) ||
+        (digits.length >= 3 && (d.cnpj_emitente ?? '').replace(/\D/g, '').includes(digits))
     );
   }, [pendingDocuments, search]);
 
@@ -221,11 +257,11 @@ export function FiscalDocumentsPage({
   const columns = useMemo(
     () =>
       getFiscalDocumentColumns(
-        (doc) => navigate(`/app/${documentType}/${doc.id}`),
+        (doc) => navigate(`${detailBasePath}/${doc.id}`),
         handleDownload,
         (doc) => setDocumentPendingDelete(doc)
       ),
-    [token, organizationId, documentType, navigate]
+    [token, organizationId, detailBasePath, navigate]
   );
 
   const pendingColumns = useMemo(() => getPendingDocumentColumns((doc) => setDocumentPendingManifest(doc)), []);
@@ -236,9 +272,48 @@ export function FiscalDocumentsPage({
       ? 'Buscar por chave ou emitente...'
       : listTab === 'queries'
         ? 'Buscar consulta por chave...'
-        : 'Buscar por chave, emitente ou número...';
+        : draftFields.length === 1
+          ? `Buscar por ${DOCUMENT_SEARCH_FIELDS.find((field) => field.id === draftFields[0])?.label.toLowerCase()}...`
+          : 'Buscar e pressione Enter';
 
-  const consultButton = isNfe ? (
+  const searchFieldLabel =
+    draftFields.length === DOCUMENT_SEARCH_FIELDS.length
+      ? 'Todos os campos'
+      : DOCUMENT_SEARCH_FIELDS.filter((field) => draftFields.includes(field.id))
+          .map((field) => field.label)
+          .join(', ');
+
+  const showTableSkeleton = documentsQuery.isLoading || documentsQuery.isPlaceholderData;
+  const hasAppliedSearch = Boolean(appliedSearch.query);
+
+  function toggleSearchField(id: DocumentSearchField) {
+    setDraftFields((current) => {
+      if (current.includes(id)) {
+        if (current.length === 1) return current;
+        return current.filter((field) => field !== id);
+      }
+      return [...current, id];
+    });
+  }
+
+  function applyDocumentSearch() {
+    setAppliedSearch({
+      query: draftQuery.trim(),
+      fields: draftFields.length ? draftFields : ALL_SEARCH_FIELDS
+    });
+  }
+
+  function clearDocumentSearch() {
+    setDraftQuery('');
+    setAppliedSearch({ query: '', fields: draftFields.length ? draftFields : ALL_SEARCH_FIELDS });
+  }
+
+  function handleDocumentSearchSubmit(event: FormEvent) {
+    event.preventDefault();
+    applyDocumentSearch();
+  }
+
+  const consultButton = showInboundExtras ? (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline">
@@ -263,8 +338,8 @@ export function FiscalDocumentsPage({
   ) : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      {organizationId && listTab === 'documents' && !documentsQuery.isLoading && !documentsQuery.isError && (
+    <div className="flex flex-col gap-6" data-tour="fiscal-list">
+      {organizationId && listTab === 'documents' && documentsQuery.data && !documentsQuery.isError && (
         <KpiSummaryCards documents={documents} activeFilter={statusFilter} onFilterChange={setStatusFilter} />
       )}
 
@@ -283,13 +358,13 @@ export function FiscalDocumentsPage({
             </p>
           ) : (
             <Tabs
-              value={isNfe ? listTab : 'documents'}
+              value={showInboundExtras ? listTab : 'documents'}
               onValueChange={(value) => {
                 setSearch('');
                 setListTab(value as ListTab);
               }}
             >
-              {isNfe && (
+              {showInboundExtras && (
                 <TabsList className="mb-4">
                   <TabsTrigger value="documents">Documentos</TabsTrigger>
                   <TabsTrigger value="pending" className="gap-1.5">
@@ -312,55 +387,94 @@ export function FiscalDocumentsPage({
               )}
 
               <TabsContent value="documents">
-                {documentsQuery.isLoading ? (
-                  <DataTableSkeleton columnCount={9} />
-                ) : documentsQuery.isError ? (
-                  <p className="text-destructive text-sm">
-                    {documentsQuery.error instanceof ApiError
-                      ? documentsQuery.error.message
-                      : 'Não foi possível carregar os documentos fiscais.'}
-                  </p>
-                ) : (
-                  <DataTable
-                    columns={columns}
-                    data={filteredDocuments}
-                    onRowClick={(doc) => navigate(`/app/${documentType}/${doc.id}`)}
-                    toolbar={(table) => (
-                      <div className="flex w-full flex-col gap-2">
-                        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
-                          <div className="relative w-full max-w-sm">
-                            <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-                            <Input
-                              placeholder={searchPlaceholder}
-                              value={search}
-                              onChange={(e) => setSearch(e.target.value)}
-                              className="pl-8"
-                            />
-                          </div>
-                          <Button
-                            variant="outline"
-                            className="sm:ml-auto"
-                            onClick={() => setUploadDialogOpen(true)}
-                          >
-                            <FileUpIcon />
-                            Importar XML
+                <div className="flex flex-col gap-4">
+                  <div className="flex w-full flex-col gap-2 lg:flex-row lg:items-center">
+                    <form
+                      className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center"
+                      onSubmit={handleDocumentSearchSubmit}
+                    >
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button type="button" variant="outline" className="w-full justify-between sm:w-48">
+                            <span className="truncate">{searchFieldLabel}</span>
+                            <ChevronDownIcon />
                           </Button>
-                          {consultButton}
-                        </div>
-                        {table.getFilteredSelectedRowModel().rows.length > 0 && (
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-56 p-2">
+                          {DOCUMENT_SEARCH_FIELDS.map((field) => (
+                            <label
+                              key={field.id}
+                              className="hover:bg-accent flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm"
+                            >
+                              <Checkbox
+                                checked={draftFields.includes(field.id)}
+                                onCheckedChange={() => toggleSearchField(field.id)}
+                              />
+                              {field.label}
+                            </label>
+                          ))}
+                        </PopoverContent>
+                      </Popover>
+                      <div className="relative min-w-0 flex-1">
+                        <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+                        <Input
+                          placeholder={searchPlaceholder}
+                          value={draftQuery}
+                          onChange={(e) => setDraftQuery(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                      <Button type="submit">
+                        <SearchIcon />
+                        Pesquisar
+                      </Button>
+                      {hasAppliedSearch && (
+                        <Button type="button" variant="ghost" onClick={clearDocumentSearch}>
+                          <XIcon />
+                          Limpar
+                        </Button>
+                      )}
+                    </form>
+                    <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
+                      {showInboundExtras && (
+                        <Button type="button" variant="outline" onClick={() => setUploadDialogOpen(true)}>
+                          <FileUpIcon />
+                          Importar XML
+                        </Button>
+                      )}
+                      {toolbarExtra}
+                      {consultButton}
+                    </div>
+                  </div>
+
+                  {documentsQuery.isError ? (
+                    <p className="text-destructive text-sm">
+                      {documentsQuery.error instanceof ApiError
+                        ? documentsQuery.error.message
+                        : 'Não foi possível carregar os documentos fiscais.'}
+                    </p>
+                  ) : showTableSkeleton ? (
+                    <DataTableSkeleton columnCount={9} includeToolbar={false} />
+                  ) : (
+                    <DataTable
+                      columns={columns}
+                      data={filteredDocuments}
+                      onRowClick={(doc) => navigate(`${detailBasePath}/${doc.id}`)}
+                      toolbar={(table) =>
+                        table.getFilteredSelectedRowModel().rows.length > 0 ? (
                           <BulkActionBar
                             table={table}
                             downloading={zipDownloadMutation.isPending}
                             onDownloadZip={(docs) => zipDownloadMutation.mutate(docs)}
                           />
-                        )}
-                      </div>
-                    )}
-                  />
-                )}
+                        ) : null
+                      }
+                    />
+                  )}
+                </div>
               </TabsContent>
 
-              {isNfe && (
+              {showInboundExtras && (
                 <TabsContent value="pending">
                   {pendingDocumentsQuery.isLoading ? (
                     <DataTableSkeleton columnCount={6} />
@@ -390,7 +504,7 @@ export function FiscalDocumentsPage({
                 </TabsContent>
               )}
 
-              {isNfe && (
+              {showInboundExtras && (
                 <TabsContent value="queries">
                   {sefazQueriesQuery.isLoading ? (
                     <DataTableSkeleton columnCount={5} />

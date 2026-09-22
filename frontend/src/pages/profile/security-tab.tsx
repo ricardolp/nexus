@@ -180,7 +180,7 @@ export function ProfileSecurityTab({
         </CardFooter>
       </Card>
 
-      <Card>
+      <Card data-tour="profile-mfa">
         <CardHeader>
           <CardTitle>Autenticação em dois fatores</CardTitle>
           <CardDescription>

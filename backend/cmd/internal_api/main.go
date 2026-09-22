@@ -18,6 +18,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/nexus/fiscal-messaging/internal/certificate"
 	"github.com/nexus/fiscal-messaging/internal/config"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
 	"github.com/nexus/fiscal-messaging/internal/platform/keyvault"
@@ -56,8 +57,9 @@ func main() {
 	}
 
 	api := &httpapi.InternalAPI{
-		Certificates: certificate.NewService(pool, certStore),
-		ServiceToken: cfg.NFEGatewayServiceToken,
+		Certificates:    certificate.NewService(pool, certStore),
+		IntegrationLogs: integrationlog.NewRecorder(pool, logger),
+		ServiceToken:    cfg.NFEGatewayServiceToken,
 	}
 
 	r := chi.NewRouter()
@@ -82,13 +84,33 @@ func main() {
 
 	addr := config.ListenAddr(cfg.InternalHTTPAddr)
 	server := &http.Server{Addr: addr, Handler: r}
-	go func() {
-		logger.Info("internal_api listening", "addr", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server", "error", err)
-			os.Exit(1)
+
+	if cfg.InternalAPITLSCertFile != "" && cfg.InternalAPITLSKeyFile != "" {
+		if cfg.InternalAPITLSClientCAFile != "" {
+			tlsCfg, err := httpx.MTLSServerConfig(cfg.InternalAPITLSClientCAFile)
+			if err != nil {
+				logger.Error("mtls_config", "error", err)
+				os.Exit(1)
+			}
+			server.TLSConfig = tlsCfg
+			logger.Info("internal_api mTLS enabled", "client_ca", cfg.InternalAPITLSClientCAFile)
 		}
-	}()
+		go func() {
+			logger.Info("internal_api listening (TLS)", "addr", addr)
+			if err := server.ListenAndServeTLS(cfg.InternalAPITLSCertFile, cfg.InternalAPITLSKeyFile); err != nil && err != http.ErrServerClosed {
+				logger.Error("server", "error", err)
+				os.Exit(1)
+			}
+		}()
+	} else {
+		go func() {
+			logger.Info("internal_api listening", "addr", addr)
+			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("server", "error", err)
+				os.Exit(1)
+			}
+		}()
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

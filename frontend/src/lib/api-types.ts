@@ -125,6 +125,29 @@ export interface ApiRequestTrace {
   started_at: string;
   finished_at?: string | null;
   created_at: string;
+  direction?: string | null;
+  origin?: string | null;
+  destination?: string | null;
+  level?: string | null;
+  summary?: string | null;
+  request_headers_json?: Record<string, string> | null;
+  response_headers_json?: Record<string, string> | null;
+  request_body_preview?: string | null;
+  response_body_preview?: string | null;
+  request_payload_key?: string | null;
+  response_payload_key?: string | null;
+}
+
+export type ApiIntegrationLogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+export interface ApiIntegrationLog extends ApiRequestTrace {}
+
+export interface ApiIntegrationLogList {
+  items: ApiIntegrationLog[];
+  page: number;
+  limit: number;
+  total: number;
+  error_count: number;
 }
 
 export type PlatformErrorSource = 'document_attempt' | 'inbound_step' | 'nfe_distribution_poll';
@@ -216,9 +239,86 @@ export interface ApiCompany {
   // existir não têm valor, e nesse caso não são elegíveis pra distribuição
   // automática (o nfe-gateway não tem pra onde rotear a chamada).
   uf?: string | null;
+  municipal_registration?: string | null;
+  ibge_municipality_code?: string | null;
+  /** NFS-e opSimpNac: 1=Não Optante, 2=MEI, 3=ME/EPP */
+  tax_regime?: string | null;
+  /** NFS-e regEspTrib: 0=Nenhum … 7 */
+  special_tax_regime?: string | null;
   environment: 'production' | 'homologation' | string;
   status: 'active' | 'suspended' | 'disabled' | string;
   metadata_json: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiCustomer {
+  id?: string;
+  organization_id: string;
+  cpf?: string | null;
+  cnpj?: string | null;
+  nif?: string | null;
+  legal_name: string;
+  email?: string | null;
+  phone?: string | null;
+  municipal_registration?: string | null;
+  street?: string | null;
+  street_type?: string | null;
+  number?: string | null;
+  complement?: string | null;
+  district?: string | null;
+  municipality_code?: string | null;
+  uf?: string | null;
+  cep?: string | null;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  from_history?: boolean;
+}
+
+export interface ApiMaterialUOM {
+  id: string;
+  organization_id: string;
+  organization_material_id: string;
+  alternative_unit: string;
+  base_unit: string;
+  numerator: number;
+  denominator: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiMaterial {
+  id: string;
+  organization_id: string;
+  material_code: string;
+  supplier_material_code?: string | null;
+  description?: string | null;
+  base_unit?: string | null;
+  ncm?: string | null;
+  source: string;
+  last_seen_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  uoms?: ApiMaterialUOM[];
+}
+
+export interface ApiCompanyNFSeService {
+  id: string;
+  organization_id: string;
+  organization_company_id: string;
+  cnae_code: string;
+  cnae_description?: string | null;
+  service_list_item?: string | null;
+  service_description?: string | null;
+  nbs_code?: string | null;
+  nbs_description?: string | null;
+  default_iss_aliquot?: number | null;
+  default_discrimination?: string | null;
+  is_primary: boolean;
+  is_favorite: boolean;
+  sort_order: number;
+  status: string;
   created_at: string;
   updated_at: string;
 }
@@ -241,7 +341,7 @@ export interface ApiCertificate {
   updated_at: string;
 }
 
-export interface ApiCompanyService {
+export interface ApiOrganizationService {
   service_id: string;
   service_code: string;
   service_name: string;
@@ -249,6 +349,15 @@ export interface ApiCompanyService {
   activated_at?: string | null;
   deactivated_at?: string | null;
 }
+
+export type ContractServiceCode =
+  | 'nfe_inbound'
+  | 'nfe_outbound'
+  | 'nfse_inbound'
+  | 'nfse_outbound';
+
+/** @deprecated Use ApiOrganizationService — enablement is org-level. */
+export type ApiCompanyService = ApiOrganizationService;
 
 // Governança da consulta de distribuição por NSU (nfe-gateway) — estado
 // atual do cursor + o log de tentativas, exposto em GET .../nfe_distribution.
@@ -290,6 +399,17 @@ export interface ApiNfeDistributionStatus {
   polls: ApiNfeDistributionPoll[];
 }
 
+export interface ApiIntegrationCapabilities {
+  purchaseOrder?: boolean;
+  inboundDelivery?: boolean;
+  goodsReceipt?: boolean;
+  supplierInvoice?: boolean;
+  ewm?: boolean;
+  serviceEntry?: boolean;
+  directGoodsReceipt?: boolean;
+  automaticPurchaseOrder?: boolean;
+}
+
 export interface ApiIntegrationConfiguration {
   client_id?: string;
   token_url?: string;
@@ -297,6 +417,7 @@ export interface ApiIntegrationConfiguration {
   sap_language?: string;
   headers?: Record<string, string>;
   query_params?: Record<string, string>;
+  capabilities?: ApiIntegrationCapabilities;
 }
 
 export interface ApiIntegration {
@@ -372,6 +493,15 @@ export interface ApiFiscalDocument {
   issued_at?: string | null;
   issuer_name?: string | null;
   nfe?: ApiNFeDetails | null;
+  nfse?: ApiNFSeDetails | null;
+  authorization_code?: string | null;
+  authorization_message?: string | null;
+  payloads?: ApiDocumentPayloadRef[];
+}
+
+export interface ApiDocumentPayloadRef {
+  payload_type: string;
+  content_type: string;
 }
 
 export interface ApiNFeAddress {
@@ -391,6 +521,7 @@ export interface ApiNFeParty {
   cpf?: string;
   legal_name?: string;
   trade_name?: string;
+  email?: string;
   ie?: string;
   im?: string;
   crt?: string;
@@ -412,6 +543,9 @@ export interface ApiNFeTotals {
   pis: number;
   cofins: number;
   ii: number;
+  ibs?: number;
+  cbs?: number;
+  is?: number;
 }
 
 export interface ApiNFeDetails {
@@ -421,6 +555,30 @@ export interface ApiNFeDetails {
   operation_type?: string;
   finality?: string;
   totals?: ApiNFeTotals | null;
+}
+
+export interface ApiNFSeService {
+  description?: string;
+  national_tax_code?: string;
+  nbs?: string;
+  municipality_code?: string;
+  cnae?: string;
+  amount?: number | null;
+  nature_of_operation?: string;
+  iss_withheld?: boolean | null;
+  iss_rate?: number | null;
+  iss_amount?: number | null;
+  pis_cofins_cst?: string;
+  pis_cofins_withholding?: string;
+  pis_amount?: number | null;
+  cofins_amount?: number | null;
+  total_taxes_percent?: number | null;
+}
+
+export interface ApiNFSeDetails {
+  issuer: ApiNFeParty;
+  recipient: ApiNFeParty;
+  service?: ApiNFSeService | null;
 }
 
 export interface ApiItemTax {
@@ -613,6 +771,9 @@ export interface ApiInboundItem {
   resolved_material_code?: string | null;
   resolved_purchase_order_number?: string | null;
   resolved_purchase_order_item?: string | null;
+  resolved_purchase_order_unit?: string | null;
+  alternative_unit?: string | null;
+  alternative_quantity?: number | null;
   taxes?: ApiItemTaxes | null;
   status: string;
   created_at: string;
@@ -715,6 +876,7 @@ export interface ApiOrchestrationView {
   overrides: ApiInboundOverride[];
   plan?: ApiExecutionPlan | null;
   steps?: ApiPlanStep[];
+  has_generated_sap_document?: boolean;
 }
 
 export interface ApiPurchaseOrderItem {
@@ -827,4 +989,84 @@ export interface ApiProblem {
   code: string;
   detail: string;
   trace_id: string;
+}
+
+export type EmailMessageStatus = 'rendered' | 'sent' | 'failed' | 'not_sent';
+
+export interface ApiEmailCredentials {
+  organization_id: string;
+  host: string;
+  port: number;
+  username: string;
+  has_password: boolean;
+  from_name: string;
+  from_address: string;
+  status: 'active' | 'disabled' | string;
+  last_tested_at?: string | null;
+  last_test_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiEmailTemplate {
+  id: string;
+  organization_id: string;
+  organization_company_id: string;
+  process_code: string;
+  process_label: string;
+  enabled: boolean;
+  subject: string;
+  to_addresses: string[];
+  cc_addresses: string[];
+  body_html: string;
+  from_name?: string | null;
+  from_address?: string | null;
+  attach_xml: boolean;
+  attach_danfe_sefaz: boolean;
+  attach_danfe_custom: boolean;
+  use_partner_email: boolean;
+  use_recipient_email: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiEmailAttachment {
+  id: string;
+  message_id: string;
+  kind: 'xml' | 'danfe_sefaz' | 'danfe_custom' | string;
+  filename: string;
+  content_type: string;
+  available: boolean;
+  created_at: string;
+}
+
+export interface ApiEmailMessage {
+  id: string;
+  organization_id: string;
+  organization_company_id: string;
+  organization_document_id?: string | null;
+  template_id?: string | null;
+  process_code: string;
+  process_label: string;
+  status: EmailMessageStatus;
+  from_name: string;
+  from_address: string;
+  to_addresses: string[];
+  cc_addresses: string[];
+  subject: string;
+  body_html: string;
+  body_plain: string;
+  sent_at?: string | null;
+  attempt_count: number;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+  company_legal_name?: string;
+  company_trade_name?: string | null;
+  attachments?: ApiEmailAttachment[];
+}
+
+export interface ApiEmailToken {
+  token: string;
+  description: string;
 }

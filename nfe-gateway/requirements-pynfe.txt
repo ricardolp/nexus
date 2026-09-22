@@ -1,0 +1,5 @@
+# Pin PyNFe to GitHub main (reforma IBS/CBS + gIBSCBSMono).
+# PyPI 0.6.5 (Feb 2026) does NOT include NT 2025.002-RTC serialization.
+# Bump the commit SHA deliberately after reviewing upstream changelog;
+# switch to a PyPI release only when it includes reforma docs/tests.
+pynfe @ git+https://github.com/TadaSoftware/PyNFe.git@e1e5e7ece6c9a4564d0fc63eba1be85119a3f0ea

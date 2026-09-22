@@ -117,3 +117,55 @@ class BackendClient:
         import base64
 
         return SigningMaterial(pfx=base64.b64decode(data["pfx_base64"]), thumbprint=data["thumbprint"])
+
+    async def record_integration_log(
+        self,
+        *,
+        organization_id: UUID,
+        destination: str,
+        summary: str,
+        http_method: str = "POST",
+        http_path: str = "",
+        http_status: int | None = None,
+        duration_ms: int | None = None,
+        request_body_preview: str = "",
+        response_body_preview: str = "",
+        request_payload_key: str = "",
+        response_payload_key: str = "",
+        span_name: str = "outbound.provider",
+        origin: str = "nfe_gateway",
+        level: str = "",
+        metadata: dict | None = None,
+    ) -> None:
+        """Best-effort POST /internal/v1/integration_logs — never raises to callers."""
+        payload: dict = {
+            "organization_id": str(organization_id),
+            "direction": "outbound",
+            "origin": origin,
+            "destination": destination,
+            "span_name": span_name,
+            "summary": summary[:512],
+            "http_method": http_method,
+            "http_path": http_path[:1024],
+            "request_body_preview": (request_body_preview or "")[:16_384],
+            "response_body_preview": (response_body_preview or "")[:16_384],
+            "request_payload_key": request_payload_key,
+            "response_payload_key": response_payload_key,
+            "metadata_json": metadata or {},
+        }
+        if http_status is not None:
+            payload["http_status"] = http_status
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
+        if level:
+            payload["level"] = level
+        try:
+            headers = {"Authorization": f"Bearer {self._service_token}"}
+            async with httpx.AsyncClient(timeout=min(self._timeout, 5.0)) as client:
+                await client.post(
+                    f"{self._internal_url}/internal/v1/integration_logs",
+                    headers=headers,
+                    json=payload,
+                )
+        except Exception:  # noqa: BLE001 — logging must not break fiscal flow
+            return

@@ -7,6 +7,7 @@ package inbound
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,27 +93,45 @@ type ScenarioWithRule struct {
 // Item is one organization_nfe_items row — the canonical, never-overwritten
 // view of a document line (spec §5.1/§49-50).
 type Item struct {
-	ID                            uuid.UUID `json:"id"`
-	OrganizationID                uuid.UUID `json:"organization_id"`
-	OrganizationDocumentID        uuid.UUID `json:"organization_document_id"`
-	ItemNumber                    int       `json:"item_number"`
-	SupplierMaterialCode          *string   `json:"supplier_material_code,omitempty"`
-	Description                   *string   `json:"description,omitempty"`
-	NCM                           *string   `json:"ncm,omitempty"`
-	CFOP                          *string   `json:"cfop,omitempty"`
-	Quantity                      float64   `json:"quantity"`
-	Unit                          *string   `json:"unit,omitempty"`
-	UnitPrice                     float64   `json:"unit_price"`
-	TotalAmount                   float64   `json:"total_amount"`
-	PurchaseOrderReferenceRaw     *string   `json:"purchase_order_reference_raw,omitempty"`
-	PurchaseOrderItemReferenceRaw *string   `json:"purchase_order_item_reference_raw,omitempty"`
-	ResolvedMaterialCode          *string   `json:"resolved_material_code,omitempty"`
-	ResolvedPurchaseOrderNumber   *string   `json:"resolved_purchase_order_number,omitempty"`
+	ID                            uuid.UUID  `json:"id"`
+	OrganizationID                uuid.UUID  `json:"organization_id"`
+	OrganizationDocumentID        uuid.UUID  `json:"organization_document_id"`
+	ItemNumber                    int        `json:"item_number"`
+	SupplierMaterialCode          *string    `json:"supplier_material_code,omitempty"`
+	Description                   *string    `json:"description,omitempty"`
+	NCM                           *string    `json:"ncm,omitempty"`
+	CFOP                          *string    `json:"cfop,omitempty"`
+	Quantity                      float64    `json:"quantity"`
+	Unit                          *string    `json:"unit,omitempty"`
+	UnitPrice                     float64    `json:"unit_price"`
+	TotalAmount                   float64    `json:"total_amount"`
+	PurchaseOrderReferenceRaw     *string    `json:"purchase_order_reference_raw,omitempty"`
+	PurchaseOrderItemReferenceRaw *string    `json:"purchase_order_item_reference_raw,omitempty"`
+	ResolvedMaterialCode          *string    `json:"resolved_material_code,omitempty"`
+	ResolvedPurchaseOrderNumber   *string    `json:"resolved_purchase_order_number,omitempty"`
 	ResolvedPurchaseOrderItem     *string    `json:"resolved_purchase_order_item,omitempty"`
+	ResolvedPurchaseOrderUnit     *string    `json:"resolved_purchase_order_unit,omitempty"`
+	AlternativeUnit               *string    `json:"alternative_unit,omitempty"`
+	AlternativeQuantity           *float64   `json:"alternative_quantity,omitempty"`
 	Taxes                         *ItemTaxes `json:"taxes,omitempty"`
 	Status                        string     `json:"status"`
 	CreatedAt                     time.Time  `json:"created_at"`
 	UpdatedAt                     time.Time  `json:"updated_at"`
+}
+
+// PostingUnitAndQty returns the unit/quantity to send to SAP. When the
+// operator picked an alternative UOM from the material master, that overlay
+// wins over the XML commercial unit.
+func (it Item) PostingUnitAndQty() (unit string, qty float64) {
+	unit = strVal(it.Unit)
+	qty = it.Quantity
+	if it.AlternativeUnit != nil && strings.TrimSpace(*it.AlternativeUnit) != "" {
+		unit = strings.TrimSpace(*it.AlternativeUnit)
+		if it.AlternativeQuantity != nil {
+			qty = *it.AlternativeQuantity
+		}
+	}
+	return unit, qty
 }
 
 // Match is one organization_document_matches row — the "resolution SAP"
@@ -217,12 +236,13 @@ type PlanStep struct {
 // OrchestrationView is the full read model for a document — the API's
 // answer to spec §40 ("Interface — visão do documento").
 type OrchestrationView struct {
-	DocumentID  uuid.UUID         `json:"document_id"`
-	Scenario    *ScenarioWithRule `json:"scenario,omitempty"`
-	Items       []Item            `json:"items"`
-	Matches     []Match           `json:"matches"`
-	Validations []Validation      `json:"validations"`
-	Overrides   []Override        `json:"overrides"`
-	Plan        *ExecutionPlan    `json:"plan,omitempty"`
-	Steps       []PlanStep        `json:"steps,omitempty"`
+	DocumentID              uuid.UUID         `json:"document_id"`
+	Scenario                *ScenarioWithRule `json:"scenario,omitempty"`
+	Items                   []Item            `json:"items"`
+	Matches                 []Match           `json:"matches"`
+	Validations             []Validation      `json:"validations"`
+	Overrides               []Override        `json:"overrides"`
+	Plan                    *ExecutionPlan    `json:"plan,omitempty"`
+	Steps                   []PlanStep        `json:"steps,omitempty"`
+	HasGeneratedSAPDocument bool              `json:"has_generated_sap_document"`
 }

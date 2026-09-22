@@ -32,6 +32,7 @@ type nfeXMLParty struct {
 	IE        string       `xml:"IE"`
 	IM        string       `xml:"IM"`
 	CRT       string       `xml:"CRT"`
+	Email     string       `xml:"email"`
 	EnderEmit nfeXMLAddr   `xml:"enderEmit"`
 	EnderDest nfeXMLAddr   `xml:"enderDest"`
 }

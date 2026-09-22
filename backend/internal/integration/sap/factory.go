@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nexus/fiscal-messaging/internal/integration"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 )
 
@@ -15,6 +16,17 @@ import (
 // to the organization default), otherwise StubClient — mirrors the legacy
 // getSapInboundAdapter fallback.
 func Resolve(ctx context.Context, integrations *integration.Service, organizationID uuid.UUID, companyID *uuid.UUID) (Adapter, error) {
+	return ResolveWithRecorder(ctx, integrations, organizationID, companyID, nil)
+}
+
+// ResolveWithRecorder is Resolve with optional outbound HTTP logging.
+func ResolveWithRecorder(
+	ctx context.Context,
+	integrations *integration.Service,
+	organizationID uuid.UUID,
+	companyID *uuid.UUID,
+	recorder *integrationlog.Recorder,
+) (Adapter, error) {
 	row, err := integrations.ResolveActive(ctx, organizationID, companyID, integration.TypeSAPCPI)
 	if err != nil {
 		var de *domainerr.Error
@@ -41,5 +53,10 @@ func Resolve(ctx context.Context, integrations *integration.Service, organizatio
 		baseURL = *row.BaseURL
 	}
 
-	return NewCPIClient(baseURL, cfg.ClientID, secret, cfg.TokenURL, cfg.SAPClient, cfg.SAPLanguage, cfg.Headers, cfg.Capabilities), nil
+	return NewCPIClientWithOrg(
+		organizationID,
+		baseURL, cfg.ClientID, secret, cfg.TokenURL, cfg.SAPClient, cfg.SAPLanguage, cfg.Headers,
+		integration.ResolveCapabilities(cfg.Capabilities),
+		recorder,
+	), nil
 }

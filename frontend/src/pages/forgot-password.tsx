@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { ApiError } from '@/lib/api';
 import { forgotPassword } from '@/lib/endpoints';
-import { AuthShell } from '@/components/brand/auth-shell';
+import { AuthShell, authCardClassName, authFooterLinkClassName } from '@/components/brand/auth-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -34,13 +34,13 @@ export default function ForgotPasswordPage() {
       footer={
         <p>
           Lembrou a senha?{' '}
-          <Link to="/login" className="font-medium text-white underline underline-offset-4">
+          <Link to="/login" className={authFooterLinkClassName}>
             Entrar
           </Link>
         </p>
       }
     >
-      <Card className="w-full border-white/10 bg-card/95 shadow-2xl shadow-black/40 backdrop-blur-sm">
+      <Card className={authCardClassName}>
         <CardHeader className="text-center">
           <CardTitle className="text-xl">Esqueci a senha</CardTitle>
           <CardDescription>

@@ -2,8 +2,13 @@ Metadata-Version: 2.4
 Name: nfe-gateway
 Version: 0.1.0
 Summary: Serviço de mensageria fiscal (SEFAZ/NF-e) baseado em PyNFe, ligado ao backend Go via RabbitMQ.
-Requires-Python: >=3.11
-Requires-Dist: pynfe>=0.5
+Requires-Python: >=3.10
+Requires-Dist: pynfe @ git+https://github.com/TadaSoftware/PyNFe.git@e1e5e7ece6c9a4564d0fc63eba1be85119a3f0ea
+Requires-Dist: lxml>=5.0
+Requires-Dist: requests>=2.31
+Requires-Dist: signxml>=3.2
+Requires-Dist: pyOpenSSL>=24.0
+Requires-Dist: certifi>=2024.0
 Requires-Dist: asyncpg>=0.29
 Requires-Dist: aio-pika>=9.4
 Requires-Dist: httpx>=0.27
@@ -13,6 +18,7 @@ Requires-Dist: azure-identity>=1.16
 Requires-Dist: azure-storage-blob>=12.20
 Requires-Dist: cryptography>=42
 Requires-Dist: structlog>=24.1
+Requires-Dist: prometheus-client>=0.21
 Provides-Extra: dev
 Requires-Dist: pytest>=8.2; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.23; extra == "dev"

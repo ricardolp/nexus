@@ -11,6 +11,7 @@ import {
   ClockIcon,
   PackageIcon,
   PlayIcon,
+  RotateCcwIcon,
   ShoppingCartIcon,
   SkipForwardIcon,
   WorkflowIcon,
@@ -29,7 +30,8 @@ import {
   getOrchestration,
   listDocumentEvents,
   listInboundScenarios,
-  reprocessInboundDocument
+  reprocessInboundDocument,
+  resetInboundDocument
 } from '@/lib/endpoints';
 import type { ApiInboundItem, ApiFiscalDocument, ApiInboundMatch, ApiInboundValidation, ApiPlanStep } from '@/lib/api-types';
 import { useAuthStore } from '@/store/auth-store';
@@ -41,13 +43,17 @@ import { cn } from '@/lib/utils';
 import { DEFAULT_SCENARIO_RULE, PROCESS_TEMPLATES } from '../settings/integrations/flows/templates';
 import { COMPANIES_PATH, companyProcessFlowPath } from '../settings/companies/paths';
 import { AdjustToPoDialog } from './adjust-to-po-dialog';
+import { AlternativeUnitSelect } from './alternative-unit-select';
+import { DocumentPayloadPanel } from './document-payload-panel';
 import { DocumentTimeline } from './document-timeline';
+import { ResetDocumentDialog } from './reset-document-dialog';
 import { describeInboundEvent } from './event-descriptions';
-import { formatDateTime, formatCurrency, formatQuantity, isInboundProcessing } from './format';
+import { formatDateTime, formatCurrency, formatQuantity, canResetInboundDocument, isInboundProcessing, sourceSystemLabel, issqnTributeLabel, issqnRetentionLabel, pisCofinsRetentionLabel } from './format';
 import { ItemTaxChips } from './nfe-tax-chips';
 import {
   badgeFor as inboundBadgeFor,
   describeValidationMessage,
+  extractSapErrorMessage,
   itemStatusLabels,
   matchStatusLabels,
   stepStatusLabels,
@@ -198,16 +204,20 @@ export function DocumentIntegrationPanel({
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustItemId, setAdjustItemId] = useState<string | undefined>(undefined);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   function openAdjust(itemId?: string) {
     setAdjustItemId(itemId);
     setAdjustOpen(true);
   }
 
+  const isServiceNote = document.document_type.toLowerCase() === 'nfse';
+  const nfseService = document.nfse?.service;
+
   const orchestrationQuery = useQuery({
     queryKey: ['orchestration', organizationId, document.id],
     queryFn: () => getOrchestration(token!, organizationId!, document.id),
-    enabled: !!token && !!organizationId,
+    enabled: !!token && !!organizationId && !isServiceNote,
     refetchInterval: isInboundProcessing(document.processing_status) ? 2000 : false
   });
 
@@ -250,6 +260,9 @@ export function DocumentIntegrationPanel({
   const previewTemplate = view?.scenario
     ? PROCESS_TEMPLATES.find((t) => t.code === view.scenario!.scenario.process_template_code)
     : undefined;
+  const ewmProcess =
+    view?.scenario?.scenario.process_template_code === 'EWM_PURCHASE' ||
+    view?.scenario?.rule.receipt_mode === 'EWM_INBOUND';
   const planProgress = useMemo(() => {
     if (steps.length === 0) return null;
     const done = steps.filter((s) => s.status === 'DONE' || s.status === 'SKIPPED').length;
@@ -280,8 +293,9 @@ export function DocumentIntegrationPanel({
         title: `${stepTypeLabels[problemStep.step_type] ?? problemStep.step_type} ${
           problemStep.status === 'FAILED' ? 'falhou' : 'precisa de ação manual'
         }`,
-        description:
-          problemStep.error_message_sanitized ?? 'Corrija os dados do documento para que esta etapa possa seguir.',
+        description: extractSapErrorMessage(
+          problemStep.error_message_sanitized ?? 'Corrija os dados do documento para que esta etapa possa seguir.'
+        ),
         step: problemStep as ApiPlanStep | null
       }
     : steps.length === 0 && blockedInfo
@@ -319,6 +333,21 @@ export function DocumentIntegrationPanel({
     },
     onError: (err: unknown) => {
       toast.error(err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Não foi possível criar o cenário.');
+    }
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => resetInboundDocument(token!, organizationId!, document.id),
+    onSuccess: () => {
+      setConfirmReset(false);
+      toast.success('Nota resetada. A integração será reiniciada a partir do pedido.');
+      queryClient.invalidateQueries({ queryKey: ['fiscal-document', organizationId, document.id] });
+      queryClient.invalidateQueries({ queryKey: ['orchestration', organizationId, document.id] });
+      queryClient.invalidateQueries({ queryKey: ['document-events', organizationId, document.id] });
+      queryClient.invalidateQueries({ queryKey: ['fiscal-documents', organizationId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível resetar a nota.');
     }
   });
 
@@ -377,7 +406,7 @@ export function DocumentIntegrationPanel({
     }
   });
 
-  if (orchestrationQuery.isLoading) {
+  if (!isServiceNote && orchestrationQuery.isLoading) {
     return (
       <div className="flex flex-col gap-2">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -399,7 +428,9 @@ export function DocumentIntegrationPanel({
 
   const statusBadge = badgeFor(statusLabels, document.status);
   const processingBadge = badgeFor(processingStatusLabels, document.processing_status);
-  const totalValue = items.reduce((sum, item) => sum + item.total_amount, 0);
+  const totalValue = isServiceNote
+    ? (nfseService?.amount ?? 0)
+    : items.reduce((sum, item) => sum + item.total_amount, 0);
 
   // Shared by both the real per-step detail expansion (below) and the
   // "Resolução de fornecedor / material / pedido" preview pseudo-step —
@@ -502,6 +533,7 @@ export function DocumentIntegrationPanel({
                   match={poMatch}
                 />
               </div>
+              <AlternativeUnitSelect item={item} documentId={document.id} />
             </div>
           );
         })}
@@ -511,10 +543,10 @@ export function DocumentIntegrationPanel({
 
   const summaryRows: { label: string; value: string; highlight?: boolean; mono?: boolean }[] = [
     { label: 'Empresa', value: companyName ?? document.organization_company_id },
-    { label: 'Fonte', value: document.source_system },
+    { label: 'Fonte', value: sourceSystemLabel(document.source_system) },
     { label: 'Ambiente', value: document.environment === 'production' ? 'Produção' : 'Homologação' },
     {
-      label: 'Valor total dos itens',
+      label: isServiceNote ? 'Valor do serviço' : 'Valor total dos itens',
       value: totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
       highlight: true
     },
@@ -523,12 +555,20 @@ export function DocumentIntegrationPanel({
     { label: 'Emitente (CNPJ)', value: document.issuer_cnpj ?? '—' },
     { label: 'Destinatário (documento)', value: document.recipient_document ?? '—' },
     { label: 'Chave de acesso', value: document.access_key ?? '—', mono: true },
+    {
+      label: 'Retorno da autoridade',
+      value:
+        document.authorization_code && document.authorization_message
+          ? `${document.authorization_code} — ${document.authorization_message}`
+          : document.authorization_message ?? document.authorization_code ?? '—',
+      highlight: Boolean(document.authorization_message || document.authorization_code)
+    },
     { label: 'ID de correlação', value: document.correlation_id, mono: true }
   ];
 
   return (
     <>
-      {banner && (
+      {banner && !isServiceNote && (
         <div
           className={cn(
             'mb-4 flex flex-wrap items-center gap-4 rounded-xl border p-4',
@@ -545,12 +585,27 @@ export function DocumentIntegrationPanel({
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">{banner.title}</p>
-            {banner.description && <p className="text-muted-foreground mt-0.5 text-sm">{banner.description}</p>}
+            {banner.description && (
+              <p
+                className={cn(
+                  'mt-1 text-sm',
+                  banner.critical ? 'text-red-700 dark:text-red-400 font-medium' : 'text-muted-foreground'
+                )}
+              >
+                {banner.description}
+              </p>
+            )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             {scenarioMissing && (
               <Button type="button" size="sm" variant="outline" asChild>
                 <Link to={newScenarioHref}>Configurar manualmente</Link>
+              </Button>
+            )}
+            {canResetInboundDocument(document, steps, view?.has_generated_sap_document) && (
+              <Button type="button" size="sm" variant="outline" onClick={() => setConfirmReset(true)}>
+                <RotateCcwIcon />
+                Resetar
               </Button>
             )}
             <Button
@@ -574,32 +629,37 @@ export function DocumentIntegrationPanel({
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="resumo">Resumo</TabsTrigger>
+          {!isServiceNote && <TabsTrigger value="xml">Arquivos</TabsTrigger>}
           <TabsTrigger value="timeline">Linha do tempo</TabsTrigger>
           <TabsTrigger value="items">
-            Itens
-            {items.length > 0 && (
+            {isServiceNote ? 'Serviço' : 'Itens'}
+            {!isServiceNote && items.length > 0 && (
               <Badge className="ml-1.5 h-4 min-w-4 rounded-full px-1 text-[10px] tabular-nums" variant="secondary">
                 {items.length}
               </Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="taxes">Impostos</TabsTrigger>
-          <TabsTrigger value="validations">
-            Validações
-            {validationSummary.action > 0 && (
-              <Badge className="ml-1.5 h-4 min-w-4 rounded-full bg-red-600 px-1 text-[10px] tabular-nums">
-                {validationSummary.action}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="plan">
-            Plano de execução
-            {planProgress && planProgress.failed > 0 && (
-              <Badge className="ml-1.5 h-4 min-w-4 rounded-full bg-red-600 px-1 text-[10px] tabular-nums">
-                {planProgress.failed}
-              </Badge>
-            )}
-          </TabsTrigger>
+          {!isServiceNote && (
+            <TabsTrigger value="validations">
+              Validações
+              {validationSummary.action > 0 && (
+                <Badge className="ml-1.5 h-4 min-w-4 rounded-full bg-red-600 px-1 text-[10px] tabular-nums">
+                  {validationSummary.action}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
+          {!isServiceNote && (
+            <TabsTrigger value="plan">
+              Plano de execução
+              {planProgress && planProgress.failed > 0 && (
+                <Badge className="ml-1.5 h-4 min-w-4 rounded-full bg-red-600 px-1 text-[10px] tabular-nums">
+                  {planProgress.failed}
+                </Badge>
+              )}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="resumo" className="pt-4">
@@ -639,75 +699,199 @@ export function DocumentIntegrationPanel({
           </div>
         </TabsContent>
 
+        {!isServiceNote && (
+          <TabsContent value="xml" className="pt-4">
+            <DocumentPayloadPanel document={document} />
+          </TabsContent>
+        )}
+
         <TabsContent value="timeline" className="pt-4">
           <DocumentTimeline documentId={document.id} />
         </TabsContent>
 
         <TabsContent value="items" className="pt-4">
-          <p className="text-muted-foreground mb-3 text-xs">
-            Dados extraídos da nota fiscal, como recebida — sempre os valores originais. Correspondência com o
-            SAP e correções manuais ficam no detalhe de cada etapa, na aba Plano de execução.
-          </p>
-          {items.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              {isInboundProcessing(document.processing_status)
-                ? 'Extraindo itens do XML em segundo plano…'
-                : 'Nenhum item extraído para este documento.'}
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {items.map((item) => (
-                <div key={item.id} className="rounded-lg border p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">
-                        <Badge variant="outline" className="mr-2 font-mono font-normal tabular-nums">
-                          {item.item_number}
-                        </Badge>
-                        {item.description || item.supplier_material_code || 'sem descrição'}
-                      </p>
-                      <p className="text-muted-foreground mt-1 font-mono text-xs">
-                        {item.supplier_material_code ?? '—'}
-                      </p>
-                    </div>
-                    <p className="text-sm font-medium tabular-nums">
-                      {formatCurrency(item.total_amount)}
+          {isServiceNote ? (
+            nfseService ? (
+              <div className="flex flex-col gap-3">
+                <p className="text-muted-foreground text-xs">
+                  Serviço prestado nesta NFS-e, como enviado à Prefeitura.
+                </p>
+                <div className="rounded-lg border p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-sm font-medium leading-relaxed">
+                      {nfseService.description || 'Serviço sem descrição'}
                     </p>
+                    <p className="text-sm font-medium tabular-nums">{formatCurrency(nfseService.amount)}</p>
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {item.ncm && (
-                      <Badge variant="outline" className="font-mono font-normal">
-                        NCM {item.ncm}
-                      </Badge>
-                    )}
-                    {item.cfop && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {nfseService.national_tax_code && (
                       <Badge variant="secondary" className="font-mono font-normal">
-                        CFOP {item.cfop}
+                        LC 116 {nfseService.national_tax_code}
                       </Badge>
                     )}
-                    <Badge variant="outline" className="font-normal tabular-nums">
-                      {formatQuantity(item.quantity)} {item.unit ?? ''}
-                    </Badge>
-                    <Badge variant="outline" className="font-normal tabular-nums">
-                      {formatCurrency(item.unit_price)} / un.
-                    </Badge>
-                  </div>
-                  <div className="mt-2">
-                    <ItemTaxChips taxes={item.taxes} />
+                    {nfseService.nbs && (
+                      <Badge variant="outline" className="font-mono font-normal">
+                        NBS {nfseService.nbs}
+                      </Badge>
+                    )}
+                    {nfseService.cnae && (
+                      <Badge variant="outline" className="font-mono font-normal">
+                        CNAE {nfseService.cnae}
+                      </Badge>
+                    )}
+                    {nfseService.municipality_code && (
+                      <Badge variant="outline" className="font-mono font-normal">
+                        Município {nfseService.municipality_code}
+                      </Badge>
+                    )}
                   </div>
                 </div>
-              ))}
-              <div className="flex justify-end border-t pt-3">
-                <p className="text-sm font-medium tabular-nums">
-                  Total dos itens {formatCurrency(totalValue)}
-                </p>
               </div>
-            </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">Nenhum serviço extraído para este documento.</p>
+            )
+          ) : (
+            <>
+              <p className="text-muted-foreground mb-3 text-xs">
+                Dados extraídos da nota fiscal, como recebida — sempre os valores originais. Correspondência com o
+                sistema de origem e correções manuais ficam no detalhe de cada etapa, na aba Plano de execução.
+              </p>
+              {items.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  {isInboundProcessing(document.processing_status)
+                    ? 'Extraindo itens do XML em segundo plano…'
+                    : 'Nenhum item extraído para este documento.'}
+                </p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {items.map((item) => (
+                    <div key={item.id} className="rounded-lg border p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">
+                            <Badge variant="outline" className="mr-2 font-mono font-normal tabular-nums">
+                              {item.item_number}
+                            </Badge>
+                            {item.description || item.supplier_material_code || 'sem descrição'}
+                          </p>
+                          <p className="text-muted-foreground mt-1 font-mono text-xs">
+                            {item.supplier_material_code ?? '—'}
+                          </p>
+                        </div>
+                        <p className="text-sm font-medium tabular-nums">{formatCurrency(item.total_amount)}</p>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {item.ncm && (
+                          <Badge variant="outline" className="font-mono font-normal">
+                            NCM {item.ncm}
+                          </Badge>
+                        )}
+                        {item.cfop && (
+                          <Badge variant="secondary" className="font-mono font-normal">
+                            CFOP {item.cfop}
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="font-normal tabular-nums">
+                          {formatQuantity(item.quantity)} {item.unit ?? ''}
+                        </Badge>
+                        {item.alternative_unit && (
+                          <Badge variant="secondary" className="font-normal tabular-nums">
+                            Alt. {formatQuantity(item.alternative_quantity ?? item.quantity)} {item.alternative_unit}
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="font-normal tabular-nums">
+                          {formatCurrency(item.unit_price)} / un.
+                        </Badge>
+                      </div>
+                      <div className="mt-2">
+                        <ItemTaxChips taxes={item.taxes} />
+                      </div>
+                      <AlternativeUnitSelect item={item} documentId={document.id} />
+                    </div>
+                  ))}
+                  <div className="flex justify-end border-t pt-3">
+                    <p className="text-sm font-medium tabular-nums">Total dos itens {formatCurrency(totalValue)}</p>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
 
         <TabsContent value="taxes" className="pt-4">
-          {items.length === 0 ? (
+          {isServiceNote ? (
+            nfseService ? (
+              <div className="flex flex-col gap-3">
+                <p className="text-muted-foreground text-xs">
+                  Tributos do serviço (ISSQN, PIS/COFINS e total de tributos), como enviados à Prefeitura.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-sm font-medium">ISSQN</p>
+                    <div className="mt-2 flex flex-col gap-1.5 text-sm">
+                      <p>
+                        <span className="text-muted-foreground">Situação </span>
+                        {issqnTributeLabel(nfseService.nature_of_operation) ?? '—'}
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Retenção </span>
+                        {issqnRetentionLabel(nfseService.iss_withheld)}
+                      </p>
+                      {nfseService.iss_rate != null && (
+                        <p>
+                          <span className="text-muted-foreground">Alíquota </span>
+                          <span className="tabular-nums">
+                            {nfseService.iss_rate.toLocaleString('pt-BR', { maximumFractionDigits: 4 })}%
+                          </span>
+                        </p>
+                      )}
+                      {nfseService.iss_amount != null && (
+                        <p>
+                          <span className="text-muted-foreground">Valor </span>
+                          <span className="tabular-nums">{formatCurrency(nfseService.iss_amount)}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-sm font-medium">PIS/COFINS</p>
+                    <div className="mt-2 flex flex-col gap-1.5 text-sm">
+                      <p>
+                        <span className="text-muted-foreground">CST </span>
+                        <span className="font-mono">{nfseService.pis_cofins_cst || '—'}</span>
+                      </p>
+                      <p>
+                        <span className="text-muted-foreground">Retenção </span>
+                        {pisCofinsRetentionLabel(nfseService.pis_cofins_withholding)}
+                      </p>
+                      {nfseService.pis_amount != null && (
+                        <p>
+                          <span className="text-muted-foreground">PIS </span>
+                          <span className="tabular-nums">{formatCurrency(nfseService.pis_amount)}</span>
+                        </p>
+                      )}
+                      {nfseService.cofins_amount != null && (
+                        <p>
+                          <span className="text-muted-foreground">COFINS </span>
+                          <span className="tabular-nums">{formatCurrency(nfseService.cofins_amount)}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {nfseService.total_taxes_percent != null && (
+                    <div className="rounded-lg border p-3 sm:col-span-2">
+                      <p className="text-sm font-medium">Total de tributos (Simples Nacional)</p>
+                      <p className="mt-2 text-sm tabular-nums">
+                        {nfseService.total_taxes_percent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}%
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">Nenhum imposto extraído para este documento.</p>
+            )
+          ) : items.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               {isInboundProcessing(document.processing_status)
                 ? 'Extraindo impostos do XML em segundo plano…'
@@ -1054,7 +1238,9 @@ export function DocumentIntegrationPanel({
                                 <p className="text-muted-foreground mt-1 text-xs">Em andamento agora</p>
                               )}
                               {step.status === 'FAILED' && step.error_message_sanitized && (
-                                <p className="text-destructive mt-1.5 text-xs">{step.error_message_sanitized}</p>
+                                <p className="mt-2 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-sm font-medium text-red-700 dark:text-red-400">
+                                  {extractSapErrorMessage(step.error_message_sanitized)}
+                                </p>
                               )}
                             </div>
                             <div className="flex shrink-0 gap-1.5">
@@ -1075,22 +1261,24 @@ export function DocumentIntegrationPanel({
                                     <PlayIcon />
                                     Executar
                                   </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="ghost"
-                                    disabled={advanceMutation.isPending}
-                                    onClick={() =>
-                                      advanceMutation.mutate({
-                                        stepId: step.id,
-                                        action: 'skip',
-                                        reason: 'Pulado manualmente pelo usuário'
-                                      })
-                                    }
-                                  >
-                                    <SkipForwardIcon />
-                                    Pular
-                                  </Button>
+                                  {!ewmProcess && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="ghost"
+                                      disabled={advanceMutation.isPending}
+                                      onClick={() =>
+                                        advanceMutation.mutate({
+                                          stepId: step.id,
+                                          action: 'skip',
+                                          reason: 'Pulado manualmente pelo usuário'
+                                        })
+                                      }
+                                    >
+                                      <SkipForwardIcon />
+                                      Pular
+                                    </Button>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -1124,6 +1312,12 @@ export function DocumentIntegrationPanel({
         vendorCnpj={vendorMatch?.source_value ?? document.issuer_cnpj ?? undefined}
         organizationCompanyId={document.organization_company_id}
         canReprocess={document.status === 'ACTION_REQUIRED'}
+      />
+      <ResetDocumentDialog
+        document={confirmReset ? document : null}
+        pending={resetMutation.isPending}
+        onOpenChange={(open) => !open && setConfirmReset(false)}
+        onConfirm={() => resetMutation.mutate()}
       />
     </>
   );

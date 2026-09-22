@@ -103,7 +103,8 @@ func (a *ControlPlane) downloadFiscalDocument(w http.ResponseWriter, r *http.Req
 		writeErr(w, r, err)
 		return
 	}
-	dl, err := a.Fiscal.DownloadOriginalPayload(r.Context(), orgID, docID)
+	payloadType := r.URL.Query().Get("payload_type")
+	dl, err := a.Fiscal.DownloadPayload(r.Context(), orgID, docID, payloadType)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -112,6 +113,69 @@ func (a *ControlPlane) downloadFiscalDocument(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, dl.Filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(dl.Data)
+}
+
+func (a *ControlPlane) resubmitOutboundDocument(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	doc, err := a.Fiscal.GetDocument(r.Context(), orgID, docID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	perm := "nfe:create"
+	if doc.DocumentType == "nfse" {
+		perm = "nfse:create"
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, perm); err != nil {
+		// Fallback for profiles that only have inbound manage / outbound fiscal create scopes.
+		if err2 := a.ensureOrganizationPermission(r, orgID, "nfe_inbound:manage"); err2 != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	updated, err := a.Fiscal.ResubmitOutbound(r.Context(), orgID, docID, "user", p.UserID.String())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"document_id":       updated.ID,
+		"status":            updated.Status,
+		"processing_status": updated.ProcessingStatus,
+	})
+}
+
+func (a *ControlPlane) cancelOutboundNFSe(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, "nfse:cancel"); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body fiscal.CancelNFSeInput
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	updated, err := a.Fiscal.RequestCancelNFSe(r.Context(), orgID, docID, body, "user", p.UserID.String())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"document_id":       updated.ID,
+		"status":            updated.Status,
+		"processing_status": updated.ProcessingStatus,
+	})
 }
 
 func (a *ControlPlane) downloadFiscalDocumentsZip(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +206,7 @@ func (a *ControlPlane) downloadFiscalDocumentsZip(w http.ResponseWriter, r *http
 
 	downloads := make([]*fiscal.DocumentPayloadDownload, 0, len(body.DocumentIDs))
 	for _, id := range body.DocumentIDs {
-		dl, err := a.Fiscal.DownloadOriginalPayload(r.Context(), orgID, id)
+		dl, err := a.Fiscal.DownloadPayload(r.Context(), orgID, id, "")
 		if err != nil {
 			writeErr(w, r, err)
 			return

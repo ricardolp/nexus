@@ -307,6 +307,12 @@ func (a *ControlPlane) listInboundDocuments(w http.ResponseWriter, r *http.Reque
 		OrganizationID: orgID,
 		Status:         r.URL.Query().Get("status"),
 		DocumentType:   r.URL.Query().Get("document_type"),
+		Direction:      r.URL.Query().Get("direction"),
+		Query:          r.URL.Query().Get("q"),
+		Fields:         r.URL.Query().Get("fields"),
+		Number:         r.URL.Query().Get("number"),
+		Partner:        r.URL.Query().Get("partner"),
+		AccessKey:      r.URL.Query().Get("access_key"),
 		Limit:          limit,
 	})
 	if err != nil {
@@ -349,10 +355,11 @@ func (a *ControlPlane) getInboundDocument(w http.ResponseWriter, r *http.Request
 // SEFAZ's ~90-day distribution window, or any note that never got picked up
 // automatically. source_system is fixed to "manual_upload" (never accepted
 // from the client) so these documents are always distinguishable from
-// automatic ingestion in listings/audits. Idempotency is keyed off the
-// note's own access key, so re-uploading the same XML twice is a no-op
-// (mirrors the header's own uniqueness instead of relying on the client to
-// track what it already sent).
+// automatic ingestion in listings/audits. The access key is unique per
+// inbound NF-e in the organization: a second upload of a note that already
+// exists (from SEFAZ, the inbound API, or a previous manual import) is
+// rejected with duplicate_access_key. Idempotency on manual_upload:{chave}
+// remains as a race-safety net for two concurrent first-time uploads.
 func (a *ControlPlane) uploadInboundDocumentXML(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
@@ -396,6 +403,17 @@ func (a *ControlPlane) uploadInboundDocumentXML(w http.ResponseWriter, r *http.R
 		writeErr(w, r, domainerr.Validation("invalid_xml", "Uploaded file does not look like a valid NF-e XML (missing infNFe/access key)"))
 		return
 	}
+
+	existing, err := a.Fiscal.FindInboundNFeByAccessKey(r.Context(), orgID, header.AccessKey)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if existing != nil {
+		writeErr(w, r, domainerr.Conflict("duplicate_access_key", "Já existe um documento com esta chave de acesso."))
+		return
+	}
+
 	nfe := inbound.NFeExtensionFromHeader(header)
 
 	result, err := a.Fiscal.Receive(r.Context(), fiscal.ReceiveInput{
@@ -636,6 +654,40 @@ func (a *ControlPlane) patchInboundItem(w http.ResponseWriter, r *http.Request) 
 	httpx.WriteJSON(w, http.StatusOK, item)
 }
 
+func (a *ControlPlane) setInboundItemAlternativeUnit(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	itemID, err := uuid.Parse(chi.URLParam(r, "item_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_item_id", "Invalid item_id"))
+		return
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, "nfe_inbound:manage"); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body struct {
+		Unit string `json:"unit"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	item, err := a.Inbound.SetItemAlternativeUnit(r.Context(), inbound.SetItemAlternativeUnitInput{
+		OrganizationID: orgID, DocumentID: docID, ItemID: itemID,
+		Unit: body.Unit, ActorUserID: p.UserID,
+	})
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, item)
+}
+
 func (a *ControlPlane) applyInboundOverride(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	orgID, docID, err := parseOrgAndID(r, "document_id")
@@ -722,6 +774,31 @@ func (a *ControlPlane) reprocessInboundDocument(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := a.Inbound.Reprocess(r.Context(), orgID, docID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	view, err := a.Inbound.GetOrchestrationView(r.Context(), orgID, docID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
+func (a *ControlPlane) resetInboundDocument(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, "nfe_inbound:manage"); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.Inbound.ResetToImported(r.Context(), inbound.ResetToImportedInput{
+		OrganizationID: orgID, DocumentID: docID, ActorUserID: p.UserID,
+	}); err != nil {
 		writeErr(w, r, err)
 		return
 	}

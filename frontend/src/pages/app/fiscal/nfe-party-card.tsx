@@ -27,18 +27,20 @@ export function NFePartyCard({
   role,
   party,
   fallbackDocument,
+  fallbackName,
   loading
 }: {
   role: 'issuer' | 'recipient';
   party?: ApiNFeParty | null;
   fallbackDocument?: string | null;
+  fallbackName?: string | null;
   loading?: boolean;
 }) {
   const isIssuer = role === 'issuer';
   const Icon = isIssuer ? Building2Icon : UserRoundIcon;
   const title = isIssuer ? 'Emitente' : 'Destinatário';
   const document = party?.cnpj || party?.cpf || fallbackDocument;
-  const name = party?.legal_name;
+  const name = party?.legal_name || fallbackName;
   const crt = crtLabel(party?.crt);
   const lines = party ? addressLines(party) : [];
 

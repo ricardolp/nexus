@@ -7,7 +7,7 @@ import { ApiError } from '@/lib/api';
 import { confirmMfa, enrollMfa } from '@/lib/endpoints';
 import { markMfaOnboardingDone, markMfaOnboardingSkipped } from '@/lib/mfa-onboarding';
 import { useAuthStore } from '@/store/auth-store';
-import { AuthShell } from '@/components/brand/auth-shell';
+import { AuthShell, authCardClassName } from '@/components/brand/auth-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
@@ -95,7 +95,7 @@ export default function MfaOnboardingPage() {
 
   return (
     <AuthShell wide>
-      <Card className="w-full border-white/10 bg-card/95 shadow-2xl shadow-black/40 backdrop-blur-sm">
+      <Card className={authCardClassName}>
         <CardHeader className="text-center">
           <p className="text-muted-foreground text-xs tracking-wide uppercase">Passo {step === 'intro' ? 1 : step === 'scan' ? 2 : 3} de 3</p>
           <Progress value={progress} className="mt-2" />

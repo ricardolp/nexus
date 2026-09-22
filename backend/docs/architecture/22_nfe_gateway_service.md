@@ -261,8 +261,11 @@ nfe-gateway/
 
 ## O que fica de fora nesta rodada
 
-- NFS-e (municipal, sem padrão único nacional) — o PyNFe tem suporte parcial via extra `nfse`, mas fica fora do escopo inicial; o serviço nasce só para NF-e.
-- Emissão em contingência (offline) e eventos (carta de correção, cancelamento) — o desenho de mensageria comporta (mesmo padrão de comando/resultado), mas a primeira versão cobre autorização normal + distribuição.
+- NFS-e **municipal** ABRASF (padrões por prefeitura) — fora do escopo; o gateway agora também transmite **NFS-e Nacional (SEFIN)** via pacote `nfse/` (DPS + XMLDSig + mTLS), na mesma fila `nfe_gateway.transmission_requested`, ramificando por `document_type`.
+- Cancelamento NFS-e Nacional (`101101`) e substituição via DPS `subst` (evento `105102` gerado pela SEFIN) — implementados no pacote `nfse/` + `event_consumer` (branch `document_type=nfse`). **Não há Carta de Correção (CC-e) no modelo nacional de NFS-e**; correção = substituição.
+- Download ADN por NSU — fora desta onda da NFS-e nacional.
+- DANFSe PDF: gerado no control-plane sob demanda (`payload_type=danfse`) a partir do XML autorizado em `sefaz_response`; o gateway não produz PDF.
+- Emissão em contingência (offline) e eventos NF-e (carta de correção, cancelamento) — o desenho de mensageria comporta (mesmo padrão de comando/resultado); o gateway já consome cancel/CC-e/inutilização NF-e, mas o trigger HTTP/UI da NF-e ainda é entrega separada.
 - Painel de operação para visualizar `organization_company_nfe_distribution_state`/pausar manualmente — hoje seria só consulta direta no banco.
 - Multi-região/HA do `nfe-gateway` além de "várias réplicas do poller com `SKIP LOCKED`" — suficiente para o volume atual, sem necessidade de líder eleito.
 

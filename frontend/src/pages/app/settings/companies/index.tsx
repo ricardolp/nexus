@@ -49,7 +49,7 @@ export default function CompaniesPage() {
   });
 
   return (
-    <Card>
+    <Card data-tour="companies-table">
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div>
           <CardTitle className="flex items-center gap-2">
@@ -57,7 +57,7 @@ export default function CompaniesPage() {
             Empresas
           </CardTitle>
           <CardDescription>
-            Empresas (CNPJs) desta organização. Abra uma empresa para certificado, serviços e fluxos.
+            Empresas (CNPJs) desta organização. Abra uma empresa para certificado, atividades e fluxos.
           </CardDescription>
         </div>
         <Button disabled={!enabled} onClick={() => setCreating(true)}>

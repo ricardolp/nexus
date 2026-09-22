@@ -29,6 +29,7 @@ type NFeParty struct {
 	CPF       string      `json:"cpf,omitempty"`
 	LegalName string      `json:"legal_name,omitempty"`
 	TradeName string      `json:"trade_name,omitempty"`
+	Email     string      `json:"email,omitempty"`
 	IE        string      `json:"ie,omitempty"`
 	IM        string      `json:"im,omitempty"`
 	CRT       string      `json:"crt,omitempty"`
@@ -48,20 +49,23 @@ type NFeAddress struct {
 }
 
 type NFeTotals struct {
-	Products float64 `json:"products"`
-	Freight  float64 `json:"freight"`
+	Products  float64 `json:"products"`
+	Freight   float64 `json:"freight"`
 	Insurance float64 `json:"insurance"`
-	Discount float64 `json:"discount"`
-	Other    float64 `json:"other"`
-	NF       float64 `json:"nf"`
-	ICMSBase float64 `json:"icms_base"`
-	ICMS     float64 `json:"icms"`
-	ICMSST   float64 `json:"icms_st"`
-	FCP      float64 `json:"fcp"`
-	IPI      float64 `json:"ipi"`
-	PIS      float64 `json:"pis"`
-	COFINS   float64 `json:"cofins"`
-	II       float64 `json:"ii"`
+	Discount  float64 `json:"discount"`
+	Other     float64 `json:"other"`
+	NF        float64 `json:"nf"`
+	ICMSBase  float64 `json:"icms_base"`
+	ICMS      float64 `json:"icms"`
+	ICMSST    float64 `json:"icms_st"`
+	FCP       float64 `json:"fcp"`
+	IPI       float64 `json:"ipi"`
+	PIS       float64 `json:"pis"`
+	COFINS    float64 `json:"cofins"`
+	II        float64 `json:"ii"`
+	IBS       float64 `json:"ibs,omitempty"`
+	CBS       float64 `json:"cbs,omitempty"`
+	IS        float64 `json:"is,omitempty"`
 }
 
 // ItemTaxes is one organization_nfe_items.taxes_json object.
@@ -207,6 +211,7 @@ func partyFromXML(p nfeXMLParty) NFeParty {
 		IE:        strings.TrimSpace(p.IE),
 		IM:        strings.TrimSpace(p.IM),
 		CRT:       strings.TrimSpace(p.CRT),
+		Email:     strings.TrimSpace(p.Email),
 	}
 	if !addr.empty() {
 		a := &NFeAddress{

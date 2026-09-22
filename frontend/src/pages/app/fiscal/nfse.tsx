@@ -6,8 +6,9 @@ export default function NFSePage() {
   return (
     <FiscalDocumentsPage
       documentType="nfse"
+      direction="inbound"
       icon={ReceiptTextIcon}
-      title="Notas Fiscais Serviço (NFSE)"
+      title="NFS-e Entrada"
       description="Notas fiscais de serviço eletrônicas (NFS-e) recebidas pela organização."
     />
   );

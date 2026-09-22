@@ -14,10 +14,12 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/billing"
 	"github.com/nexus/fiscal-messaging/internal/certificate"
 	"github.com/nexus/fiscal-messaging/internal/config"
+	"github.com/nexus/fiscal-messaging/internal/email"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/identity"
 	"github.com/nexus/fiscal-messaging/internal/inbound"
 	"github.com/nexus/fiscal-messaging/internal/integration"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/notification"
 	"github.com/nexus/fiscal-messaging/internal/ops"
 	"github.com/nexus/fiscal-messaging/internal/organization"
@@ -26,6 +28,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
 	"github.com/nexus/fiscal-messaging/internal/platform/keyvault"
+	"github.com/nexus/fiscal-messaging/internal/platform/llm"
 	"github.com/nexus/fiscal-messaging/internal/platform/metrics"
 	"github.com/nexus/fiscal-messaging/internal/platform/storage"
 	"github.com/nexus/fiscal-messaging/internal/support"
@@ -55,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := storage.NewLocalStore(cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
+	store, err := storage.Resolve(cfg.StorageBackend, cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
 	if err != nil {
 		logger.Error("storage", "error", err)
 		os.Exit(1)
@@ -76,23 +79,31 @@ func main() {
 	orgs := organization.NewService(pool)
 	fiscalSvc := fiscal.NewService(pool, store, orgs, cfg.ObjectStoragePrefix)
 	integrations := integration.NewService(pool, cfg.SecretsEncryptionKey)
+	intLogs := integrationlog.NewRecorder(pool, logger)
 	identitySvc := identity.NewService(pool)
 	identitySvc.Configure(cfg.SecretsEncryptionKey, store)
 	api := &httpapi.ControlPlane{
 		Identity:         identitySvc,
 		Orgs:             orgs,
 		Ops:              ops.NewService(pool),
+		IntegrationLogs:  integrationlog.NewService(pool),
 		Webhooks:         webhook.NewService(pool),
 		Certificates:     certificate.NewService(pool, certStore),
 		Notifications:    notification.NewService(pool),
-		Inbound:          inbound.NewService(pool, fiscalSvc, orgs, integrations),
+		Inbound:          inbound.NewService(pool, fiscalSvc, orgs, integrations).WithIntegrationLog(intLogs),
 		Integrations:     integrations,
 		Fiscal:           fiscalSvc,
 		FiscalQueries:    fiscal.NewQueryService(pool, orgs, bus),
 		PendingDocuments: fiscal.NewPendingDocumentService(pool, orgs),
 		Support:          support.NewService(pool, store, cfg.AppEnv),
 		Billing:          billing.NewService(pool, orgs),
+		Email:            email.NewService(pool, cfg.SecretsEncryptionKey, email.NewFiscalAdapter(fiscalSvc), store, cfg.ObjectStoragePrefix),
 		Tokens:           tokens,
+		LLM: llm.New(llm.Config{
+			APIKey:  cfg.LLMAPIKey,
+			BaseURL: cfg.LLMBaseURL,
+			Model:   cfg.LLMModel,
+		}),
 	}
 
 	r := chi.NewRouter()

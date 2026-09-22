@@ -261,6 +261,11 @@ func (a *ControlPlane) login(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, r, err)
 			return
 		}
+		// Staff may only bind a session to orgs they were explicitly linked to.
+		if err := a.Orgs.EnsureMember(r.Context(), id, user.ID); err != nil {
+			writeErr(w, r, err)
+			return
+		}
 		orgID = &id
 	}
 
@@ -375,15 +380,31 @@ func (a *ControlPlane) refreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var orgID *uuid.UUID
-	if user.PlatformRole == identity.PlatformRoleMember {
+	// Prefer the organization from the (possibly expired) access token so a
+	// multi-org switch survives refresh for both members and platform staff.
+	if access := httpx.CookieValue(r, httpx.AccessCookieName); access != "" {
+		if prev, err := a.Tokens.ParseAllowExpired(access); err == nil &&
+			prev.UserID == user.ID &&
+			prev.OrganizationID != uuid.Nil {
+			if err := a.Orgs.EnsureMember(r.Context(), prev.OrganizationID, user.ID); err == nil {
+				if err := a.Orgs.EnsureActiveOrganization(r.Context(), prev.OrganizationID); err == nil {
+					id := prev.OrganizationID
+					orgID = &id
+				}
+			}
+		}
+	}
+	if orgID == nil && user.PlatformRole == identity.PlatformRoleMember {
 		id, err := a.Orgs.ResolveUserOrganization(r.Context(), user.ID)
 		if err == nil {
 			orgID = &id
-			if settings, err := a.Orgs.GetAuthenticationSettings(r.Context(), id); err == nil {
-				idle = time.Duration(settings.SessionIdleTimeoutMinutes) * time.Minute
-				absolute = time.Duration(settings.SessionAbsoluteTimeoutMinutes) * time.Minute
-				_ = idle
-			}
+		}
+	}
+	if orgID != nil {
+		if settings, err := a.Orgs.GetAuthenticationSettings(r.Context(), *orgID); err == nil {
+			idle = time.Duration(settings.SessionIdleTimeoutMinutes) * time.Minute
+			absolute = time.Duration(settings.SessionAbsoluteTimeoutMinutes) * time.Minute
+			_ = idle
 		}
 	}
 	if created.Session.RememberBrowser {
@@ -413,6 +434,67 @@ func (a *ControlPlane) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.ClearSessionCookies(w, r)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *ControlPlane) switchOrganization(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		writeErr(w, r, domainerr.Forbidden("User session required"))
+		return
+	}
+	var body struct {
+		OrganizationID string `json:"organization_id"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	orgID, err := uuid.Parse(strings.TrimSpace(body.OrganizationID))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
+		return
+	}
+	if err := a.Orgs.EnsureActiveOrganization(r.Context(), orgID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.Orgs.EnsureMember(r.Context(), orgID, p.UserID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	user, err := a.Identity.GetByID(r.Context(), p.UserID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+
+	absolute := 8 * time.Hour
+	if settings, err := a.Orgs.GetAuthenticationSettings(r.Context(), orgID); err == nil {
+		absolute = time.Duration(settings.SessionAbsoluteTimeoutMinutes) * time.Minute
+	}
+	var sessionID *uuid.UUID
+	if p.SessionID != uuid.Nil {
+		sessionID = &p.SessionID
+	}
+	token, exp, err := a.Tokens.IssueUserTokenEx(auth.IssueUserTokenInput{
+		UserID: user.ID, PlatformRole: user.PlatformRole, OrganizationID: &orgID,
+		SessionID: sessionID,
+	})
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	_ = a.Identity.RecordAuthEvent(r.Context(), identity.AuthEventInput{
+		UserID: &user.ID, OrganizationID: &orgID, EventType: "auth.switch_organization", Outcome: "success",
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	a.writeAuthCookies(w, r, token, "", false, absolute)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"user":            user,
+		"organization_id": orgID,
+		"token_type":      "Bearer",
+		"expires_at":      exp,
+	})
 }
 
 func (a *ControlPlane) forgotPassword(w http.ResponseWriter, r *http.Request) {

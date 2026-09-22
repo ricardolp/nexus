@@ -10,7 +10,10 @@ const TAX_STYLE: Record<string, string> = {
   IPI: 'border-violet-500/30 bg-violet-500/10 text-violet-800 dark:text-violet-300',
   PIS: 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300',
   COFINS: 'border-orange-500/30 bg-orange-500/10 text-orange-800 dark:text-orange-300',
-  II: 'border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300'
+  II: 'border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300',
+  IBS: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300',
+  CBS: 'border-teal-500/30 bg-teal-500/10 text-teal-800 dark:text-teal-300',
+  IS: 'border-lime-500/30 bg-lime-500/10 text-lime-800 dark:text-lime-300'
 };
 
 function TaxChip({ code, amount, rate, cst }: { code: string; amount?: number; rate?: number; cst?: string }) {
@@ -57,7 +60,10 @@ export function TotalsTaxChips({ totals }: { totals?: ApiNFeTotals | null }) {
     { code: 'IPI', amount: totals.ipi },
     { code: 'PIS', amount: totals.pis },
     { code: 'COFINS', amount: totals.cofins },
-    { code: 'II', amount: totals.ii }
+    { code: 'II', amount: totals.ii },
+    { code: 'IBS', amount: totals.ibs ?? 0 },
+    { code: 'CBS', amount: totals.cbs ?? 0 },
+    { code: 'IS', amount: totals.is ?? 0 }
   ].filter((e) => e.amount > 0);
   if (entries.length === 0) {
     return <p className="text-muted-foreground text-sm">Nenhum imposto destacado nesta nota.</p>;

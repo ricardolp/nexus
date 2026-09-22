@@ -1,7 +1,17 @@
 import { useNavigate } from 'react-router-dom';
-import { Building2Icon, ChevronsUpDownIcon, LogOutIcon, UserIcon } from 'lucide-react';
+import {
+  Building2Icon,
+  ChevronsUpDownIcon,
+  LayoutDashboardIcon,
+  LogOutIcon,
+  MapIcon,
+  UserIcon
+} from 'lucide-react';
+import { toast } from 'sonner';
 
 import { resolveDisplayName, useAuthStore } from '@/store/auth-store';
+import { useProductTourStore } from '@/store/product-tour-store';
+import { persistProductTourCompleted } from '@/lib/product-tour';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -30,17 +40,38 @@ const roleLabels: Record<string, string> = {
   member: 'Membro'
 };
 
+function isPlatformStaff(role: string | undefined) {
+  return role === 'admin' || role === 'system' || role === 'support';
+}
+
 export function NavUser({ profileUrl }: { profileUrl: string }) {
   const { isMobile } = useSidebar();
   const user = useAuthStore((s) => s.user);
+  const token = useAuthStore((s) => s.token);
   const organizationId = useAuthStore((s) => s.organizationId);
+  const setUserProfile = useAuthStore((s) => s.setUserProfile);
   const signOut = useAuthStore((s) => s.signOut);
+  const requestStart = useProductTourStore((s) => s.requestStart);
   const navigate = useNavigate();
-  const organizationUrl = user?.role === 'user' && organizationId ? '/app/organization' : null;
+  const organizationUrl = organizationId ? '/app/organization' : null;
+  const adminPanelUrl = isPlatformStaff(user?.platformRole) ? '/admin/overview' : null;
+  const canRestartTour = Boolean(organizationId && profileUrl.startsWith('/app'));
 
   if (!user) return null;
 
   const name = resolveDisplayName(user);
+
+  async function restartTour() {
+    if (!token || !user) return;
+    try {
+      const updated = await persistProductTourCompleted(token, user.appearance, false);
+      setUserProfile(updated);
+    } catch {
+      toast.error('Não foi possível reiniciar o tour.');
+      return;
+    }
+    requestStart();
+  }
 
   return (
     <SidebarMenu>
@@ -49,6 +80,7 @@ export function NavUser({ profileUrl }: { profileUrl: string }) {
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
+              data-tour="nav-user"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <Avatar className="size-8 rounded-lg">
@@ -92,10 +124,22 @@ export function NavUser({ profileUrl }: { profileUrl: string }) {
                 Organização
               </DropdownMenuItem>
             )}
+            {canRestartTour && (
+              <DropdownMenuItem onClick={() => void restartTour()}>
+                <MapIcon />
+                Ver tour novamente
+              </DropdownMenuItem>
+            )}
+            {adminPanelUrl && profileUrl.startsWith('/app') && (
+              <DropdownMenuItem onClick={() => navigate(adminPanelUrl)}>
+                <LayoutDashboardIcon />
+                Painel admin
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => {
-                const loginPath = user.role === 'admin' ? '/admin/login' : '/login';
+                const loginPath = isPlatformStaff(user.platformRole) ? '/admin/login' : '/login';
                 signOut();
                 navigate(loginPath);
               }}

@@ -5,7 +5,7 @@ import { KeyRoundIcon } from 'lucide-react';
 
 import { ApiError } from '@/lib/api';
 import { acceptInvitation, getInvitationPasswordPolicy } from '@/lib/endpoints';
-import { AuthShell } from '@/components/brand/auth-shell';
+import { AuthShell, authCardClassName, authFooterLinkClassName } from '@/components/brand/auth-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -34,13 +34,13 @@ export default function InvitePage() {
         footer={
           <p>
             Já tem conta?{' '}
-            <Link to="/login" className="font-medium text-white underline underline-offset-4">
+            <Link to="/login" className={authFooterLinkClassName}>
               Entrar
             </Link>
           </p>
         }
       >
-        <Card className="w-full border-white/10 bg-card/95 shadow-2xl shadow-black/40 backdrop-blur-sm">
+        <Card className={authCardClassName}>
           <CardHeader className="text-center">
             <CardTitle className="text-xl">Convite inválido</CardTitle>
             <CardDescription>Este link não contém um token de convite.</CardDescription>
@@ -53,7 +53,7 @@ export default function InvitePage() {
   if (acceptedRole) {
     return (
       <AuthShell>
-        <Card className="w-full border-white/10 bg-card/95 shadow-2xl shadow-black/40 backdrop-blur-sm">
+        <Card className={authCardClassName}>
           <CardHeader className="text-center">
             <CardTitle className="text-xl">Conta ativada</CardTitle>
             <CardDescription>Sua senha foi definida. Entre para continuar.</CardDescription>
@@ -97,13 +97,13 @@ export default function InvitePage() {
       footer={
         <p>
           Já ativou sua conta?{' '}
-          <Link to="/login" className="font-medium text-white underline underline-offset-4">
+          <Link to="/login" className={authFooterLinkClassName}>
             Entrar
           </Link>
         </p>
       }
     >
-      <Card className="w-full border-white/10 bg-card/95 shadow-2xl shadow-black/40 backdrop-blur-sm">
+      <Card className={authCardClassName}>
         <CardHeader className="text-center">
           <CardTitle className="text-xl">Ativar convite</CardTitle>
           <CardDescription>Crie uma senha para concluir o acesso ao Nexus</CardDescription>

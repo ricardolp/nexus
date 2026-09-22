@@ -5,7 +5,8 @@ import {
   Building2Icon,
   ChevronLeftIcon,
   FileBadgeIcon,
-  PlugZapIcon,
+  ListTreeIcon,
+  MailIcon,
   ShieldAlertIcon,
   WorkflowIcon
 } from 'lucide-react';
@@ -13,6 +14,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { listCompanies } from '@/lib/endpoints';
 import { useAuthStore } from '@/store/auth-store';
+import { useActiveContractServices } from '@/components/layout/require-org-service';
 import { SectionNav } from '@/components/layout/section-nav';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,19 +24,27 @@ import { companyStatusLabels, formatCNPJ } from './columns';
 import { CompanyDangerZone } from './danger-zone';
 import { CompanyGeneralTab } from './general-tab';
 import { COMPANIES_PATH, type CompanyTab } from './paths';
+import { CompanyEmailsTab } from './emails-tab';
+import { CompanyNFSeActivitiesTab } from './nfse-activities-tab';
 import { CompanyProcessFlowsTab } from './process-flows-tab';
-import { CompanyServicesTab } from './services-tab';
 
-const companyTabs: { id: CompanyTab; label: string; icon: ReactNode }[] = [
+const baseCompanyTabs: { id: CompanyTab; label: string; icon: ReactNode }[] = [
   { id: 'general', label: 'Geral', icon: <Building2Icon className="size-4" /> },
   { id: 'certificate', label: 'Certificado', icon: <FileBadgeIcon className="size-4" /> },
-  { id: 'services', label: 'Serviços', icon: <PlugZapIcon className="size-4" /> },
+  { id: 'nfse-activities', label: 'Atividades NFS-e', icon: <ListTreeIcon className="size-4" /> },
   { id: 'process-flows', label: 'Fluxos de processo', icon: <WorkflowIcon className="size-4" /> },
+  { id: 'emails', label: 'E-mails', icon: <MailIcon className="size-4" /> },
   { id: 'danger', label: 'Zona de perigo', icon: <ShieldAlertIcon className="size-4" /> }
 ];
 
 function parseTab(value: string | null): CompanyTab {
-  if (value === 'certificate' || value === 'services' || value === 'process-flows' || value === 'danger') {
+  if (
+    value === 'certificate' ||
+    value === 'nfse-activities' ||
+    value === 'process-flows' ||
+    value === 'emails' ||
+    value === 'danger'
+  ) {
     return value;
   }
   return 'general';
@@ -45,6 +55,7 @@ export default function CompanyPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const token = useAuthStore((s) => s.token);
   const organizationId = useAuthStore((s) => s.organizationId);
+  const activeServices = useActiveContractServices();
   const tab = parseTab(searchParams.get('tab'));
 
   const enabled = Boolean(token && organizationId);
@@ -59,6 +70,11 @@ export default function CompanyPage() {
     () => companiesQuery.data?.items.find((item) => item.id === companyId),
     [companiesQuery.data, companyId]
   );
+
+  const companyTabs = useMemo(() => {
+    const nfseOutboundOn = activeServices === null || activeServices.has('nfse_outbound');
+    return baseCompanyTabs.filter((item) => item.id !== 'nfse-activities' || nfseOutboundOn);
+  }, [activeServices]);
 
   function setTab(next: CompanyTab) {
     setSearchParams(next === 'general' ? {} : { tab: next }, { replace: true });
@@ -103,6 +119,10 @@ export default function CompanyPage() {
 
   const displayName = company.trade_name || company.legal_name;
   const status = companyStatusLabels[company.status] ?? { label: company.status, className: '' };
+  const effectiveTab =
+    tab === 'nfse-activities' && activeServices && !activeServices.has('nfse_outbound')
+      ? 'general'
+      : tab;
 
   return (
     <div className="flex flex-col gap-6">
@@ -140,15 +160,19 @@ export default function CompanyPage() {
       )}
 
       <div className="flex flex-col gap-6 lg:flex-row">
-        <SectionNav items={companyTabs} value={tab} onChange={setTab} />
+        <SectionNav items={companyTabs} value={effectiveTab} onChange={setTab} />
         <div className="min-w-0 flex-1">
-          {tab === 'certificate' ? (
-            <CompanyCertificateTab company={company} />
-          ) : tab === 'services' ? (
-            <CompanyServicesTab company={company} />
-          ) : tab === 'process-flows' ? (
+          {effectiveTab === 'certificate' ? (
+            <div data-tour="company-certificate-tab">
+              <CompanyCertificateTab company={company} />
+            </div>
+          ) : effectiveTab === 'nfse-activities' ? (
+            <CompanyNFSeActivitiesTab company={company} />
+          ) : effectiveTab === 'process-flows' ? (
             <CompanyProcessFlowsTab company={company} />
-          ) : tab === 'danger' ? (
+          ) : effectiveTab === 'emails' ? (
+            <CompanyEmailsTab company={company} />
+          ) : effectiveTab === 'danger' ? (
             <CompanyDangerZone company={company} />
           ) : (
             <CompanyGeneralTab company={company} />

@@ -5,6 +5,7 @@ export interface SectionNavItem<T extends string> {
   id: T;
   label: string;
   icon: React.ReactNode;
+  dataTour?: string;
 }
 
 export function SectionNav<T extends string>({
@@ -26,6 +27,7 @@ export function SectionNav<T extends string>({
             variant={value === item.id ? 'secondary' : 'ghost'}
             size="sm"
             className={cn('justify-start gap-2', value === item.id && 'font-semibold')}
+            data-tour={item.dataTour}
             onClick={() => onChange(item.id)}
           >
             {item.icon}
@@ -41,6 +43,7 @@ export function SectionNav<T extends string>({
             variant={value === item.id ? 'secondary' : 'ghost'}
             size="sm"
             className="shrink-0 gap-1.5 text-xs"
+            data-tour={item.dataTour}
             onClick={() => onChange(item.id)}
           >
             {item.icon}

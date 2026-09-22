@@ -1,4 +1,4 @@
-.PHONY: deps migrate-up run-control-plane run-inbound run-fiscal-worker run-outbox run-webhook docker-up docker-down build test test-unit test-verbose seed
+.PHONY: deps migrate-up run-control-plane run-inbound run-fiscal-worker run-outbox run-webhook docker-up docker-down build test test-unit test-verbose seed send-test-email
 
 deps:
 	go mod tidy
@@ -37,6 +37,9 @@ run-fiscal-worker:
 
 run-outbox:
 	go run ./cmd/outbox_relay
+
+send-test-email:
+	go run ./cmd/send_test_email -to ricardo.pinheiro@novaconsulting.com.br
 
 run-webhook:
 	go run ./cmd/webhook_dispatcher

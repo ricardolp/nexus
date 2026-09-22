@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nexus/fiscal-messaging/internal/config"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/metrics"
 	"github.com/nexus/fiscal-messaging/internal/webhook"
@@ -32,7 +33,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	hooks := webhook.NewService(pool)
+	hooks := webhook.NewService(pool).WithIntegrationLog(integrationlog.NewRecorder(pool, logger))
 	metricsSrv := metrics.Start(cfg.MetricsAddr, logger)
 	defer metrics.Stop(metricsSrv)
 	logger.Info("webhook_dispatcher started")

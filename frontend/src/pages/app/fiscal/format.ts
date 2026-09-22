@@ -90,3 +90,81 @@ export function isInboundProcessing(processingStatus?: string | null) {
   const value = processingStatus?.toLowerCase();
   return value === 'queued' || value === 'processing';
 }
+
+export function inboundHasGeneratedSAPDocument(
+  steps?: Array<{ sap_document_number?: string | null }> | null
+) {
+  return (steps ?? []).some((step) => Boolean(step.sap_document_number?.trim()));
+}
+
+/** Reset is allowed when the inbound NF-e has progressed past import and no SAP document was posted. */
+export function canResetInboundDocument(
+  document: { direction?: string | null; document_type?: string | null; status?: string | null; processing_status?: string | null },
+  steps?: Array<{ sap_document_number?: string | null }> | null,
+  hasGeneratedSAPDocument?: boolean
+) {
+  if (document.direction?.toLowerCase() !== 'inbound') return false;
+  if (document.document_type?.toLowerCase() !== 'nfe') return false;
+  if (isInboundProcessing(document.processing_status)) return false;
+  if (hasGeneratedSAPDocument || inboundHasGeneratedSAPDocument(steps)) return false;
+  return document.status?.toLowerCase() !== 'received';
+}
+
+/** True while the hop tracker (and the detail page) should keep polling. */
+export function isDocumentInFlight(processingStatus?: string | null) {
+  const value = processingStatus?.toLowerCase();
+  return (
+    value === 'queued' ||
+    value === 'processing' ||
+    value === 'waiting_external' ||
+    value === 'retry_scheduled'
+  );
+}
+
+/** Short stamp under a hop node, e.g. "01/09, 18:06". */
+export function formatHopTime(value?: string | null) {
+  if (!value) return undefined;
+  return new Date(value).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+export function sourceSystemLabel(source?: string | null) {
+  const value = (source ?? '').trim().toLowerCase();
+  if (value === 'nexus_ui') return 'Web';
+  if (value === 'manual_upload') return 'Upload';
+  if (value === 'nfe_gateway_distribution' || value.startsWith('nfe_gateway')) return 'SEFAZ';
+  return source || '—';
+}
+
+export function issqnTributeLabel(nature?: string | null) {
+  switch ((nature ?? '').trim()) {
+    case '3':
+      return 'Imunidade';
+    case '4':
+      return 'Exportação de serviço';
+    case '5':
+    case '6':
+      return 'Não incidência';
+    case '1':
+    case '2':
+      return 'Operação tributável';
+    default:
+      return nature ? `Natureza ${nature}` : null;
+  }
+}
+
+export function issqnRetentionLabel(withheld?: boolean | null) {
+  if (withheld) return 'Retido pelo tomador';
+  return 'Não retido';
+}
+
+export function pisCofinsRetentionLabel(code?: string | null) {
+  const value = (code ?? '').trim();
+  if (value === '1') return 'Retido';
+  if (value === '0' || value === '') return 'Não retido';
+  return `Tipo ${value}`;
+}

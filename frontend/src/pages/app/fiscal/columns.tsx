@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { formatCNPJ, formatDateTime } from './format';
+import { formatCNPJ, formatDateTime, sourceSystemLabel } from './format';
 import { badgeFor, processingStatusLabels, statusLabels } from './status-labels';
 
 export function getFiscalDocumentColumns(
@@ -56,7 +56,7 @@ export function getFiscalDocumentColumns(
         return (
           <div className="flex flex-col">
             <span className="text-primary font-medium">{primary || '—'}</span>
-            <span className="text-muted-foreground text-xs">{source_system}</span>
+            <span className="text-muted-foreground text-xs">{sourceSystemLabel(source_system)}</span>
           </div>
         );
       }

@@ -1,6 +1,12 @@
 export const COMPANIES_PATH = '/app/settings/companies';
 
-export type CompanyTab = 'general' | 'certificate' | 'services' | 'process-flows' | 'danger';
+export type CompanyTab =
+  | 'general'
+  | 'certificate'
+  | 'nfse-activities'
+  | 'process-flows'
+  | 'emails'
+  | 'danger';
 
 export function companyPath(companyId: string, tab?: CompanyTab) {
   const base = `${COMPANIES_PATH}/${companyId}`;

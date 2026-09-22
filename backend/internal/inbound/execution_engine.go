@@ -65,6 +65,9 @@ func (s *Service) AdvanceStep(ctx context.Context, in AdvanceStepInput) (*PlanSt
 			if strings.TrimSpace(in.Reason) == "" {
 				return domainerr.Validation("invalid_advance", "reason is required to skip a step")
 			}
+			if err := rejectEWMSkip(ctx, tx, step); err != nil {
+				return err
+			}
 			skipped, err := s.skipStep(ctx, tx, step, in)
 			result = skipped
 			return err
@@ -139,6 +142,36 @@ func (s *Service) skipStep(ctx context.Context, tx pgx.Tx, step PlanStep, in Adv
 	})
 }
 
+func rejectEWMSkip(ctx context.Context, tx pgx.Tx, step PlanStep) error {
+	scenarioID, err := getDocumentScenarioID(ctx, tx, step.OrganizationID, step.OrganizationDocumentID)
+	if err != nil {
+		return err
+	}
+	swr, err := getScenarioTx(ctx, tx, step.OrganizationID, scenarioID)
+	if err != nil {
+		return err
+	}
+	if isEWMProcess(swr) {
+		return domainerr.Conflict("step_skip_not_allowed", "Etapas de um fluxo EWM não podem ser puladas")
+	}
+	return nil
+}
+
+func isEWMProcess(swr *ScenarioWithRule) bool {
+	if swr == nil {
+		return false
+	}
+	return swr.Scenario.ProcessTemplateCode == TemplateEWMPurchase || swr.Rule.ReceiptMode == ReceiptModeEWM
+}
+
+func userFacingStepError(err error) string {
+	var apiErr *sap.APIError
+	if errors.As(err, &apiErr) && strings.TrimSpace(apiErr.Message) != "" {
+		return apiErr.Message
+	}
+	return err.Error()
+}
+
 // runStep executes the SAP call for one step. Business/SAP failures are not
 // returned as Go errors — they are a valid recorded outcome (FAILED, with
 // error_code/error_message_sanitized) — only unexpected infrastructure
@@ -157,7 +190,7 @@ func (s *Service) runStep(ctx context.Context, tx pgx.Tx, step PlanStep, manualD
 		return step, err
 	}
 	companyID := doc.OrganizationCompanyID
-	adapter, err := sap.Resolve(ctx, s.integrations, step.OrganizationID, &companyID)
+	adapter, err := s.resolveSAP(ctx, step.OrganizationID, &companyID)
 	if err != nil {
 		return s.failStep(ctx, tx, step, err)
 	}
@@ -176,6 +209,17 @@ func (s *Service) runStep(ctx context.Context, tx pgx.Tx, step PlanStep, manualD
 		return step, err
 	}
 
+	header, err := getNFeHeader(ctx, tx, step.OrganizationDocumentID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return step, err
+	}
+	if s.orgs != nil {
+		if company, companyErr := s.orgs.GetCompany(ctx, step.OrganizationID, companyID); companyErr == nil && company.CNPJ != "" {
+			header.RecipientDocument = company.CNPJ
+		}
+	}
+	deliveryNumber := sapDocFromDependency(ctx, tx, step)
+
 	vendorCode := ""
 	if vm, err := latestMatch(ctx, tx, step.OrganizationID, step.OrganizationDocumentID, nil, MatchTypeVendor); err != nil {
 		return step, err
@@ -192,13 +236,13 @@ func (s *Service) runStep(ctx context.Context, tx pgx.Tx, step PlanStep, manualD
 	case StepCreatePurchaseOrder:
 		sapDocNumber, response, stepErr = s.execCreatePurchaseOrder(ctx, tx, adapter, scenarioWithRule.Scenario, vendorCode, items)
 	case StepCreateInboundDelivery:
-		sapDocNumber, response, stepErr = execCreateInboundDelivery(ctx, adapter, items)
+		sapDocNumber, response, stepErr = s.execCreateInboundDelivery(ctx, tx, adapter, header, items)
 	case StepPostGoodsReceipt:
-		sapDocNumber, response, stepErr = execPostGoodsReceipt(ctx, adapter, scenarioWithRule.Rule, items, manualDocNumber)
+		sapDocNumber, response, stepErr = s.execPostGoodsReceipt(ctx, tx, adapter, scenarioWithRule.Rule, header, items, deliveryNumber, manualDocNumber)
 	case StepCreateServiceEntry:
-		sapDocNumber, response, stepErr = execCreateServiceEntry(ctx, adapter, items)
+		sapDocNumber, response, stepErr = s.execCreateServiceEntry(ctx, tx, adapter, header, items)
 	case StepPostSupplierInvoice:
-		sapDocNumber, response, stepErr = execPostSupplierInvoice(ctx, adapter, items)
+		sapDocNumber, response, stepErr = s.execPostSupplierInvoice(ctx, tx, adapter, header, items)
 	case StepPostAccountingDocument:
 		sapDocNumber, response, stepErr = execPostAccountingDocument(ctx, adapter, step)
 	default:
@@ -240,7 +284,7 @@ func (s *Service) failStep(ctx context.Context, tx pgx.Tx, step PlanStep, err er
 		code = "sap_error"
 	}
 	now := time.Now().UTC()
-	msg := err.Error()
+	msg := userFacingStepError(err)
 	step.Status = PlanStepStatusFailed
 	step.ErrorCode = &code
 	step.ErrorMessageSanitized = &msg
@@ -395,15 +439,85 @@ func orderRefsFor(items []Item) []sap.OrderRef {
 		if it.ResolvedPurchaseOrderNumber == nil {
 			continue
 		}
+		postUnit, qty := it.PostingUnitAndQty()
+		xmlUnit := strVal(it.Unit)
+		poUnit := strVal(it.ResolvedPurchaseOrderUnit)
+		if poUnit == "" && postUnit != "" && !strings.EqualFold(postUnit, xmlUnit) {
+			poUnit = postUnit
+		}
 		refs = append(refs, sap.OrderRef{
 			PurchaseOrderNumber: *it.ResolvedPurchaseOrderNumber,
 			PurchaseOrderItem:   strVal(it.ResolvedPurchaseOrderItem),
 			MaterialCode:        strVal(it.ResolvedMaterialCode),
-			Quantity:            it.Quantity,
+			Quantity:            qty,
 			UnitPrice:           it.UnitPrice,
+			ItemAmount:          it.TotalAmount,
+			Unit:                xmlUnit,
+			POUnit:              poUnit,
+			NFItem:              it.ItemNumber,
 		})
 	}
 	return refs
+}
+
+func enrichOrderRefsPOUnit(ctx context.Context, adapter sap.Adapter, header nfeHeader, refs []sap.OrderRef) {
+	if adapter == nil || len(refs) == 0 {
+		return
+	}
+	orders, err := adapter.SearchPurchaseOrders(ctx, sap.SearchPurchaseOrdersInput{
+		VendorCNPJ: header.IssuerCNPJ,
+		BranchCNPJ: header.RecipientDocument,
+		SinceDays:  1095,
+	})
+	if err != nil || len(orders) == 0 {
+		return
+	}
+	units := map[string]string{}
+	onlyLine := map[string]string{}
+	for _, po := range orders {
+		poKey := strings.TrimLeft(strings.TrimSpace(po.Number), "0")
+		for _, line := range po.Items {
+			u := strings.TrimSpace(line.Unit)
+			if u == "" {
+				continue
+			}
+			units[poKey+"|"+strings.TrimLeft(strings.TrimSpace(line.ItemNumber), "0")] = u
+		}
+		if len(po.Items) == 1 {
+			if u := strings.TrimSpace(po.Items[0].Unit); u != "" {
+				onlyLine[poKey] = u
+			}
+		}
+	}
+	for i, ref := range refs {
+		poKey := strings.TrimLeft(strings.TrimSpace(ref.PurchaseOrderNumber), "0")
+		itemKey := strings.TrimLeft(strings.TrimSpace(ref.PurchaseOrderItem), "0")
+		if u := units[poKey+"|"+itemKey]; u != "" {
+			refs[i].POUnit = u
+			continue
+		}
+		if u := onlyLine[poKey]; u != "" {
+			refs[i].POUnit = u
+		}
+	}
+}
+
+func sapDocFromDependency(ctx context.Context, tx pgx.Tx, step PlanStep) string {
+	if step.DependencyStepID == nil {
+		return ""
+	}
+	dep, err := getPlanStep(ctx, tx, step.OrganizationID, *step.DependencyStepID)
+	if err != nil || dep.SAPDocumentNumber == nil {
+		return ""
+	}
+	return strings.TrimSpace(*dep.SAPDocumentNumber)
+}
+
+func nfeDocDate(h nfeHeader) time.Time {
+	if h.IssuedAt != nil && !h.IssuedAt.IsZero() {
+		return *h.IssuedAt
+	}
+	return time.Now().UTC()
 }
 
 func (s *Service) execCreatePurchaseOrder(ctx context.Context, tx pgx.Tx, adapter sap.Adapter, scenario Scenario, vendorCode string, items []Item) (string, map[string]any, error) {
@@ -419,11 +533,12 @@ func (s *Service) execCreatePurchaseOrder(ctx context.Context, tx pgx.Tx, adapte
 
 	sapItems := make([]sap.CreatePurchaseOrderItemInput, 0, len(pending))
 	for _, it := range pending {
+		unit, qty := it.PostingUnitAndQty()
 		sapItems = append(sapItems, sap.CreatePurchaseOrderItemInput{
 			MaterialCode: strVal(it.ResolvedMaterialCode),
 			Description:  strVal(it.Description),
-			Quantity:     it.Quantity,
-			Unit:         strVal(it.Unit),
+			Quantity:     qty,
+			Unit:         unit,
 			UnitPrice:    it.UnitPrice,
 		})
 	}
@@ -441,6 +556,7 @@ func (s *Service) execCreatePurchaseOrder(ctx context.Context, tx pgx.Tx, adapte
 		lineItem := strconv.Itoa((i + 1) * 10)
 		it.ResolvedPurchaseOrderNumber = nullEmptyStr(result.PurchaseOrderNumber)
 		it.ResolvedPurchaseOrderItem = nullEmptyStr(lineItem)
+		it.ResolvedPurchaseOrderUnit = nullEmptyStr(sapItems[i].Unit)
 		it.Status = ItemStatusMatched
 		it.UpdatedAt = time.Now().UTC()
 		if err := updateItemFields(ctx, tx, it); err != nil {
@@ -457,14 +573,18 @@ func (s *Service) execCreatePurchaseOrder(ctx context.Context, tx pgx.Tx, adapte
 	return result.PurchaseOrderNumber, map[string]any{"purchase_order_number": result.PurchaseOrderNumber}, nil
 }
 
-func execCreateInboundDelivery(ctx context.Context, adapter sap.Adapter, items []Item) (string, map[string]any, error) {
-	refs := orderRefsFor(items)
+func (s *Service) execCreateInboundDelivery(ctx context.Context, tx pgx.Tx, adapter sap.Adapter, header nfeHeader, items []Item) (string, map[string]any, error) {
+	refs := s.prepareSAPOrderRefs(ctx, tx, headerOrg(items), adapter, header, items)
 	if len(refs) == 0 {
 		return "", nil, domainerr.Validation("no_purchase_order", "no item has a resolved purchase order to create a delivery for")
 	}
 	result, err := adapter.CreateInboundDelivery(ctx, sap.CreateInboundDeliveryInput{
 		PurchaseOrderNumber: refs[0].PurchaseOrderNumber,
 		Items:               refs,
+		Number:              header.Number,
+		Series:              header.Series,
+		DocDate:             nfeDocDate(header),
+		AccessKey:           header.AccessKey,
 	})
 	if err != nil {
 		return "", nil, err
@@ -472,8 +592,8 @@ func execCreateInboundDelivery(ctx context.Context, adapter sap.Adapter, items [
 	return result.DeliveryNumber, map[string]any{"delivery_number": result.DeliveryNumber}, nil
 }
 
-func execPostGoodsReceipt(ctx context.Context, adapter sap.Adapter, rule ScenarioRule, items []Item, manualDocNumber string) (string, map[string]any, error) {
-	refs := orderRefsFor(items)
+func (s *Service) execPostGoodsReceipt(ctx context.Context, tx pgx.Tx, adapter sap.Adapter, rule ScenarioRule, header nfeHeader, items []Item, deliveryNumber, manualDocNumber string) (string, map[string]any, error) {
+	refs := s.prepareSAPOrderRefs(ctx, tx, headerOrg(items), adapter, header, items)
 	if len(refs) == 0 && manualDocNumber == "" {
 		return "", nil, domainerr.Validation("no_purchase_order", "no item has a resolved purchase order to post a goods receipt for")
 	}
@@ -483,8 +603,12 @@ func execPostGoodsReceipt(ctx context.Context, adapter sap.Adapter, rule Scenari
 	}
 	result, err := adapter.PostGoodsReceipt(ctx, sap.PostGoodsReceiptInput{
 		PurchaseOrderNumber:  poNumber,
+		DeliveryNumber:       deliveryNumber,
 		MovementType:         rule.GoodsReceiptMovementType,
 		Items:                refs,
+		Number:               header.Number,
+		Series:               header.Series,
+		DocDate:              nfeDocDate(header),
 		ManualDocumentNumber: manualDocNumber,
 	})
 	if err != nil {
@@ -493,8 +617,8 @@ func execPostGoodsReceipt(ctx context.Context, adapter sap.Adapter, rule Scenari
 	return result.MaterialDocumentNumber, map[string]any{"material_document_number": result.MaterialDocumentNumber}, nil
 }
 
-func execCreateServiceEntry(ctx context.Context, adapter sap.Adapter, items []Item) (string, map[string]any, error) {
-	refs := orderRefsFor(items)
+func (s *Service) execCreateServiceEntry(ctx context.Context, tx pgx.Tx, adapter sap.Adapter, header nfeHeader, items []Item) (string, map[string]any, error) {
+	refs := s.prepareSAPOrderRefs(ctx, tx, headerOrg(items), adapter, header, items)
 	if len(refs) == 0 {
 		return "", nil, domainerr.Validation("no_purchase_order", "no item has a resolved purchase order for a service entry sheet")
 	}
@@ -505,8 +629,15 @@ func execCreateServiceEntry(ctx context.Context, adapter sap.Adapter, items []It
 	return result.ServiceEntrySheetNumber, map[string]any{"service_entry_sheet_number": result.ServiceEntrySheetNumber}, nil
 }
 
-func execPostSupplierInvoice(ctx context.Context, adapter sap.Adapter, items []Item) (string, map[string]any, error) {
-	refs := orderRefsFor(items)
+func headerOrg(items []Item) uuid.UUID {
+	if len(items) == 0 {
+		return uuid.Nil
+	}
+	return items[0].OrganizationID
+}
+
+func (s *Service) execPostSupplierInvoice(ctx context.Context, tx pgx.Tx, adapter sap.Adapter, header nfeHeader, items []Item) (string, map[string]any, error) {
+	refs := s.prepareSAPOrderRefs(ctx, tx, headerOrg(items), adapter, header, items)
 	if len(refs) == 0 {
 		return "", nil, domainerr.Validation("no_purchase_order", "no item has a resolved purchase order to invoice")
 	}
@@ -519,6 +650,10 @@ func execPostSupplierInvoice(ctx context.Context, adapter sap.Adapter, items []I
 		GrossAmount:         gross,
 		Currency:            "BRL",
 		Items:               refs,
+		Number:              header.Number,
+		Series:              header.Series,
+		DocDate:             nfeDocDate(header),
+		AccessKey:           header.AccessKey,
 	})
 	if err != nil {
 		return "", nil, err

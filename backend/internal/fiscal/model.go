@@ -108,6 +108,7 @@ type NFSeExtension struct {
 	ProviderCode     string `json:"provider_code,omitempty"`
 	RPSNumber        string `json:"rps_number,omitempty"`
 	RPSSeries        string `json:"rps_series,omitempty"`
+	IssuerCNPJ       string `json:"issuer_cnpj,omitempty"`
 }
 
 type ReceiveResult struct {

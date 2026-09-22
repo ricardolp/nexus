@@ -9,12 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nexus/fiscal-messaging/internal/integration"
+	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 )
 
 // APIError is a structured error returned by the SAP CPI middleware for a
@@ -32,31 +33,27 @@ func (e *APIError) Error() string {
 
 // CPIClient is the real Adapter implementation: a thin REST client against
 // SAP CPI (SAP Cloud Integration), which in turn fans out to SAP S/4HANA or
-// ECC. It exposes the operations suggested in spec §35 as sub-paths of
-// BaseURL:
+// ECC.
 //
-//	POST {BaseURL}/vendors/resolve
-//	POST {BaseURL}/materials/resolve
-//	POST {BaseURL}/purchase-orders/search
-//	POST {BaseURL}/purchase-orders
-//	POST {BaseURL}/inbound-deliveries
-//	POST {BaseURL}/goods-receipts
-//	POST {BaseURL}/service-entries
-//	POST {BaseURL}/supplier-invoices
-//	POST {BaseURL}/accounting-documents
+// Purchase-order search and subsequent postings (delivery / MIGO / MIRO) use
+// the Nexus DOCUMENTS iFlow. Matching keeps GET {BaseURL}/http/Nexus/DOCUMENTS;
+// later documents PUT the same endpoint with body.document =
+// delivery | delivery_post | MIRO. Other adapter methods still use the
+// spec §35 REST sub-paths when an iFlow exists for them.
 //
 // Authentication is HTTP Basic (ClientID:ClientSecret) unless TokenURL is
 // set, in which case an OAuth2 client_credentials token is fetched and
 // cached until near expiry.
 type CPIClient struct {
-	BaseURL      string
-	ClientID     string
-	ClientSecret string
-	TokenURL     string
-	SAPClient    string
-	SAPLanguage  string
-	Headers      map[string]string
-	Capabilities integration.Capabilities
+	BaseURL        string
+	ClientID       string
+	ClientSecret   string
+	TokenURL       string
+	SAPClient      string
+	SAPLanguage    string
+	Headers        map[string]string
+	Capabilities   integration.Capabilities
+	OrganizationID uuid.UUID
 
 	httpClient *http.Client
 
@@ -66,16 +63,40 @@ type CPIClient struct {
 }
 
 func NewCPIClient(baseURL, clientID, clientSecret, tokenURL, sapClient, sapLanguage string, headers map[string]string, capabilities integration.Capabilities) *CPIClient {
+	return NewCPIClientWithOrg(uuid.Nil, baseURL, clientID, clientSecret, tokenURL, sapClient, sapLanguage, headers, capabilities, nil)
+}
+
+// NewCPIClientWithOrg builds a CPI client that optionally records outbound HTTP
+// exchanges for the organization integration log.
+func NewCPIClientWithOrg(
+	organizationID uuid.UUID,
+	baseURL, clientID, clientSecret, tokenURL, sapClient, sapLanguage string,
+	headers map[string]string,
+	capabilities integration.Capabilities,
+	recorder *integrationlog.Recorder,
+) *CPIClient {
+	transport := http.DefaultTransport
+	if recorder != nil {
+		transport = &integrationlog.RoundTripper{
+			Base:        http.DefaultTransport,
+			Recorder:    recorder,
+			OrgID:       organizationID,
+			Origin:      "nexus",
+			Destination: "sap_cpi",
+			SpanName:    "outbound.sap_cpi",
+		}
+	}
 	return &CPIClient{
-		BaseURL:      strings.TrimRight(baseURL, "/"),
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		TokenURL:     tokenURL,
-		SAPClient:    sapClient,
-		SAPLanguage:  sapLanguage,
-		Headers:      headers,
-		Capabilities: capabilities,
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		BaseURL:        strings.TrimRight(baseURL, "/"),
+		ClientID:       clientID,
+		ClientSecret:   clientSecret,
+		TokenURL:       tokenURL,
+		SAPClient:      sapClient,
+		SAPLanguage:    sapLanguage,
+		Headers:        headers,
+		Capabilities:   capabilities,
+		OrganizationID: organizationID,
+		httpClient:     &http.Client{Timeout: 30 * time.Second, Transport: transport},
 	}
 }
 
@@ -94,31 +115,6 @@ func (c *CPIClient) ResolveMaterial(ctx context.Context, vendorCode, supplierMat
 	return out, err
 }
 
-// nexusPurchaseOrder/-Item mirror the real response shape of the "Nexus"
-// custom CPI iFlow (GET {BaseURL}/http/Nexus/DOCUMENTS?...&name=PurchaseOrders),
-// confirmed against a live capture from the actual LS Mtron CPI tenant —
-// Portuguese field names, one flat array of full purchase orders (with
-// resolved items and tax breakdown, which this adapter doesn't currently
-// need and so doesn't map). This is a different shape entirely from the
-// generic /purchase-orders/search{vendors,materials}/resolve REST design the
-// rest of this client still uses for the other 8 operations (spec §35) —
-// those remain unverified against a real endpoint.
-type nexusPurchaseOrderItem struct {
-	Item          int     `json:"item"`
-	Material      string  `json:"material"`
-	Descricao     string  `json:"descricao"`
-	Centro        string  `json:"centro"`
-	Unidade       string  `json:"unidade"`
-	Quantidade    float64 `json:"quantidade"`
-	ValorUnitario float64 `json:"valorUnitario"`
-}
-
-type nexusPurchaseOrder struct {
-	Pedido     string                   `json:"pedido"`
-	Fornecedor string                   `json:"fornecedor"`
-	Itens      []nexusPurchaseOrderItem `json:"itens"`
-}
-
 // SearchPurchaseOrders queries the real "Nexus" CPI iFlow for every open
 // purchase order from a given vendor to a given receiving company/branch
 // within a lookback window — it has no by-PO-number filter server-side, so
@@ -130,11 +126,15 @@ func (c *CPIClient) SearchPurchaseOrders(ctx context.Context, in SearchPurchaseO
 	}
 	sinceDays := in.SinceDays
 	if sinceDays <= 0 {
-		sinceDays = 365
+		sinceDays = 1095
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -sinceDays).Format("02-01-2006")
 
-	q := url.Values{}
+	endpoint, err := url.Parse(nexusDocumentsURL(c.BaseURL))
+	if err != nil {
+		return nil, err
+	}
+	q := endpoint.Query()
 	if c.SAPClient != "" {
 		q.Set("sap-client", c.SAPClient)
 	}
@@ -146,8 +146,9 @@ func (c *CPIClient) SearchPurchaseOrders(ctx context.Context, in SearchPurchaseO
 	q.Set("cutoffDate", cutoffDate)
 	q.Set("type", "MERCADORIA")
 	q.Set("name", "PurchaseOrders")
+	endpoint.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/http/Nexus/DOCUMENTS?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +162,7 @@ func (c *CPIClient) SearchPurchaseOrders(ctx context.Context, in SearchPurchaseO
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -169,31 +170,7 @@ func (c *CPIClient) SearchPurchaseOrders(ctx context.Context, in SearchPurchaseO
 		return nil, parseAPIError(resp.StatusCode, body)
 	}
 
-	var raw []nexusPurchaseOrder
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, err
-	}
-
-	out := make([]PurchaseOrder, 0, len(raw))
-	for _, po := range raw {
-		if in.PurchaseOrder != "" && po.Pedido != in.PurchaseOrder {
-			continue
-		}
-		items := make([]PurchaseOrderItem, 0, len(po.Itens))
-		for _, it := range po.Itens {
-			items = append(items, PurchaseOrderItem{
-				ItemNumber:   strconv.Itoa(it.Item),
-				MaterialCode: it.Material,
-				Description:  it.Descricao,
-				Quantity:     it.Quantidade,
-				Unit:         it.Unidade,
-				UnitPrice:    it.ValorUnitario,
-				Plant:        it.Centro,
-			})
-		}
-		out = append(out, PurchaseOrder{Number: po.Pedido, VendorCode: po.Fornecedor, Items: items})
-	}
-	return out, nil
+	return parseNexusPurchaseOrders(body, in.PurchaseOrder)
 }
 
 func (c *CPIClient) CreatePurchaseOrder(ctx context.Context, in CreatePurchaseOrderInput) (CreatePurchaseOrderResult, error) {
@@ -209,18 +186,33 @@ func (c *CPIClient) CreateInboundDelivery(ctx context.Context, in CreateInboundD
 	if !c.Capabilities.InboundDelivery {
 		return CreateInboundDeliveryResult{}, ErrNotSupported
 	}
-	var out CreateInboundDeliveryResult
-	err := c.post(ctx, "/inbound-deliveries", in, &out)
-	return out, err
+	body, err := c.putDocuments(ctx, buildNexusDeliveryPayload(nexusDocumentDelivery, in.Number, in.Series, in.DocDate, in.Items, ""))
+	if err != nil {
+		return CreateInboundDeliveryResult{}, err
+	}
+	number := readDeliveryNumber(body)
+	if number == "" {
+		return CreateInboundDeliveryResult{}, &APIError{Code: "sap_error", Message: "SAP delivery response missing deliverynumber", Status: http.StatusUnprocessableEntity}
+	}
+	return CreateInboundDeliveryResult{DeliveryNumber: number}, nil
 }
 
 func (c *CPIClient) PostGoodsReceipt(ctx context.Context, in PostGoodsReceiptInput) (PostGoodsReceiptResult, error) {
 	if !c.Capabilities.GoodsReceipt {
 		return PostGoodsReceiptResult{}, ErrNotSupported
 	}
-	var out PostGoodsReceiptResult
-	err := c.post(ctx, "/goods-receipts", in, &out)
-	return out, err
+	if in.ManualDocumentNumber != "" {
+		return PostGoodsReceiptResult{MaterialDocumentNumber: in.ManualDocumentNumber}, nil
+	}
+	body, err := c.putDocuments(ctx, buildNexusDeliveryPayload(nexusDocumentDeliveryPost, in.Number, in.Series, in.DocDate, in.Items, in.DeliveryNumber))
+	if err != nil {
+		return PostGoodsReceiptResult{}, err
+	}
+	number := readMaterialDocument(body)
+	if number == "" {
+		return PostGoodsReceiptResult{}, &APIError{Code: "sap_error", Message: "SAP portaria response missing materialdocument", Status: http.StatusUnprocessableEntity}
+	}
+	return PostGoodsReceiptResult{MaterialDocumentNumber: number}, nil
 }
 
 func (c *CPIClient) CreateServiceEntry(ctx context.Context, in CreateServiceEntryInput) (CreateServiceEntryResult, error) {
@@ -236,15 +228,87 @@ func (c *CPIClient) PostSupplierInvoice(ctx context.Context, in PostSupplierInvo
 	if !c.Capabilities.SupplierInvoice {
 		return PostSupplierInvoiceResult{}, ErrNotSupported
 	}
-	var out PostSupplierInvoiceResult
-	err := c.post(ctx, "/supplier-invoices", in, &out)
-	return out, err
+	body, err := c.putDocuments(ctx, buildNexusMiroPayload(in))
+	if err != nil {
+		return PostSupplierInvoiceResult{}, err
+	}
+	invoice := readMiroInvoiceNumber(body)
+	if invoice == "" {
+		return PostSupplierInvoiceResult{}, &APIError{Code: "sap_error", Message: "SAP MIRO response missing invoice document number", Status: http.StatusUnprocessableEntity}
+	}
+	return PostSupplierInvoiceResult{
+		InvoiceDocumentNumber:    invoice,
+		AccountingDocumentNumber: readAccountingDocument(body),
+	}, nil
 }
 
 func (c *CPIClient) PostAccountingDocument(ctx context.Context, in PostAccountingDocumentInput) (PostAccountingDocumentResult, error) {
 	var out PostAccountingDocumentResult
 	err := c.post(ctx, "/accounting-documents", in, &out)
 	return out, err
+}
+
+func (c *CPIClient) putDocuments(ctx context.Context, body any) (map[string]any, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := url.Parse(nexusDocumentsURL(c.BaseURL))
+	if err != nil {
+		return nil, err
+	}
+	q := endpoint.Query()
+	if c.SAPClient != "" {
+		q.Set("sap-client", c.SAPClient)
+	}
+	if c.SAPLanguage != "" {
+		q.Set("sap-language", c.SAPLanguage)
+	}
+	endpoint.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if c.SAPClient != "" {
+		req.Header.Set("sap-client", c.SAPClient)
+	}
+	if c.SAPLanguage != "" {
+		req.Header.Set("sap-language", c.SAPLanguage)
+	}
+	for k, v := range c.Headers {
+		req.Header.Set(k, v)
+	}
+	if err := c.authorize(ctx, req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, parseAPIError(resp.StatusCode, respBody)
+	}
+	if len(respBody) == 0 {
+		return map[string]any{}, nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, err
+	}
+	if err := sapBodyError(parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
 }
 
 func (c *CPIClient) post(ctx context.Context, path string, body any, out any) error {
@@ -376,6 +440,12 @@ func parseAPIError(status int, body []byte) error {
 	}
 	if err := json.Unmarshal(body, &parsed); err == nil && len(parsed.Errors) > 0 {
 		return &APIError{Code: parsed.Errors[0].Code, Message: parsed.Errors[0].Message, Status: status}
+	}
+	var sapBody map[string]any
+	if err := json.Unmarshal(body, &sapBody); err == nil {
+		if msg := sapUserMessage(sapBody); msg != "" {
+			return &APIError{Code: "sap_error", Message: msg, Status: status}
+		}
 	}
 	code := "sap_error"
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {

@@ -238,11 +238,11 @@ export function copyText(value: string) {
 }
 
 export const accentSwatches = [
-  { id: 'violet', label: 'Violeta', className: 'bg-[oklch(0.52_0.22_292)]' },
-  { id: 'blue', label: 'Azul', className: 'bg-[oklch(0.55_0.2_264)]' },
-  { id: 'magenta', label: 'Magenta', className: 'bg-[oklch(0.65_0.22_340)]' },
-  { id: 'teal', label: 'Teal', className: 'bg-[oklch(0.55_0.12_180)]' },
-  { id: 'amber', label: 'Âmbar', className: 'bg-[oklch(0.72_0.16_75)]' }
+  { id: 'violet', label: 'Marinho', className: 'bg-[oklch(0.4_0.085_255)]' },
+  { id: 'blue', label: 'Azul', className: 'bg-[oklch(0.45_0.12_250)]' },
+  { id: 'magenta', label: 'Magenta', className: 'bg-[oklch(0.5_0.14_340)]' },
+  { id: 'teal', label: 'Teal', className: 'bg-[oklch(0.45_0.08_190)]' },
+  { id: 'amber', label: 'Âmbar', className: 'bg-[oklch(0.62_0.12_75)]' }
 ] as const;
 
 export type AppearancePrefs = {

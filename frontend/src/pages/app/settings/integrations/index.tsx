@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRoundIcon, PencilIcon, PlugZapIcon, PlusIcon } from 'lucide-react';
+import { KeyRoundIcon, PencilIcon, PlugZapIcon, PlusIcon, ScrollTextIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { ApiError } from '@/lib/api';
@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { IntegrationFormDialog } from './integration-form-dialog';
 import { ApiKeysPanel } from './api-keys-panel';
+import { IntegrationLogsPanel } from './integration-logs-panel';
 import { integrationSystems, type IntegrationSystem } from './systems';
 
 const statusLabels: Record<string, { label: string; className: string }> = {
@@ -30,11 +31,12 @@ const statusLabels: Record<string, { label: string; className: string }> = {
   error: { label: 'Erro', className: 'bg-red-500/10 text-red-600 dark:text-red-400' }
 };
 
-type IntegrationsTab = 'sistemas' | 'tokens';
+type IntegrationsTab = 'sistemas' | 'tokens' | 'logs';
 
 const tabs: { id: IntegrationsTab; label: string; icon: ReactNode }[] = [
   { id: 'sistemas', label: 'Sistemas', icon: <PlugZapIcon className="size-4" /> },
-  { id: 'tokens', label: 'Tokens de entrada', icon: <KeyRoundIcon className="size-4" /> }
+  { id: 'tokens', label: 'Tokens de entrada', icon: <KeyRoundIcon className="size-4" /> },
+  { id: 'logs', label: 'Logs de Integração', icon: <ScrollTextIcon className="size-4" /> }
 ];
 
 function SystemLogo({ system }: { system: IntegrationSystem }) {
@@ -63,7 +65,9 @@ export default function IntegrationsPage() {
   const queryClient = useQueryClient();
   const queryKey = ['integrations', organizationId];
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab: IntegrationsTab = searchParams.get('tab') === 'tokens' ? 'tokens' : 'sistemas';
+  const tabParam = searchParams.get('tab');
+  const tab: IntegrationsTab =
+    tabParam === 'tokens' ? 'tokens' : tabParam === 'logs' ? 'logs' : 'sistemas';
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingIntegration, setEditingIntegration] = useState<ApiIntegration | null>(null);
@@ -153,7 +157,7 @@ export default function IntegrationsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6" data-tour="integrations-page">
       <div>
         <h2 className="text-xl font-semibold">Integrações</h2>
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
@@ -268,8 +272,10 @@ export default function IntegrationsPage() {
                 </div>
               ) : null}
             </div>
-          ) : (
+          ) : tab === 'tokens' ? (
             <ApiKeysPanel />
+          ) : (
+            <IntegrationLogsPanel />
           )}
         </div>
       </div>

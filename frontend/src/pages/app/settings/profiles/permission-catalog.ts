@@ -7,6 +7,7 @@ export const resourceLabels: Record<string, string> = {
   nfse: 'NFS-e',
   nfe_inbound: 'NF-e de entrada',
   integration: 'Integrações',
+  email: 'E-mails',
   webhook: 'Webhooks',
   audit: 'Auditoria',
   document_payload: 'Conteúdo de documentos'

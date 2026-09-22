@@ -1,59 +1,11 @@
 package certificate
 
 import (
-	"crypto/x509"
-	"fmt"
 	"regexp"
 	"strings"
-	"time"
-
-	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
-	"software.sslmate.com/src/go-pkcs12"
 )
 
-// maxPFXSizeBytes bounds the upload: real A1 bundles are a few KB, so
-// anything past this is rejected before it is even parsed.
-const maxPFXSizeBytes = 32 * 1024
-
 var subjectCNPJ = regexp.MustCompile(`(\d{14})\s*$`)
-
-// ParseA1Certificate decodes a PKCS#12 (.pfx/.p12) file with its import
-// password and validates it locally before anything is sent to Key Vault —
-// this fails fast on a wrong password or a non-certificate file, and lets us
-// read display metadata (subject, issuer, validity) from the certificate
-// itself instead of trusting client-supplied fields.
-func ParseA1Certificate(pfx []byte, password string) (*x509.Certificate, error) {
-	if len(pfx) == 0 {
-		return nil, domainerr.Validation("invalid_certificate", "certificate file is required")
-	}
-	if len(pfx) > maxPFXSizeBytes {
-		return nil, domainerr.Validation("invalid_certificate", "certificate file is too large to be a valid A1 certificate")
-	}
-	// DecodeChain, not Decode: a real e-CNPJ PFX from at least one CA
-	// (Certisign) bundles the full chain (leaf + intermediate + root, 3+
-	// safe bags) — both this package's plain Decode and the older
-	// golang.org/x/crypto/pkcs12 (frozen, this file used to import it)
-	// hard-fail with "expected exactly two safe bags" on that shape.
-	// Confirmed against a real LS Mtron Brasil certificate, not assumed.
-	_, cert, _, err := pkcs12.DecodeChain(pfx, password)
-	if err != nil {
-		return nil, domainerr.Validation("invalid_certificate", "could not decode the certificate file — check the file and password")
-	}
-	if cert == nil {
-		return nil, domainerr.Validation("invalid_certificate", "certificate file does not contain a certificate")
-	}
-	if !cert.IsCA && cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return nil, domainerr.Validation("invalid_certificate", "certificate does not support digital signature")
-	}
-	now := time.Now().UTC()
-	if now.After(cert.NotAfter) {
-		return nil, domainerr.Validation("certificate_expired", fmt.Sprintf("certificate expired at %s", cert.NotAfter.Format(time.RFC3339)))
-	}
-	if now.Before(cert.NotBefore) {
-		return nil, domainerr.Validation("certificate_not_yet_valid", fmt.Sprintf("certificate is not valid before %s", cert.NotBefore.Format(time.RFC3339)))
-	}
-	return cert, nil
-}
 
 // CertificateCNPJ extracts the CNPJ embedded in an ICP-Brasil e-CNPJ
 // certificate's Common Name (formatted as "RAZAO SOCIAL:14211858000107").

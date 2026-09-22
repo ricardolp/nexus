@@ -37,6 +37,7 @@ type Config struct {
 	SMTPPassword           string
 	SMTPFrom               string
 	PublicAppURL           string
+	ResendAPIKey           string
 	MailtrapAPIToken       string
 	MailtrapInboxID        string
 	// InternalAPIAllowedCIDRs, when non-empty, restricts internal_api to
@@ -44,44 +45,64 @@ type Config struct {
 	// httpx.DefaultInternalCIDRs", not "no restriction". Comma-separated
 	// via INTERNAL_API_ALLOWED_CIDRS.
 	InternalAPIAllowedCIDRs []string
+	// InternalAPITLSCertFile / InternalAPITLSKeyFile enable HTTPS on internal_api.
+	// InternalAPITLSClientCAFile, when set, requires client certs (mTLS) signed by that CA.
+	InternalAPITLSCertFile     string
+	InternalAPITLSKeyFile      string
+	InternalAPITLSClientCAFile string
+	// SecretsEncryptionKeyPrevious holds prior AES keys (base64, comma-separated)
+	// for decrypt-side rotation of encrypted secrets / local object store.
+	SecretsEncryptionKeyPrevious [][]byte
 	// MetricsAddr is the scrape listen address for Prometheus (e.g. ":9090").
 	// Empty means the process does not open a metrics server — required so
 	// local multi-binary runs do not collide on a shared port.
 	MetricsAddr string
+	// LLM_* configure OpenAI-compatible chat for NFS-e classification suggestions.
+	// When LLMAPIKey is empty the feature is disabled (handlers return 503).
+	LLMAPIKey  string
+	LLMBaseURL string
+	LLMModel   string
 }
 
 func Load() (Config, error) {
 	_ = godotenv.Load()
 
 	cfg := Config{
-		AppEnv:                  getenv("APP_ENV", "development"),
-		HTTPAddr:                getenv("HTTP_ADDR", ":4000"),
-		InboundHTTPAddr:         getenv("INBOUND_HTTP_ADDR", ":4001"),
-		InternalHTTPAddr:        getenv("INTERNAL_HTTP_ADDR", ":4002"),
-		DatabaseURL:             getenv("DATABASE_URL", ""),
-		JWTSecret:               getenv("JWT_SECRET", ""),
-		JWTIssuer:               getenv("JWT_ISSUER", "fiscal-messaging"),
-		JWTAccessTTL:            minutesEnv("JWT_ACCESS_TTL_MINUTES", 15),
-		JWTClientTTL:            minutesEnv("JWT_CLIENT_TTL_MINUTES", 60),
-		StorageBackend:          getenv("STORAGE_BACKEND", "local"),
-		StorageLocalPath:        getenv("STORAGE_LOCAL_PATH", "./data/storage"),
-		BrokerBackend:           getenv("BROKER_BACKEND", "memory"),
-		RabbitMQURL:             getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
-		ObjectStoragePrefix:     getenv("OBJECT_STORAGE_PREFIX", "fiscal"),
-		AzureKeyVaultURL:        getenv("AZURE_KEY_VAULT_URL", ""),
-		CertLocalPath:           getenv("CERT_LOCAL_PATH", "./data/certificates"),
-		NFEGatewayServiceToken:  getenv("NFE_GATEWAY_SERVICE_TOKEN", ""),
-		FiscalProvider:          getenv("FISCAL_PROVIDER", "stub"),
-		SMTPHost:                getenv("SMTP_HOST", ""),
-		SMTPPort:                intEnv("SMTP_PORT", 587),
-		SMTPUsername:            getenvAny("", "SMTP_USERNAME", "SMTP_USER"),
-		SMTPPassword:            getenvAny("", "SMTP_PASSWORD", "SMTP_PASS"),
-		SMTPFrom:                getenv("SMTP_FROM", "Nexus <noreply@nexus.app>"),
-		PublicAppURL:            publicAppURL(),
-		MailtrapAPIToken:        getenv("MAILTRAP_API_TOKEN", ""),
-		MailtrapInboxID:         getenv("MAILTRAP_INBOX_ID", ""),
-		InternalAPIAllowedCIDRs: splitCSV(getenv("INTERNAL_API_ALLOWED_CIDRS", "")),
-		MetricsAddr:             metricsAddr(),
+		AppEnv:                     getenv("APP_ENV", "development"),
+		HTTPAddr:                   getenv("HTTP_ADDR", ":4000"),
+		InboundHTTPAddr:            getenv("INBOUND_HTTP_ADDR", ":4001"),
+		InternalHTTPAddr:           getenv("INTERNAL_HTTP_ADDR", ":4002"),
+		DatabaseURL:                getenv("DATABASE_URL", ""),
+		JWTSecret:                  getenv("JWT_SECRET", ""),
+		JWTIssuer:                  getenv("JWT_ISSUER", "fiscal-messaging"),
+		JWTAccessTTL:               minutesEnv("JWT_ACCESS_TTL_MINUTES", 15),
+		JWTClientTTL:               minutesEnv("JWT_CLIENT_TTL_MINUTES", 60),
+		StorageBackend:             getenv("STORAGE_BACKEND", "local"),
+		StorageLocalPath:           getenv("STORAGE_LOCAL_PATH", "./data/storage"),
+		BrokerBackend:              getenv("BROKER_BACKEND", "memory"),
+		RabbitMQURL:                getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+		ObjectStoragePrefix:        getenv("OBJECT_STORAGE_PREFIX", "fiscal"),
+		AzureKeyVaultURL:           getenv("AZURE_KEY_VAULT_URL", ""),
+		CertLocalPath:              getenv("CERT_LOCAL_PATH", "./data/certificates"),
+		NFEGatewayServiceToken:     getenv("NFE_GATEWAY_SERVICE_TOKEN", ""),
+		FiscalProvider:             getenv("FISCAL_PROVIDER", "stub"),
+		SMTPHost:                   getenv("SMTP_HOST", ""),
+		SMTPPort:                   intEnv("SMTP_PORT", 587),
+		SMTPUsername:               getenvAny("", "SMTP_USERNAME", "SMTP_USER"),
+		SMTPPassword:               getenvAny("", "SMTP_PASSWORD", "SMTP_PASS"),
+		SMTPFrom:                   getenv("SMTP_FROM", "Nexus <noreply@nexus.app>"),
+		PublicAppURL:               publicAppURL(),
+		ResendAPIKey:               getenv("RESEND_API_KEY", ""),
+		MailtrapAPIToken:           getenv("MAILTRAP_API_TOKEN", ""),
+		MailtrapInboxID:            getenv("MAILTRAP_INBOX_ID", ""),
+		InternalAPIAllowedCIDRs:    splitCSV(getenv("INTERNAL_API_ALLOWED_CIDRS", "")),
+		InternalAPITLSCertFile:     getenv("INTERNAL_API_TLS_CERT_FILE", ""),
+		InternalAPITLSKeyFile:      getenv("INTERNAL_API_TLS_KEY_FILE", ""),
+		InternalAPITLSClientCAFile: getenv("INTERNAL_API_TLS_CLIENT_CA_FILE", ""),
+		MetricsAddr:                metricsAddr(),
+		LLMAPIKey:                  getenv("LLM_API_KEY", ""),
+		LLMBaseURL:                 getenv("LLM_API_BASE_URL", "https://api.openai.com"),
+		LLMModel:                   getenv("LLM_MODEL", "gpt-4.1-mini"),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -100,6 +121,16 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("SECRETS_ENCRYPTION_KEY must decode to 32 bytes, got %d", len(key))
 		}
 		cfg.SecretsEncryptionKey = key
+	}
+	for _, part := range splitCSV(getenv("SECRETS_ENCRYPTION_KEY_PREVIOUS", "")) {
+		key, err := base64.StdEncoding.DecodeString(part)
+		if err != nil {
+			return Config{}, fmt.Errorf("SECRETS_ENCRYPTION_KEY_PREVIOUS entry must be base64: %w", err)
+		}
+		if len(key) != 32 {
+			return Config{}, fmt.Errorf("SECRETS_ENCRYPTION_KEY_PREVIOUS entry must decode to 32 bytes, got %d", len(key))
+		}
+		cfg.SecretsEncryptionKeyPrevious = append(cfg.SecretsEncryptionKeyPrevious, key)
 	}
 
 	return cfg, nil

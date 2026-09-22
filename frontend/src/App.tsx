@@ -4,7 +4,9 @@ import { adminNavGroups, userNavGroups } from '@/config/nav-items';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { Providers } from '@/components/layout/providers';
 import { RequireRole } from '@/components/layout/require-role';
+import { RequireOrgService } from '@/components/layout/require-org-service';
 import AdminOverviewPage from '@/pages/admin/overview';
+import AdminOrganizationsPage from '@/pages/admin/organizations';
 import AdminOrganizationPage from '@/pages/admin/organizations/detail';
 import AdminRequestsPage from '@/pages/admin/requests';
 import AdminErrorsPage from '@/pages/admin/errors';
@@ -23,6 +25,10 @@ import FiscalDocumentDetailPage from '@/pages/app/fiscal/fiscal-document-detail-
 import NFePage from '@/pages/app/fiscal/nfe';
 import NFeSaidaPage from '@/pages/app/fiscal/nfe-saida';
 import NFSePage from '@/pages/app/fiscal/nfse';
+import NFSeSaidaPage from '@/pages/app/fiscal/nfse-saida';
+import NFSeSaidaNovaPage from '@/pages/app/fiscal/nfse-saida-nova';
+import NFSeSaidaEmitirPage from '@/pages/app/fiscal/nfse-saida-emitir';
+import EmailsPage from '@/pages/app/emails';
 import CompaniesPage from '@/pages/app/settings/companies';
 import CompanyPage from '@/pages/app/settings/companies/company-page';
 import AccessProfilesPage from '@/pages/app/settings/profiles';
@@ -30,6 +36,9 @@ import IntegrationsPage from '@/pages/app/settings/integrations';
 import LegacyProcessFlowRedirect from '@/pages/app/settings/process-flows/legacy-redirect';
 import ScenarioFormPage from '@/pages/app/settings/integrations/flows/scenario-form-page';
 import OrganizationUsersPage from '@/pages/app/settings/users';
+import MasterDataPartnersPage from '@/pages/app/master-data/partners';
+import MasterDataMaterialsPage from '@/pages/app/master-data/materials';
+import MasterDataMaterialPage from '@/pages/app/master-data/materials/material-page';
 import SignInPage from '@/pages/sign-in';
 import InvitePage from '@/pages/invite';
 import ForgotPasswordPage from '@/pages/forgot-password';
@@ -83,6 +92,7 @@ export default function App() {
           >
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<AdminOverviewPage />} />
+            <Route path="organizations" element={<AdminOrganizationsPage />} />
             <Route path="organizations/:organizationId" element={<AdminOrganizationPage />} />
             <Route path="requests" element={<AdminRequestsPage />} />
             <Route path="errors" element={<AdminErrorsPage />} />
@@ -112,16 +122,34 @@ export default function App() {
           >
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<OverviewPage />} />
+            <Route path="emails" element={<EmailsPage />} />
             <Route path="billing" element={<Navigate to="/app/organization?tab=consumo" replace />} />
             <Route path="profile" element={<ProfilePage />} />
             <Route path="organization" element={<OrganizationPage />} />
             <Route path="help" element={<HelpPage />} />
             <Route path="support" element={<SupportPage initialTab="contact" />} />
-            <Route path="nfe" element={<NFePage />} />
-            <Route path="nfe/saida" element={<NFeSaidaPage />} />
-            <Route path="nfe/:documentId" element={<FiscalDocumentDetailPage />} />
-            <Route path="nfse" element={<NFSePage />} />
-            <Route path="nfse/:documentId" element={<FiscalDocumentDetailPage />} />
+            <Route element={<RequireOrgService service="nfe_inbound" />}>
+              <Route path="nfe" element={<NFePage />} />
+              <Route path="nfe/:documentId" element={<FiscalDocumentDetailPage />} />
+            </Route>
+            <Route element={<RequireOrgService service="nfe_outbound" />}>
+              <Route path="nfe/saida" element={<NFeSaidaPage />} />
+              <Route path="nfe/saida/:documentId" element={<FiscalDocumentDetailPage />} />
+            </Route>
+            <Route element={<RequireOrgService service="nfse_inbound" />}>
+              <Route path="nfse" element={<NFSePage />} />
+              <Route path="nfse/:documentId" element={<FiscalDocumentDetailPage />} />
+            </Route>
+            <Route element={<RequireOrgService service="nfse_outbound" />}>
+              <Route path="nfse/saida" element={<NFSeSaidaPage />} />
+              <Route path="nfse/saida/nova" element={<NFSeSaidaNovaPage />} />
+              <Route path="nfse/saida/nova/emitir" element={<NFSeSaidaEmitirPage />} />
+              <Route path="nfse/saida/:documentId" element={<FiscalDocumentDetailPage />} />
+            </Route>
+            <Route path="master-data" element={<Navigate to="/app/master-data/partners" replace />} />
+            <Route path="master-data/partners" element={<MasterDataPartnersPage />} />
+            <Route path="master-data/materials" element={<MasterDataMaterialsPage />} />
+            <Route path="master-data/materials/:materialId" element={<MasterDataMaterialPage />} />
             <Route path="settings/companies" element={<CompaniesPage />} />
             <Route path="settings/companies/:companyId" element={<CompanyPage />} />
             <Route path="settings/companies/:companyId/process-flows/:scenarioId" element={<ScenarioFormPage />} />
