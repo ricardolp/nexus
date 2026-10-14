@@ -49,6 +49,8 @@ class IpmRetorno:
     situacao_descricao: str = ""
     link_nfse: str = ""
     cod_verificador: str = ""
+    chave_acesso: str = ""
+    ibscbs: dict | None = None
     parse_error: str = ""
 
     @property
@@ -110,6 +112,11 @@ def parse_retorno(content: bytes) -> IpmRetorno:
     out.situacao_descricao = _first_text(root, "situacao_descricao_nfse")
     out.link_nfse = _first_text(root, "link_nfse")
     out.cod_verificador = _first_text(root, "cod_verificador_autenticidade")
+    # NTE 122 v1.7: retorno completo traz a chave da NFS-e no ambiente nacional.
+    out.chave_acesso = "".join(c for c in _first_text(root, "chave_acesso_nfse_nacional") if c.isalnum())
+    from nfe_gateway.nfse.providers.ipm.ibscbs import extract_return_ibscbs
+
+    out.ibscbs = extract_return_ibscbs(root)
     return out
 
 

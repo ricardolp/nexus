@@ -122,13 +122,14 @@ class IpmProvider:
                 "outcome": "authorized",
                 "number": ret.numero_nfse,
                 "verification_code": ret.cod_verificador,
-                "access_key": "",
+                "access_key": ret.chave_acesso,
                 "protocol": emission.identificador,
                 "cstat": "100",
                 "x_motivo": ret.message_text or "NFS-e emitida",
                 "pdf_url": ret.link_nfse,
                 "series": ret.serie_nfse,
                 "_pdf_link": ret.link_nfse,
+                **({"ibscbs": ret.ibscbs} if ret.ibscbs else {}),
             }
 
         if req.homologacao and looks_like_test_validation(ret):

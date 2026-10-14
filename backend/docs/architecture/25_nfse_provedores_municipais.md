@@ -154,9 +154,13 @@ Na IPM, a tag `<identificador>` impede reprocessamento: reenviar o mesmo identif
 |---|---|---|
 | `data_emissao` | `nf/data_fato_gerador` | `dd/mm/aaaa` |
 | `servico.valor_servicos` | `nf/valor_total`, `itens/lista/valor_tributavel` | vírgula decimal |
-| `servico.desconto_incondicionado` | `nf/valor_desconto` | |
+| `servico.desconto_incondicionado` | `itens/lista/valor_desconto_incondicional` | |
+| `servico.desconto_condicionado` | `nf/valor_desconto` | só assinala, não altera a base |
+| `servico.codigo_nbs` | `itens/lista/codigo_nbs` | obrigatório (9 dígitos) |
 | `servico.valor_deducoes` | `itens/lista/valor_deducao` | |
-| `servico.valor_pis/cofins/ir/inss/csll` | `nf/valor_pis` … `valor_contribuicao_social` | informativos na IPM |
+| `servico.valor_ir/inss/csll` | `nf/valor_ir`, `valor_inss`, `valor_contribuicao_social` | retenções informativas |
+| `situacao_tributaria_pis_cofins`, `base_calculo_pis_cofins`, `aliquota_pis`, `aliquota_cofins` | `nf/pis_cofins` (cst, base_calculo, aliquota_pis, aliquota_cofins) | PIS/COFINS próprio (NTE 122 v1.7) |
+| `servico.valor_pis/valor_cofins` | `nf/valor_pis`, `nf/valor_cofins` | só quando `tipo_retencao_pis_cofins = 1` (retenção) |
 | `informacoes_complementares` / `observacao` | `nf/observacao` | até 1000 |
 | `prestador.cnpj`, `prestador.codigo_municipio` | `prestador/cpfcnpj`, `prestador/cidade` | IBGE → **TOM** (`data/ibge_tom.json`) |
 | `tomador.cnpj/cpf/nif` | `tomador/tipo` J/F/E + `cpfcnpj`/`identificador` | |
@@ -170,20 +174,21 @@ Na IPM, a tag `<identificador>` impede reprocessamento: reenviar o mesmo identif
 | `servico.valor_iss_retido` | `valor_issrf` | calculado (base × alíquota) se retido e não informado |
 | `servico.discriminacao` | `itens/lista/descritivo` | até 1000 |
 | `serie_rps`/`numero_rps` | `rps/*` | só com `config.enviar_rps = true` (o município precisa autorizar) |
-| IBS/CBS (`ibs_cbs_*`, `ibs_uf_aliquota`, `ibs_mun_aliquota`, `cbs_aliquota`, `codigo_indicador_operacao`, `finalidade_emissao`) | `nf/IBSCBS` + `IBSCBS` | NTE 122/2025 §3.1; valores calculados pelo adapter com as fórmulas da nota. `config.ibscbs` liga/desliga. |
+| IBS/CBS (`ibs_cbs_situacao_tributaria`, `ibs_cbs_classificacao_tributaria`, `codigo_indicador_operacao`, `finalidade_emissao`, `consumidor_final`, `tipo_operacao`, `imovel`) | `nf/IBSCBS/cLocalidadeIncid` + `nfse/IBSCBS` (finNFSe, indFinal, cIndOp, tpOper, gRefNFSe, imovel, valores/trib/gIBSCBS) | NTE 122/2025 **v1.7**: o XML leva só a classificação; **a IPM calcula** e devolve `nf/IBSCBS` (valores + totCIBS) no retorno completo, repassado ao backend como `ibscbs`. Município de incidência: `servico.codigo_localidade_incidencia`, senão `config.localidade_incidencia`, senão derivado do cIndOp / domicílio do tomador. |
 
 `provider_config` aceito pela IPM:
 
 | Chave | Default | |
 |---|---|---|
-| `base_url` | — | obrigatório; ex.: `https://garuva.atende.net/atende.php?pg=rest&service=WNERestServiceNFSe&cidade=padrao` |
+| `base_url` | — | obrigatório; formato do manual (NTE 35 §3.1): `https://ws-<cidade>.atende.net/?pg=rest&service=WNERestServiceNFSe` (Garuva: `ws-garuva`) |
 | `serie_nfse` | `"1"` | série municipal da NFS-e |
 | `item_lista_format` | `"lc116"` | `lc116` ou `nacional_6` |
 | `assinatura` | `false` | `true` se o município exige XMLDSig (usa o A1 da empresa) |
 | `enviar_rps` | `false` | |
 | `ibscbs` | `true` | envia o bloco quando o payload tem CST/cClassTrib |
 | `timeout_seconds` | `60` | |
-| `file_field` | `"file"` | nome do campo multipart |
+| `file_field` | `"xml"` | nome do campo multipart (exemplo PHP do manual) |
+| `localidade_incidencia` | `""` | `prestador`, `prestacao` ou `tomador` para fixar o cLocalidadeIncid |
 
 ## Cancelamento, consulta e DANFSe
 
@@ -204,6 +209,6 @@ Na IPM, a tag `<identificador>` impede reprocessamento: reenviar o mesmo identif
 
 ## Pendências conhecidas
 
-- Garuva: confirmar com a prefeitura/IPM a URL exata do webservice, se exige assinatura, o formato do código de serviço (6 dígitos segundo a Focus) e se o bloco IBS/CBS já é exigido. A NTE 122/2025 tem divergências entre a especificação (§3.1, seguida aqui) e o XML de exemplo (§3.4).
+- Garuva: URL e autenticação conferidas no manual da prefeitura (NTE 35/2021 v2.8); IBS/CBS conforme NTE 122/2025 v1.7 (12/08/2026). Validar com `nfse_teste` o formato do código de serviço (6 dígitos, segundo a Focus) e a regra de município de incidência para o serviço da LS.
 - Consulta de NFS-e por provedor (`query`) e substituição na IPM ficam para depois; o contrato já prevê `identifies_by` para isso.
 - Tela de configuração no frontend (catálogo + credenciais da empresa).

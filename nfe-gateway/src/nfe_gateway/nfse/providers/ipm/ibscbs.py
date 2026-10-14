@@ -1,26 +1,24 @@
-"""Blocos IBS/CBS do layout IPM (NTE 122/2025, §3.1).
+"""IBS/CBS no layout IPM — NTE 122/2025 v1.7 (12/08/2026).
 
-Diferente da SEFIN Nacional, a IPM **não calcula** o IBS/CBS: o emissor
-manda alíquotas, base e valores, e a IPM confere (erros 00336–00355). Este
-módulo calcula a partir do JSON canônico, com as fórmulas da própria NTE:
+Na emissão o XML leva só a **classificação**; quem calcula base, alíquotas e
+valores é a IPM (como a SEFIN Nacional faz na DPS):
 
-    vBC          = vServ - descIncond - vISSQN - vPIS - vCOFINS   (até 2026)
-                 = vServ - descIncond - vISSQN                    (2027 em diante)
-    pAliqEfet*   = p* × (1 - pRedAliq*)
-    v*           = vBC × pAliqEfet*
-    vDif*        = v* × pDif*
-    vTotNF       = vLiq (2026)  |  vLiq + vCBS + vIBSTot (2027 em diante)
+    <nf><IBSCBS><cLocalidadeIncid/></IBSCBS></nf>          município (IBGE) de incidência
+    <nfse><IBSCBS>                                          depois de </itens>
+        finNFSe, indFinal, cIndOp, [tpOper], [gRefNFSe/refNFSe], [imovel],
+        valores/trib/gIBSCBS/(CST, cClassTrib)
+    </IBSCBS></nfse>
 
-Alíquotas no contrato SAP são percentuais (``ibs_uf_aliquota = 0.1`` → 0,1%),
-igual ao mapper de NF-e (``sefaz/ibscbs_nfe.py``).
+O retorno completo devolve o cálculo em ``nf/IBSCBS`` (valores + totCIBS),
+lido por ``extract_return_ibscbs`` no mesmo formato do ``nfse/retorno.py`` da
+SEFIN, para o backend persistir e devolver no webhook.
 
-A NTE 122/2025 traz um XML de exemplo (§3.4) que diverge da especificação
-(§3.1). Seguimos a §3.1; confirme com ``<nfse_teste>1</nfse_teste>``.
+A v1.0 desta nota (exemplo publicado por algumas prefeituras) pedia que o
+emissor mandasse os valores calculados; a v1.7 não pede mais.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -28,11 +26,8 @@ from lxml import etree
 
 from nfe_gateway.nfse.dps import resolve_c_ind_op
 from nfe_gateway.nfse.providers.payload import PayloadError, digits, text
-from nfe_gateway.sefaz.ibscbs_nfe import _dec, groups_for
 
 _CENT = Decimal("0.01")
-_HUNDRED = Decimal(100)
-_ZERO = Decimal(0)
 
 
 def money(v: Decimal) -> str:
@@ -50,35 +45,6 @@ def rate(v: Decimal) -> str:
     return s.replace(".", ",")
 
 
-@dataclass
-class _Esfera:
-    p: Decimal
-    red: Decimal | None
-    efet: Decimal
-    valor: Decimal
-    p_dif: Decimal | None
-    v_dif: Decimal
-
-
-_KEYS = {
-    "uf": {
-        "p": ("ibs_aliquota_uf", "ibs_uf_aliquota", "ibs_aliquota"),
-        "red": ("ibs_uf_percentual_reducao_aliq", "ibs_uf_percentual_reducao", "ibs_cbs_percentual_reducao"),
-        "dif": ("ibs_uf_percentual_diferimento", "ibs_cbs_percentual_diferimento"),
-    },
-    "mun": {
-        "p": ("ibs_aliquota_mun", "ibs_mun_aliquota"),
-        "red": ("ibs_mun_percentual_reduc_aliq", "ibs_mun_percentual_reducao", "ibs_cbs_percentual_reducao"),
-        "dif": ("ibs_mun_percentual_diferimento", "ibs_cbs_percentual_diferimento"),
-    },
-    "cbs": {
-        "p": ("cbs_aliquota",),
-        "red": ("cbs_percentual_reducao_aliq", "cbs_percentual_reducao", "ibs_cbs_percentual_reducao"),
-        "dif": ("cbs_percentual_diferimento", "ibs_cbs_percentual_diferimento"),
-    },
-}
-
-
 def classification(payload: dict[str, Any], serv: dict[str, Any]) -> tuple[str, str]:
     cst = digits(
         serv.get("ibs_cbs_situacao_tributaria") or payload.get("ibs_cbs_situacao_tributaria")
@@ -92,35 +58,54 @@ def classification(payload: dict[str, Any], serv: dict[str, Any]) -> tuple[str, 
     return cst, c_class
 
 
-def _esfera(sources: dict[str, Any], key: str, vbc: Decimal, groups: dict[str, str]) -> _Esfera:
-    k = _KEYS[key]
-    p = _dec(sources, *k["p"])
-    if p is None:
-        raise PayloadError(f"IBS/CBS: informe a alíquota {k['p'][0]} (percentual, ex.: 0.1 = 0,1%).")
-    red = _dec(sources, *k["red"])
-    want_red = groups.get("gRed") == "obrigatorio" or (red is not None and red != 0)
-    efet = p * (_HUNDRED - red) / _HUNDRED if (want_red and red) else p
-    valor = (vbc * efet / _HUNDRED).quantize(_CENT, rounding=ROUND_HALF_UP)
-    p_dif = _dec(sources, *k["dif"])
-    want_dif = groups.get("gDif") == "obrigatorio"
-    if want_dif and p_dif is None:
-        raise PayloadError(f"IBS/CBS: CST com diferimento exige {k['dif'][0]}.")
-    v_dif = (valor * p_dif / _HUNDRED).quantize(_CENT, rounding=ROUND_HALF_UP) if (want_dif and p_dif) else _ZERO
-    return _Esfera(p=p, red=red if want_red else None, efet=efet, valor=valor,
-                   p_dif=p_dif if want_dif else None, v_dif=v_dif)
+def localidade_incidencia(
+    payload: dict[str, Any],
+    serv: dict[str, Any],
+    *,
+    c_ind_op: str,
+    prestador_ibge: str,
+    servico_ibge: str,
+    tomador_ibge: str,
+    regra: str = "",
+) -> str:
+    """Município (IBGE) de incidência do IBS/CBS — ``nf/IBSCBS/cLocalidadeIncid``.
+
+    1. ``servico.codigo_localidade_incidencia`` explícito no payload;
+    2. ``provider_config.localidade_incidencia`` (prestador | prestacao | tomador);
+    3. derivado do cIndOp (Anexo VII): 02xxxx imóvel → local da prestação;
+       050101 → estabelecimento do fornecedor; 050102 → local da prestação;
+    4. regra geral da LC 214/2025 (art. 11): domicílio do adquirente
+       (tomador), com o município do prestador quando o tomador não tem
+       endereço no Brasil.
+    """
+    explicit = digits(
+        serv.get("codigo_localidade_incidencia")
+        or serv.get("c_localidade_incid")
+        or payload.get("codigo_localidade_incidencia")
+        or payload.get("c_localidade_incid")
+    )
+    if len(explicit) == 7:
+        return explicit
+    by_rule = {"prestador": prestador_ibge, "prestacao": servico_ibge, "tomador": tomador_ibge}
+    if regra in by_rule and len(by_rule[regra]) == 7:
+        return by_rule[regra]
+    if c_ind_op.startswith("02"):
+        return servico_ibge or prestador_ibge
+    if c_ind_op == "050101":
+        return prestador_ibge
+    if c_ind_op == "050102":
+        return servico_ibge or prestador_ibge
+    return tomador_ibge if len(tomador_ibge) == 7 else prestador_ibge
 
 
 def build_blocks(
     payload: dict[str, Any],
     serv: dict[str, Any],
     *,
-    year: int,
-    valor_servicos: Decimal,
-    desconto_incondicionado: Decimal,
-    valor_iss: Decimal,
-    valor_pis: Decimal,
-    valor_cofins: Decimal,
-    valor_liquido: Decimal,
+    prestador_ibge: str,
+    servico_ibge: str,
+    tomador_ibge: str,
+    regra_localidade: str = "",
 ) -> tuple[etree._Element, etree._Element] | None:
     """Retorna (nf/IBSCBS, nfse/IBSCBS) ou None quando não há classificação."""
     cst, c_class = classification(payload, serv)
@@ -136,93 +121,143 @@ def build_blocks(
     if not c_class.startswith(cst):
         raise PayloadError(f"cClassTrib {c_class} não pertence ao CST {cst}.")
 
-    groups = groups_for(cst, c_class)
-    sources = {**payload, **serv}
-
-    explicit_vbc = _dec(sources, "ibs_cbs_base_calculo", "ibs_base_calculo", "cbs_base_calculo")
-    if explicit_vbc is not None and explicit_vbc != 0:
-        vbc = explicit_vbc
-    else:
-        vbc = valor_servicos - desconto_incondicionado - valor_iss
-        if year <= 2026:
-            vbc -= valor_pis + valor_cofins
-    if vbc < 0:
-        raise PayloadError(f"IBS/CBS: base de cálculo negativa ({vbc}).")
-
     c_ind_op, _ = resolve_c_ind_op(payload, serv)
     if not c_ind_op:
         raise PayloadError(
             "cIndOp ausente: com IBS/CBS informado a IPM exige o indicador da operação "
-            "(servico.codigo_indicador_operacao, 6 dígitos)."
+            "(servico.codigo_indicador_operacao, 6 dígitos, Anexo VII da NFS-e Nacional)."
         )
 
-    tributado = "gIBSCBS" in groups
-    uf = mun = cbs = None
-    if tributado:
-        uf = _esfera(sources, "uf", vbc, groups)
-        mun = _esfera(sources, "mun", vbc, groups)
-        cbs = _esfera(sources, "cbs", vbc, groups)
+    local = localidade_incidencia(
+        payload,
+        serv,
+        c_ind_op=c_ind_op,
+        prestador_ibge=prestador_ibge,
+        servico_ibge=servico_ibge,
+        tomador_ibge=tomador_ibge,
+        regra=regra_localidade,
+    )
+    if len(local) != 7:
+        raise PayloadError("Não foi possível definir o município de incidência do IBS/CBS (cLocalidadeIncid).")
 
-    # ----- nf/IBSCBS: valores e totalizadores ---------------------------------
     nf_block = etree.Element("IBSCBS")
-    if tributado:
-        assert uf and mun and cbs
-        valores = etree.SubElement(nf_block, "valores")
-        etree.SubElement(valores, "vBC").text = money(vbc)
-        for tag, esf, p_tag, red_tag, efet_tag in (
-            ("uf", uf, "pIBSUF", "pRedAliqUF", "pAliqEfetUF"),
-            ("mun", mun, "pIBSMun", "pRedAliqMun", "pAliqEfetMun"),
-            ("fed", cbs, "pCBS", "pRedAliqCBS", "pAliqEfetCBS"),
-        ):
-            g = etree.SubElement(valores, tag)
-            etree.SubElement(g, p_tag).text = rate(esf.p)
-            if esf.red is not None:
-                etree.SubElement(g, red_tag).text = rate(esf.red)
-            etree.SubElement(g, efet_tag).text = rate(esf.efet)
+    etree.SubElement(nf_block, "cLocalidadeIncid").text = local
 
-    v_ibs_uf = uf.valor - uf.v_dif if uf else _ZERO
-    v_ibs_mun = mun.valor - mun.v_dif if mun else _ZERO
-    v_cbs = cbs.valor - cbs.v_dif if cbs else _ZERO
-    v_ibs_tot = v_ibs_uf + v_ibs_mun
-    v_tot_nf = valor_liquido if year <= 2026 else valor_liquido + v_cbs + v_ibs_tot
-
-    tot = etree.SubElement(nf_block, "totCIBS")
-    etree.SubElement(tot, "vTotNF").text = money(v_tot_nf)
-    if tributado:
-        g_ibs = etree.SubElement(tot, "gIBS")
-        etree.SubElement(g_ibs, "vIBSTot").text = money(v_ibs_tot)
-        g_uf = etree.SubElement(g_ibs, "gIBSUFTot")
-        etree.SubElement(g_uf, "vDifUF").text = money(uf.v_dif)  # type: ignore[union-attr]
-        etree.SubElement(g_uf, "vIBSUF").text = money(v_ibs_uf)
-        g_mun = etree.SubElement(g_ibs, "gIBSMunTot")
-        etree.SubElement(g_mun, "vDifMun").text = money(mun.v_dif)  # type: ignore[union-attr]
-        etree.SubElement(g_mun, "vIBSMun").text = money(v_ibs_mun)
-        g_cbs = etree.SubElement(tot, "gCBS")
-        etree.SubElement(g_cbs, "vDifCBS").text = money(cbs.v_dif)  # type: ignore[union-attr]
-        etree.SubElement(g_cbs, "vCBS").text = money(v_cbs)
-
-    # ----- nfse/IBSCBS: classificação -----------------------------------------
     root_block = etree.Element("IBSCBS")
     fin = text(payload.get("finalidade_emissao") or payload.get("fin_nfse") or "0")[:1] or "0"
     if fin not in {"0", "1", "2"}:
         raise PayloadError(f"finalidade_emissao (finNFSe) inválida: {fin!r}")
+    ind_final = text(payload.get("consumidor_final") or payload.get("ind_final") or "0")[:1] or "0"
+    if ind_final not in {"0", "1"}:
+        raise PayloadError(f"consumidor_final (indFinal) deve ser 0 ou 1: {ind_final!r}")
     etree.SubElement(root_block, "finNFSe").text = fin
+    etree.SubElement(root_block, "indFinal").text = ind_final
     etree.SubElement(root_block, "cIndOp").text = c_ind_op
-    ente = digits(payload.get("tipo_ente_governamental") or serv.get("tipo_ente_governamental"))
-    if ente:
-        etree.SubElement(root_block, "tpEnteGov").text = ente[:1]
-        if ente[:1] == "9":
-            etree.SubElement(root_block, "xTpEnteGov").text = text(
-                payload.get("descricao_ente_governamental") or serv.get("descricao_ente_governamental")
-            )[:100]
+    tp_oper = digits(serv.get("tipo_operacao") or payload.get("tipo_operacao") or serv.get("tp_oper"))
+    if tp_oper:
+        if tp_oper[:1] not in {"1", "2", "3", "4", "5"}:
+            raise PayloadError(f"tipo_operacao (tpOper) deve ser 1 a 5: {tp_oper!r}")
+        etree.SubElement(root_block, "tpOper").text = tp_oper[:1]
+        ref = text(payload.get("chave_nfse_referenciada") or serv.get("chave_nfse_referenciada"))
+        if ref:
+            g_ref = etree.SubElement(root_block, "gRefNFSe")
+            etree.SubElement(g_ref, "refNFSe").text = "".join(c for c in ref if c.isalnum())[:50]
+    _append_imovel(root_block, payload, serv)
     trib = etree.SubElement(etree.SubElement(root_block, "valores"), "trib")
     g = etree.SubElement(trib, "gIBSCBS")
     etree.SubElement(g, "CST").text = cst
     etree.SubElement(g, "cClassTrib").text = c_class
-    if tributado and groups.get("gDif") == "obrigatorio":
-        gdif = etree.SubElement(g, "gDif")
-        etree.SubElement(gdif, "pDifUF").text = rate(uf.p_dif or _ZERO)  # type: ignore[union-attr]
-        etree.SubElement(gdif, "pDifMun").text = rate(mun.p_dif or _ZERO)  # type: ignore[union-attr]
-        etree.SubElement(gdif, "pDifCBS").text = rate(cbs.p_dif or _ZERO)  # type: ignore[union-attr]
-
     return nf_block, root_block
+
+
+def _append_imovel(parent: etree._Element, payload: dict[str, Any], serv: dict[str, Any]) -> None:
+    """``imovel`` (obrigatório na IPM para cIndOp 020101/020201/020301)."""
+    im = serv.get("imovel") or payload.get("imovel")
+    if not isinstance(im, dict):
+        return
+    el = etree.SubElement(parent, "imovel")
+    insc = text(im.get("inscricao_imobiliaria") or im.get("inscImobFisc"))
+    if insc:
+        etree.SubElement(el, "inscImobFisc").text = insc[:30]
+    cib = text(im.get("cib") or im.get("cCIB"))
+    if cib:
+        etree.SubElement(el, "cCIB").text = cib[:8]
+        return
+    end = im.get("endereco") if isinstance(im.get("endereco"), dict) else im
+    e = etree.SubElement(el, "end")
+    etree.SubElement(e, "CEP").text = digits(end.get("cep"))[:8]
+    etree.SubElement(e, "xLgr").text = text(end.get("logradouro"))[:255]
+    etree.SubElement(e, "nro").text = (text(end.get("numero")) or "SN")[:60]
+    if text(end.get("complemento")):
+        etree.SubElement(e, "xCpl").text = text(end.get("complemento"))[:255]
+    etree.SubElement(e, "xBairro").text = text(end.get("bairro"))[:60]
+
+
+# --------------------------------------------------------------------------- retorno
+
+
+def _local(el: etree._Element) -> str:
+    return etree.QName(el).localname
+
+
+def _child(parent: etree._Element | None, name: str) -> etree._Element | None:
+    if parent is None:
+        return None
+    for c in parent:
+        if isinstance(c.tag, str) and _local(c) == name:
+            return c
+    return None
+
+
+def _txt(parent: etree._Element | None, *names: str) -> str:
+    node = parent
+    for n in names:
+        node = _child(node, n)
+        if node is None:
+            return ""
+    raw = (node.text or "").strip()
+    # IPM usa vírgula decimal; o backend recebe ponto (mesmo formato da SEFIN).
+    if raw and "," in raw and raw.replace(".", "").replace(",", "").lstrip("-").isdigit():
+        raw = raw.replace(".", "").replace(",", ".")
+    return raw
+
+
+def extract_return_ibscbs(root: etree._Element | None) -> dict[str, Any] | None:
+    """IBS/CBS calculado pela IPM (retorno completo), nas chaves do Go
+    ``fiscal.NFSeIBSCBSResult``. None quando o retorno não traz valores."""
+    if root is None:
+        return None
+    nfse = root if _local(root) == "nfse" else _child(root, "nfse")
+    nf = _child(nfse, "nf")
+    ibs = _child(nf, "IBSCBS")
+    if ibs is None:
+        return None
+    valores = _child(ibs, "valores")
+    tot = _child(ibs, "totCIBS")
+    clas = _child(_child(_child(_child(nfse, "IBSCBS"), "valores"), "trib"), "gIBSCBS")
+    out = {
+        "cst": _txt(clas, "CST"),
+        "c_class_trib": _txt(clas, "cClassTrib"),
+        "c_ind_op": _txt(_child(nfse, "IBSCBS"), "cIndOp"),
+        "c_localidade_incid": _txt(ibs, "cLocalidadeIncid"),
+        "v_bc": _txt(valores, "vBC"),
+        "p_ibs_uf": _txt(valores, "uf", "pIBSUF"),
+        "p_red_aliq_uf": _txt(valores, "uf", "pRedAliqUF"),
+        "p_aliq_efet_uf": _txt(valores, "uf", "pAliqEfetUF"),
+        "p_ibs_mun": _txt(valores, "mun", "pIBSMun"),
+        "p_red_aliq_mun": _txt(valores, "mun", "pRedAliqMun"),
+        "p_aliq_efet_mun": _txt(valores, "mun", "pAliqEfetMun"),
+        "p_cbs": _txt(valores, "fed", "pCBS"),
+        "p_red_aliq_cbs": _txt(valores, "fed", "pRedAliqCBS"),
+        "p_aliq_efet_cbs": _txt(valores, "fed", "pAliqEfetCBS"),
+        "v_ibs_uf": _txt(tot, "gIBS", "gIBSUFTot", "vIBSUF"),
+        # NTE v1.7 lista vIBSMun direto em gIBS; aceita também gIBSMunTot.
+        "v_ibs_mun": _txt(tot, "gIBS", "vIBSMun") or _txt(tot, "gIBS", "gIBSMunTot", "vIBSMun"),
+        "v_ibs": _txt(tot, "gIBS", "vIBSTot"),
+        "v_cbs": _txt(tot, "gCBS", "vCBS"),
+        "v_tot_nf": _txt(tot, "vTotNF"),
+    }
+    cleaned = {k: v for k, v in out.items() if v}
+    if not any(k in cleaned for k in ("v_bc", "v_ibs_uf", "v_ibs_mun", "v_ibs", "v_cbs", "v_tot_nf")):
+        return None
+    return cleaned

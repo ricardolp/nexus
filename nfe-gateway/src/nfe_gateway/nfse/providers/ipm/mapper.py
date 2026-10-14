@@ -1,6 +1,7 @@
 """JSON canônico de NFS-e (contrato Focus/SAP) → XML do webservice IPM.
 
-Layout: IPM NTE 35/2021 (emissão/cancelamento) + NTE 122/2025 (IBS/CBS).
+Layout: IPM NTE 35/2021 v2.8 (emissão/cancelamento; manual de Garuva) +
+NTE 122/2025 v1.7 de 12/08/2026 (IBS/CBS, PIS/COFINS próprio, NBS).
 Uma nota por XML, raiz ``<nfse>``, sem namespace, valores com vírgula
 decimal e datas ``dd/mm/aaaa``. Cidades pelo código TOM (não IBGE).
 
@@ -54,8 +55,13 @@ class IpmConfig:
     enviar_rps: bool = False
     ibscbs: bool = True
     timeout_seconds: float = 60.0
-    file_field: str = "file"
+    # Campo multipart do XML: o exemplo PHP da NTE 35 usa "xml" e o roteiro
+    # Postman usa "File"; o webservice lê o arquivo enviado.
+    file_field: str = "xml"
     unidade_codigo: str = ""
+    # Município de incidência do IBS/CBS quando o payload não informa:
+    # "" (derivado do cIndOp / domicílio do tomador) | prestador | prestacao | tomador
+    localidade_incidencia: str = ""
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any] | None) -> IpmConfig:
@@ -64,7 +70,7 @@ class IpmConfig:
         if not base_url:
             raise ProviderConfigError(
                 "provider_config.base_url é obrigatório para o provedor IPM "
-                "(ex.: https://<cidade>.atende.net/atende.php?pg=rest&service=WNERestServiceNFSe&cidade=padrao)."
+                "(ex.: https://ws-<cidade>.atende.net/?pg=rest&service=WNERestServiceNFSe — NTE 35/2021 §3.1)."
             )
         fmt = text(raw.get("item_lista_format") or "lc116")
         if fmt not in {"lc116", "nacional_6"}:
@@ -77,8 +83,9 @@ class IpmConfig:
             enviar_rps=boolish(raw.get("enviar_rps")),
             ibscbs=boolish(raw.get("ibscbs", True)),
             timeout_seconds=float(raw.get("timeout_seconds") or 60),
-            file_field=text(raw.get("file_field") or "file"),
+            file_field=text(raw.get("file_field") or "xml"),
             unidade_codigo=digits(raw.get("unidade_codigo")),
+            localidade_incidencia=text(raw.get("localidade_incidencia")).lower(),
         )
 
 
@@ -216,6 +223,32 @@ def _append_tomador(root: etree._Element, toma: dict[str, Any]) -> None:
         _sub(el, "fone_comercial", fone)
 
 
+def _pis_cofins_rate(value: Any, *, field: str) -> Decimal:
+    """Alíquota de PIS/COFINS em pontos percentuais.
+
+    Fração (0,0065 / 0,03 / 0,076) e percentual (0,65 / 3 / 7,6) não se
+    sobrepõem para PIS/COFINS: abaixo de 0,1 é fração.
+    """
+    d = decimal(value, field=field)
+    return d * 100 if d < Decimal("0.1") else d
+
+
+def _append_pis_cofins(nf: etree._Element, payload: dict[str, Any], serv: dict[str, Any], *, valor_servicos: Decimal) -> None:
+    """``nf/pis_cofins`` (NTE 122 v1.7): CST, base e alíquotas do PIS/COFINS próprio."""
+    cst = digits(serv.get("situacao_tributaria_pis_cofins") or payload.get("situacao_tributaria_pis_cofins"))
+    if not cst:
+        return
+    group = _sub(nf, "pis_cofins")
+    _sub(group, "cst", cst[:2].zfill(2))
+    base_raw = first([serv, payload], "base_calculo_pis_cofins", "base_calculo_pis", "base_pis_cofins")
+    base = decimal(base_raw, field="base_calculo_pis_cofins") if base_raw is not None else valor_servicos
+    _sub(group, "base_calculo", money(base))
+    p_pis = first([serv, payload], "aliquota_pis")
+    p_cofins = first([serv, payload], "aliquota_cofins")
+    _sub(group, "aliquota_pis", rate(_pis_cofins_rate(p_pis, field="aliquota_pis")) if p_pis is not None else "0,00")
+    _sub(group, "aliquota_cofins", rate(_pis_cofins_rate(p_cofins, field="aliquota_cofins")) if p_cofins is not None else "0,00")
+
+
 def content_identifier(document_id: str, xml_without_id: bytes) -> str:
     """``<identificador>``: a IPM não reprocessa um identificador já usado.
 
@@ -266,7 +299,6 @@ def build_emission(
     v_ir = decimal(serv.get("valor_ir"), field="valor_ir")
     v_inss = decimal(serv.get("valor_inss"), field="valor_inss")
     v_csll = decimal(serv.get("valor_csll"), field="valor_csll")
-    outras = decimal(serv.get("outras_retencoes"), field="outras_retencoes")
 
     aliquota = percent_points(serv.get("aliquota"), field="aliquota") if present(serv.get("aliquota")) else None
     iss_retido = boolish(serv.get("iss_retido"))
@@ -304,16 +336,26 @@ def build_emission(
         _sub(rps, "data_emissao_recibo_provisorio", _date(emissao))
         _sub(rps, "hora_emissao_recibo_provisorio", emissao.strftime("%H:%M:%S"))
 
+    retencao_pis_cofins = text(
+        serv.get("tipo_retencao_pis_cofins") or payload.get("tipo_retencao_pis_cofins")
+    ) == "1"
+
     nf = _sub(root, "nf")
     _sub(nf, "serie_nfse", digits(payload.get("serie_nfse")) or cfg.serie_nfse)
     _sub(nf, "data_fato_gerador", _date(emissao))
     _sub(nf, "valor_total", money(valor_servicos))
-    _sub(nf, "valor_desconto", money(desc_incond))
+    # nf/valor_desconto só assinala (não mexe na base): é o condicionado.
+    # O incondicionado vai no item (valor_desconto_incondicional).
+    _sub(nf, "valor_desconto", money(desc_cond))
     _sub(nf, "valor_ir", money(v_ir))
     _sub(nf, "valor_inss", money(v_inss))
     _sub(nf, "valor_contribuicao_social", money(v_csll))
-    _sub(nf, "valor_pis", money(v_pis))
-    _sub(nf, "valor_cofins", money(v_cofins))
+    _append_pis_cofins(nf, payload, serv, valor_servicos=valor_servicos)
+    # NTE 122 v1.7: valor_pis / valor_cofins são só as RETENÇÕES (descontam do
+    # líquido). PIS/COFINS próprio vai em pis_cofins (deduz da base do IBS/CBS).
+    if retencao_pis_cofins:
+        _sub(nf, "valor_pis", money(v_pis))
+        _sub(nf, "valor_cofins", money(v_cofins))
     obs = text(
         first([payload, serv], "informacoes_complementares", "observacao", "observacoes")
     )
@@ -321,25 +363,14 @@ def build_emission(
 
     blocks = None
     if cfg.ibscbs:
-        pis_cofins_retidos = text(
-            serv.get("tipo_retencao_pis_cofins") or payload.get("tipo_retencao_pis_cofins")
-        ) == "1"
-        valor_liquido = (
-            decimal(serv.get("valor_liquido"), field="valor_liquido")
-            if present(serv.get("valor_liquido"))
-            else valor_servicos - desc_incond - desc_cond - v_issrf - v_ir - v_inss - v_csll - outras
-            - ((v_pis + v_cofins) if pis_cofins_retidos else _ZERO)
-        )
+        toma_end = endereco(toma)
         blocks = ipm_ibscbs.build_blocks(
             payload,
             serv,
-            year=emissao.year,
-            valor_servicos=valor_servicos,
-            desconto_incondicionado=desc_incond,
-            valor_iss=valor_iss,
-            valor_pis=v_pis,
-            valor_cofins=v_cofins,
-            valor_liquido=valor_liquido,
+            prestador_ibge=prestador_municipio(payload),
+            servico_ibge=servico_municipio(payload),
+            tomador_ibge=digits(toma_end.get("codigo_municipio")),
+            regra_localidade=cfg.localidade_incidencia,
         )
         if blocks:
             nf.append(blocks[0])
@@ -352,7 +383,6 @@ def build_emission(
 
     itens = _sub(root, "itens")
     lista = _sub(itens, "lista")
-    _sub(lista, "tributa_municipio_prestador", tributa_municipio_prestador(payload, serv))
     _sub(lista, "codigo_local_prestacao_servico", local_tom)
     if cfg.unidade_codigo:
         _sub(lista, "unidade_codigo", cfg.unidade_codigo)
@@ -363,18 +393,29 @@ def build_emission(
         "codigo_item_lista_servico",
         normalize_item_lista(serv.get("item_lista_servico"), fmt=cfg.item_lista_format),
     )
+    nbs = digits(serv.get("codigo_nbs"))
+    if len(nbs) != 9:
+        raise PayloadError(
+            "servico.codigo_nbs é obrigatório na IPM (NBS com 9 dígitos, ex.: 1.1501.10.00); "
+            f"recebido {serv.get('codigo_nbs')!r}."
+        )
+    _sub(lista, "codigo_nbs", nbs)
     atividade = digits(serv.get("codigo_tributario_municipio") or serv.get("codigo_tributacao_municipio"))
     _opt(lista, "codigo_atividade", atividade, 9)
     descritivo = text(serv.get("discriminacao"))
     if not descritivo:
         raise PayloadError("servico.discriminacao é obrigatória")
     _sub(lista, "descritivo", free_text(descritivo)[:1000])
-    if aliquota is not None:
-        _sub(lista, "aliquota_item_lista_servico", rate(aliquota))
+    if aliquota is None:
+        raise PayloadError("servico.aliquota (ISS) é obrigatória na IPM.")
+    _sub(lista, "aliquota_item_lista_servico", rate(aliquota))
     _sub(lista, "situacao_tributaria", situacao_tributaria(payload, serv))
     _sub(lista, "valor_tributavel", money(valor_servicos))
     _sub(lista, "valor_deducao", money(deducoes))
     _sub(lista, "valor_issrf", money(v_issrf))
+    if desc_incond:
+        _sub(lista, "valor_desconto_incondicional", money(desc_incond))
+    _sub(lista, "tributa_municipio_prestador", tributa_municipio_prestador(payload, serv))
 
     if blocks:
         root.append(blocks[1])

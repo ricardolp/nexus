@@ -49,6 +49,9 @@ function Invoke-Step([string]$title, [scriptblock]$body) {
     & $body
 }
 
+# `-Only a,b` via -File chega como uma string so; aceita virgulas.
+if ($Only) { $Only = @($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+
 $failed = @()
 try {
     Set-Location $repo

@@ -74,6 +74,7 @@ def _payload(**over: Any) -> dict[str, Any]:
             "codigo_tributario_municipio": "691250000",
             "discriminacao": "Assessoria contábil 10/2026",
             "codigo_municipio": GARUVA,
+            "codigo_nbs": "1.1501.10.00",
         },
     }
     for key, value in over.items():
@@ -198,35 +199,77 @@ def test_config_requires_base_url():
 # --------------------------------------------------------------------------- IBS/CBS
 
 
-def test_ibscbs_blocks_follow_nte_122_formulas():
+def _ibscbs_payload(**serv: Any) -> dict[str, Any]:
     p = _payload()
     p["servico"].update(
         {
-            "valor_pis": 6.5,
-            "valor_cofins": 30,
             "ibs_cbs_situacao_tributaria": "000",
             "ibs_cbs_classificacao_tributaria": "000001",
             "codigo_indicador_operacao": "100301",
-            "ibs_uf_aliquota": 0.1,
-            "ibs_mun_aliquota": 0,
-            "cbs_aliquota": 0.9,
+            **serv,
         }
     )
-    root = build_emission(p, _cfg(), homologacao=False).root
-    # vBC = 1000 - 0 - ISS 20 - PIS 6,50 - COFINS 30 (2026)
-    assert _text(root, "nf/IBSCBS/valores/vBC") == "943,50"
-    assert _text(root, "nf/IBSCBS/valores/uf/pIBSUF") == "0,10"
-    assert _text(root, "nf/IBSCBS/valores/fed/pAliqEfetCBS") == "0,90"
-    assert _text(root, "nf/IBSCBS/totCIBS/gIBS/gIBSUFTot/vIBSUF") == "0,94"
-    assert _text(root, "nf/IBSCBS/totCIBS/gCBS/vCBS") == "8,49"
-    assert _text(root, "nf/IBSCBS/totCIBS/gIBS/vIBSTot") == "0,94"
-    # 2026: vTotNF = vLiq
-    assert _text(root, "nf/IBSCBS/totCIBS/vTotNF") == "1000,00"
+    return p
+
+
+def test_ibscbs_v17_sends_only_classification_and_incidence():
+    """NTE 122 v1.7: a IPM calcula; o XML leva só cLocalidadeIncid + classificação."""
+    root = build_emission(_ibscbs_payload(), _cfg(), homologacao=False).root
+    nf_ibs = root.find("nf/IBSCBS")
+    assert [c.tag for c in nf_ibs] == ["cLocalidadeIncid"]
+    # Regra geral (LC 214 art. 11): domicílio do tomador (Joinville).
+    assert _text(root, "nf/IBSCBS/cLocalidadeIncid") == JOINVILLE
+    assert [c.tag for c in root.find("IBSCBS")] == ["finNFSe", "indFinal", "cIndOp", "valores"]
+    assert _text(root, "IBSCBS/indFinal") == "0"
     assert _text(root, "IBSCBS/cIndOp") == "100301"
     assert _text(root, "IBSCBS/valores/trib/gIBSCBS/CST") == "000"
-    # Ordem: nf/IBSCBS dentro de nf; nfse/IBSCBS depois de itens.
+    assert _text(root, "IBSCBS/valores/trib/gIBSCBS/cClassTrib") == "000001"
     tags = [c.tag for c in root]
     assert tags.index("IBSCBS") > tags.index("itens")
+    assert root.find("nf/IBSCBS/valores") is None
+
+
+def test_incidence_rules():
+    explicit = _ibscbs_payload(codigo_localidade_incidencia="4202909")
+    assert _text(build_emission(explicit, _cfg(), homologacao=False).root, "nf/IBSCBS/cLocalidadeIncid") == "4202909"
+    by_cfg = build_emission(_ibscbs_payload(), _cfg(localidade_incidencia="prestador"), homologacao=False).root
+    assert _text(by_cfg, "nf/IBSCBS/cLocalidadeIncid") == GARUVA
+    imovel = _ibscbs_payload(codigo_indicador_operacao="020101")
+    assert _text(build_emission(imovel, _cfg(), homologacao=False).root, "nf/IBSCBS/cLocalidadeIncid") == GARUVA
+
+
+def test_pis_cofins_own_vs_retained():
+    own = _payload()
+    own["servico"].update(
+        {"situacao_tributaria_pis_cofins": "01", "tipo_retencao_pis_cofins": "0",
+         "aliquota_pis": 0.0065, "aliquota_cofins": 3, "valor_pis": 6.5, "valor_cofins": 30}
+    )
+    root = build_emission(own, _cfg(), homologacao=False).root
+    assert _text(root, "nf/pis_cofins/cst") == "01"
+    assert _text(root, "nf/pis_cofins/base_calculo") == "1000,00"
+    assert _text(root, "nf/pis_cofins/aliquota_pis") == "0,65"
+    assert _text(root, "nf/pis_cofins/aliquota_cofins") == "3,00"
+    assert root.find("nf/valor_pis") is None  # próprio não é retenção
+    retido = _payload()
+    retido["servico"].update({"tipo_retencao_pis_cofins": "1", "valor_pis": 6.5, "valor_cofins": 30})
+    root = build_emission(retido, _cfg(), homologacao=False).root
+    assert _text(root, "nf/valor_pis") == "6,50"
+    assert _text(root, "nf/valor_cofins") == "30,00"
+
+
+def test_nbs_is_required():
+    p = _payload()
+    p["servico"].pop("codigo_nbs")
+    with pytest.raises(PayloadError, match="codigo_nbs"):
+        build_emission(p, _cfg(), homologacao=False)
+
+
+def test_unconditional_discount_goes_to_item():
+    p = _payload()
+    p["servico"].update({"desconto_incondicionado": 50, "desconto_condicionado": 10})
+    root = build_emission(p, _cfg(), homologacao=False).root
+    assert _text(root, "itens/lista/valor_desconto_incondicional") == "50,00"
+    assert _text(root, "nf/valor_desconto") == "10,00"
 
 
 def test_ibscbs_can_be_disabled_per_municipality():
@@ -257,11 +300,22 @@ def test_ibscbs_requires_cindop():
 
 SUCESSO = """<?xml version="1.0" encoding="ISO-8859-1"?>
 <retorno><mensagem><codigo>00001 - Sucesso</codigo></mensagem>
+<nfse><identificador>nexus-x</identificador><nf>
 <numero_nfse>457</numero_nfse><serie_nfse>1</serie_nfse><data_nfse>14/10/2026</data_nfse>
 <hora_nfse>10:31:02</hora_nfse><situacao_codigo_nfse>1</situacao_codigo_nfse>
 <situacao_descricao_nfse>Emitida</situacao_descricao_nfse>
 <link_nfse>https://garuva.atende.net/autoatendimento/servicos/nfse?pdf=abc</link_nfse>
-<cod_verificador_autenticidade>ABCD1234EFGH</cod_verificador_autenticidade></retorno>""".encode("latin-1")
+<cod_verificador_autenticidade>ABCD1234EFGH</cod_verificador_autenticidade>
+<chave_acesso_nfse_nacional>42058032212345678000123000000000045726101234567890</chave_acesso_nfse_nacional>
+<IBSCBS><cLocalidadeIncid>4209102</cLocalidadeIncid>
+<valores><vBC>943,50</vBC><uf><pIBSUF>0,10</pIBSUF><pAliqEfetUF>0,10</pAliqEfetUF></uf>
+<mun><pIBSMun>0,00</pIBSMun><pAliqEfetMun>0,00</pAliqEfetMun></mun>
+<fed><pCBS>0,90</pCBS><pAliqEfetCBS>0,90</pAliqEfetCBS></fed></valores>
+<totCIBS><vTotNF>1.000,00</vTotNF><gIBS><vIBSTot>0,94</vIBSTot><gIBSUFTot><vDifUF>0,00</vDifUF><vIBSUF>0,94</vIBSUF></gIBSUFTot>
+<vIBSMun>0,00</vIBSMun></gIBS><gCBS><vCBS>8,49</vCBS></gCBS></totCIBS></IBSCBS>
+</nf>
+<IBSCBS><finNFSe>0</finNFSe><cIndOp>100301</cIndOp><valores><trib><gIBSCBS><CST>000</CST><cClassTrib>000001</cClassTrib></gIBSCBS></trib></valores></IBSCBS>
+</nfse></retorno>""".encode("latin-1")
 
 ERRO = """<retorno><mensagem><codigo>00052 - Item da lista de serviço inválido.</codigo>
 <codigo>00030 - Alíquota inválida.</codigo></mensagem></retorno>""".encode()
@@ -329,7 +383,12 @@ def test_emit_authorized(monkeypatch):
     assert result["outcome"] == "authorized"
     assert result["number"] == "457"
     assert result["verification_code"] == "ABCD1234EFGH"
-    assert result["access_key"] == ""
+    assert result["access_key"] == "42058032212345678000123000000000045726101234567890"
+    assert result["ibscbs"]["v_bc"] == "943.50"
+    assert result["ibscbs"]["v_cbs"] == "8.49"
+    assert result["ibscbs"]["v_tot_nf"] == "1000.00"
+    assert result["ibscbs"]["c_localidade_incid"] == JOINVILLE
+    assert result["ibscbs"]["cst"] == "000"
     assert result["pdf_url"].startswith("https://")
     assert rec.calls[0]["url"] == URL
     assert rec.calls[0]["credentials"] is CREDS
