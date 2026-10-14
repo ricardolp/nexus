@@ -1,0 +1,247 @@
+{
+  "info": {
+    "_postman_id": "78f80304-be70-4672-a121-639782aa07db",
+    "name": "Nexus — NFS-e Garuva (IPM) QAS",
+    "description": "Fluxo completo de NFS-e de saída pela API para Garuva/SC, provedor IPM (Atende.Net), em QAS.\n\nEmpresa: LS MTRON (CNPJ 13677964000200, IM 13942). Payload espelha a NFS-e 916 de produção (LS → SOTREQ, serviço 14.01, R$ 540,53, ISS 2%, NBS 1.2002.90.00, cIndOp 050101, CST IBS/CBS 000/000001, PIS/COFINS 01).\n\n**Ordem:** 1 (emitir) → acompanhar no portal → 2/3 (XML/PDF, só em emissão real). A pasta *Opcional* tem a consulta por API, que exige Bearer.\n\n**Antes de rodar:**\n- Credenciais da prefeitura salvas na aba *NFS-e municipal* da empresa LS (usuário = CNPJ, senha do portal).\n- `x_org_token` da organização no environment (o mesmo do SAP), de um cliente com escopo `fiscal_documents:outbound:create`.\n- No portal de Garuva: habilitar *Utiliza Retorno Completo na Importação de XML*.\n\n**Teste vs. real:** se a empresa estiver em homologação (ou `SEFAZ_FORCE_HOMOLOGACAO=true` no nfe_gateway), o XML vai com `<nfse_teste>1</nfse_teste>`: a IPM só valida e **não emite** — o documento termina rejeitado com código `homologacao_validada` e a mensagem da IPM dizendo que a nota é válida. Isso é o sucesso esperado em QAS. Em produção a nota é emitida de verdade.\n\n`data_emissao` e `numero_rps` são gerados a cada envio pelo pre-request do passo 1.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Emitir NFS-e Garuva (LS → SOTREQ)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// data/hora atual em -03:00 e RPS único a cada envio",
+              "const d = new Date(Date.now() - 3*3600*1000);",
+              "const p = n => String(n).padStart(2, '0');",
+              "const iso = `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}-03:00`;",
+              "pm.environment.set('data_emissao', iso);",
+              "pm.environment.set('numero_rps', '9' + String(Date.now()).slice(-7));",
+              "pm.environment.set('idempotency_key', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('aceito (202)', () => pm.response.to.have.status(202));",
+              "const j = pm.response.json();",
+              "pm.environment.set('document_id', j.document_id);",
+              "console.log('document_id:', j.document_id, '| trace_id:', j.trace_id, '| status:', j.status);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idempotency_key}}"
+          },
+          {
+            "key": "X-Org-Token",
+            "value": "{{x_org_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"data_emissao\": \"{{data_emissao}}\",\n  \"natureza_operacao\": \"1\",\n  \"regime_especial_tributacao\": \"0\",\n  \"optante_simples_nacional\": false,\n  \"serie_rps\": \"1\",\n  \"numero_rps\": \"{{numero_rps}}\",\n  \"indicador_destinatario\": \"0\",\n  \"consumidor_final\": \"0\",\n  \"finalidade_emissao\": \"0\",\n  \"percentual_total_tributos_fed\": 13.45,\n  \"percentual_total_tributos_est\": 0,\n  \"percentual_total_tributos_mun\": 4.69,\n  \"prestador\": {\n    \"cnpj\": \"13677964000200\",\n    \"inscricao_municipal\": \"13942\",\n    \"codigo_municipio\": \"4205803\"\n  },\n  \"tomador\": {\n    \"cnpj\": \"34151100000130\",\n    \"razao_social\": \"SOTREQ SA\",\n    \"endereco\": {\n      \"logradouro\": \"AVENIDA rod. anhanguera km 111,5\",\n      \"numero\": \"00\",\n      \"bairro\": \"vila nova veneza\",\n      \"codigo_municipio\": \"3552403\",\n      \"uf\": \"SP\",\n      \"cep\": \"13178447\"\n    }\n  },\n  \"servico\": {\n    \"valor_servicos\": 540.53,\n    \"iss_retido\": false,\n    \"aliquota\": 2.0,\n    \"valor_iss\": 10.81,\n    \"item_lista_servico\": \"14.01\",\n    \"discriminacao\": \"TESTE QAS NEXUS - REPARAR POR GARANTIA MOTOR REF. PEDIDO DE COMPRA: 4502629132| Caso CS 66063| Chassi: 9BLP08001SG000141\",\n    \"codigo_municipio\": \"4205803\",\n    \"codigo_nbs\": \"1.2002.90.00\",\n    \"codigo_indicador_operacao\": \"050101\",\n    \"codigo_municipio_incidencia\": \"4205803\",\n    \"ibs_cbs_situacao_tributaria\": \"000\",\n    \"ibs_cbs_classificacao_tributaria\": \"000001\",\n    \"situacao_tributaria_pis_cofins\": \"01\",\n    \"base_calculo_pis_cofins\": 540.53,\n    \"aliquota_pis\": 1.65,\n    \"aliquota_cofins\": 7.6,\n    \"valor_pis\": 8.92,\n    \"valor_cofins\": 41.08,\n    \"tipo_retencao_pis_cofins\": \"0\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{base_inbound}}/v1/fiscal_documents/nfse",
+        "description": "Auth: header `X-Org-Token` (o mesmo usado no SAP). Escopo do cliente: `fiscal_documents:outbound:create`.\n\nContrato canônico (espelho Focus/SAP). A rota IPM é escolhida pelo município do prestador (4205803 → Garuva → `ipm`). O pre-request gera data, RPS e Idempotency-Key novos a cada envio.\n\nO resultado aparece no portal Nexus (Documentos fiscais) em poucos segundos — a IPM é síncrona."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Download XML de retorno da IPM",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('XML', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Org-Token",
+            "value": "{{x_org_token}}"
+          }
+        ],
+        "url": "{{base_inbound}}/v1/nfse/documents/sap/{{document_id}}/xml",
+        "description": "XML devolvido pela IPM (retorno completo, com `chave_acesso_nfse_nacional` e o grupo IBSCBS calculado).\n\nAuth: `X-Org-Token`.\n\nEm QAS (modo teste) não há nota emitida, então este passo e o 3 só funcionam em emissão real; o resultado da validação fica no portal."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Download DANFSe (PDF da IPM)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('PDF', () => { pm.response.to.have.status(200); pm.expect(pm.response.headers.get('Content-Type') || '').to.include('pdf'); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Org-Token",
+            "value": "{{x_org_token}}"
+          }
+        ],
+        "url": "{{base_inbound}}/v1/nfse/documents/sap/{{document_id}}/danfe",
+        "description": "Só existe para nota emitida de verdade. Devolve o PDF oficial baixado do link da IPM. Use **Send and Download**.\n\nAuth: `X-Org-Token`."
+      },
+      "response": []
+    },
+    {
+      "name": "Opcional — consulta via Bearer",
+      "description": "A consulta (`GET /v1/fiscal_documents/{id}` e `/timeline`) só aceita Bearer, não aceita `X-Org-Token`. Para usar: preencha `client_id`/`client_secret`, rode o Token e depois as consultas.",
+      "item": [
+        {
+          "name": "Token (client_credentials)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('token emitido', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.environment.set('access_token', j.access_token);",
+                  "console.log('token expira em', j.expires_in, 's');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grant_type\": \"client_credentials\",\n  \"client_id\": \"{{client_id}}\",\n  \"client_secret\": \"{{client_secret}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{base_inbound}}/v1/oauth/token",
+            "description": "Gera o Bearer usado nos passos 2 a 4 e grava em `access_token`."
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar documento",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.test('documento encontrado', () => pm.response.to.have.status(200));",
+                  "console.log('status:', j.status, '| numero:', j.numero, '| cod. verificação:', j.codigo_verificacao, '| provedor:', j.nfse_provider);",
+                  "if (j.url) console.log('link IPM:', j.url);",
+                  "if (j.chave_acesso) pm.environment.set('chave_nfse', j.chave_acesso);",
+                  "const s = String(j.status || '').toLowerCase();",
+                  "pm.test('status final (autorizado/rejeitado) — se ainda estiver processando, envie de novo', () => pm.expect(s).to.match(/authorized|rejected|failed|cancel/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_inbound}}/v1/fiscal_documents/{{document_id}}",
+            "description": "A IPM é síncrona, então o resultado costuma sair em poucos segundos. Campos úteis: `status`, `numero`, `codigo_verificacao`, `url` (link da nota na IPM), `nfse_provider` (= `ipm`) e, em caso de rejeição, a mensagem da prefeitura."
+          },
+          "response": []
+        },
+        {
+          "name": "Timeline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('timeline', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_inbound}}/v1/fiscal_documents/{{document_id}}/timeline",
+            "description": "Eventos do documento: recebido → enviado ao gateway → resultado da IPM."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

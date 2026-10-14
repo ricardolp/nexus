@@ -1,0 +1,52 @@
+{
+  "data_emissao": "2026-10-14T19:00:00-03:00",
+  "natureza_operacao": "1",
+  "regime_especial_tributacao": "0",
+  "optante_simples_nacional": false,
+  "serie_rps": "1",
+  "numero_rps": "900001",
+  "indicador_destinatario": "0",
+  "consumidor_final": "0",
+  "finalidade_emissao": "0",
+  "percentual_total_tributos_fed": 13.45,
+  "percentual_total_tributos_est": 0,
+  "percentual_total_tributos_mun": 4.69,
+  "prestador": {
+    "cnpj": "13677964000200",
+    "inscricao_municipal": "13942",
+    "codigo_municipio": "4205803"
+  },
+  "tomador": {
+    "cnpj": "34151100000130",
+    "razao_social": "SOTREQ SA",
+    "endereco": {
+      "logradouro": "AVENIDA rod. anhanguera km 111,5",
+      "numero": "00",
+      "bairro": "vila nova veneza",
+      "codigo_municipio": "3552403",
+      "uf": "SP",
+      "cep": "13178447"
+    }
+  },
+  "servico": {
+    "valor_servicos": 540.53,
+    "iss_retido": false,
+    "aliquota": 2.00,
+    "valor_iss": 10.81,
+    "item_lista_servico": "14.01",
+    "discriminacao": "TESTE QAS NEXUS - REPARAR POR GARANTIA MOTOR REF. PEDIDO DE COMPRA: 4502629132| Caso CS 66063| Chassi: 9BLP08001SG000141",
+    "codigo_municipio": "4205803",
+    "codigo_nbs": "1.2002.90.00",
+    "codigo_indicador_operacao": "050101",
+    "codigo_municipio_incidencia": "4205803",
+    "ibs_cbs_situacao_tributaria": "000",
+    "ibs_cbs_classificacao_tributaria": "000001",
+    "situacao_tributaria_pis_cofins": "01",
+    "base_calculo_pis_cofins": 540.53,
+    "aliquota_pis": 1.65,
+    "aliquota_cofins": 7.60,
+    "valor_pis": 8.92,
+    "valor_cofins": 41.08,
+    "tipo_retencao_pis_cofins": "0"
+  }
+}

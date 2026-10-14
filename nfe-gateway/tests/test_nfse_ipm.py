@@ -680,3 +680,25 @@ async def test_event_worker_legacy_nfse_cancel_goes_to_sefin(monkeypatch):
     assert seen == {"access_key": chave, "pfx": b"pfx"}
     assert backend.signing_calls == 1
     assert backend.credential_calls == []
+
+
+def test_garuva_ls_production_case_maps_like_the_issued_nfse():
+    """Payload espelho da NFS-e 916 de produção (LS → SOTREQ, 14.01, Garuva)."""
+    import pathlib
+
+    fixture = pathlib.Path(__file__).parent / "fixtures" / "nfse_garuva_ls_qas.json"
+    payload = json.loads(fixture.read_text(encoding="utf-8"))
+    root = build_emission(payload, _cfg(), homologacao=True, document_id="qas").root
+    assert _text(root, "nfse_teste") == "1"
+    assert _text(root, "prestador/cidade") == "8115"
+    assert _text(root, "tomador/cidade") == ibge_to_tom("3552403")
+    assert _text(root, "itens/lista/codigo_item_lista_servico") == "140101"
+    assert _text(root, "itens/lista/codigo_nbs") == "120029000"
+    assert _text(root, "itens/lista/aliquota_item_lista_servico") == "2,00"
+    assert _text(root, "itens/lista/valor_tributavel") == "540,53"
+    assert _text(root, "nf/pis_cofins/aliquota_pis") == "1,65"
+    assert _text(root, "nf/pis_cofins/aliquota_cofins") == "7,60"
+    assert root.find("nf/valor_pis") is None
+    # Mesmo cLocIncid da nota de produção.
+    assert _text(root, "nf/IBSCBS/cLocalidadeIncid") == GARUVA
+    assert _text(root, "IBSCBS/cIndOp") == "050101"

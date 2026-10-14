@@ -70,7 +70,7 @@ def localidade_incidencia(
 ) -> str:
     """Município (IBGE) de incidência do IBS/CBS — ``nf/IBSCBS/cLocalidadeIncid``.
 
-    1. ``servico.codigo_localidade_incidencia`` explícito no payload;
+    1. ``servico.codigo_municipio_incidencia`` (contrato SAP) explícito no payload;
     2. ``provider_config.localidade_incidencia`` (prestador | prestacao | tomador);
     3. derivado do cIndOp (Anexo VII): 02xxxx imóvel → local da prestação;
        050101 → estabelecimento do fornecedor; 050102 → local da prestação;
@@ -79,8 +79,10 @@ def localidade_incidencia(
        endereço no Brasil.
     """
     explicit = digits(
-        serv.get("codigo_localidade_incidencia")
+        serv.get("codigo_municipio_incidencia")  # nome do contrato SAP
+        or serv.get("codigo_localidade_incidencia")
         or serv.get("c_localidade_incid")
+        or payload.get("codigo_municipio_incidencia")
         or payload.get("codigo_localidade_incidencia")
         or payload.get("c_localidade_incid")
     )
