@@ -6,8 +6,8 @@ NOT the legacy DRC VALUES.* shape.
 
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
+from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from lxml import etree
@@ -23,8 +23,24 @@ from nfe_gateway.sefaz.contingency import (
     resolve_tp_emis,
     requires_dhcont_xjust,
 )
+from nfe_gateway.sefaz.cnpj_doc import CnpjDocError, normalize_cnpj, normalize_cpf
 from nfe_gateway.sefaz.environment import HOMOLOGACAO_DISCLAIMER
+from nfe_gateway.sefaz.ibscbs_nfe import IbsCbsMapperError
+from nfe_gateway.sefaz.referencias_nfe import ReferenciaMapperError
 from nfe_gateway.sefaz.xml_patches import apply_all_patches
+
+# NT 2018.003 — software house that emits the NF-e. TO rejects with cStat 972
+# when infRespTec is absent. Same block GRC sends for this emitter.
+_RESPONSAVEL_TECNICO = {
+    "cnpj": "35934186000130",
+    "contato": "Nova Consultoria em Tecnologia da Informacao Ltda",
+    "email": "ti@novaconsulting.com.br",
+    "fone": "4199999999",
+}
+
+
+_BRASILIA_TZ = timezone(timedelta(hours=-3))
+_EMISSION_CLOCK_MARGIN = timedelta(seconds=60)
 
 
 class SapNfeMapperError(ValueError):
@@ -42,7 +58,10 @@ def build_unsigned_xml(sap_json: dict, *, homologacao: bool) -> etree._Element:
     xml = serializer.exportar()
     if isinstance(xml, (bytes, str)):
         xml = etree.fromstring(xml if isinstance(xml, bytes) else xml.encode("utf-8"))
-    xml = apply_all_patches(xml, sap_json)
+    try:
+        xml = apply_all_patches(xml, sap_json)
+    except (IbsCbsMapperError, ReferenciaMapperError) as exc:
+        raise SapNfeMapperError(str(exc)) from exc
     # Stable default xmlns before validate/sign (tree rebuild — no string xmlns hacks).
     from nfe_gateway.sefaz.assinatura import normalize_nfe_namespaces
 
@@ -57,18 +76,18 @@ def _build_nota_fiscal(sap: dict, homologacao: bool) -> NotaFiscal:
 
     nf.modelo = 55
     nf.uf = _parse_str(sap, "uf_emitente")
-    nf.numero_nf = _parse_int(sap, "numero")
-    nf.serie = _parse_str(sap, "serie")
+    # XSD TNF: [1-9][0-9]{0,8} — SEFAZ cStat 215 rejects nNF=0.
+    nf.numero_nf = _parse_nfe_number(sap, "numero")
+    # XSD TSerie is "0" or 1–999 without leading zeros. SAP/GRC store "000";
+    # the access key still zero-pads to 3 digits (PyNFe zfill).
+    nf.serie = format_nfe_serie(_parse_str(sap, "serie"))
     nf.natureza_operacao = _parse_str(sap, "natureza_operacao")
     nf.tipo_documento = _parse_int(sap, "tipo_documento")
-    nf.data_emissao = _parse_datetime(sap, "data_emissao")
-    nf.data_saida_entrada = _parse_datetime(sap, "data_entrada_saida", required=False) or nf.data_emissao
-
-    # Strip tzinfo — PyNFe serialização expects naive Brasília datetime
-    if nf.data_emissao and getattr(nf.data_emissao, "tzinfo", None):
-        nf.data_emissao = nf.data_emissao.replace(tzinfo=None)
-    if nf.data_saida_entrada and getattr(nf.data_saida_entrada, "tzinfo", None):
-        nf.data_saida_entrada = nf.data_saida_entrada.replace(tzinfo=None)
+    # PyNFe writes dhEmi/dhSaiEnt offset from data_emissao's tzinfo and falls
+    # back to the host timezone when naive — keep both aware in Brasília time.
+    nf.data_emissao = _clamp_future_emission(_to_brasilia(_parse_datetime(sap, "data_emissao")))
+    dh_sai_ent = _parse_datetime(sap, "data_entrada_saida", required=False)
+    nf.data_saida_entrada = _to_brasilia(dh_sai_ent) if dh_sai_ent else nf.data_emissao
 
     if _get(sap, "codigo_unico") is not None:
         # PyNFe field for cNF
@@ -93,7 +112,9 @@ def _build_nota_fiscal(sap: dict, homologacao: bool) -> NotaFiscal:
     nf.indicador_presencial = _parse_int(sap, "presenca_comprador", default=1)
     nf.indicador_destino = _parse_int(sap, "local_destino", default=1)
     nf.processo_emissao = 0
-    nf.formato_impressao_danfe = 1
+    # PyNFe writes ide/tpImp from tipo_impressao_danfe (default 0, which the
+    # SEFAZ schema rejects). GRC sends 1 = DANFE retrato.
+    nf.tipo_impressao_danfe = 1
 
     cmun = _resolve_emitente_ibge(sap)
     if cmun:
@@ -129,14 +150,7 @@ def _build_nota_fiscal(sap: dict, homologacao: bool) -> NotaFiscal:
     nf.icms_base_calculo = _parse_decimal(sap, "icms_base_calculo", default=Decimal("0"))
     nf.icms_valor_total = _parse_decimal(sap, "icms_valor_total", default=Decimal("0"))
 
-    # Reforma totals (do NOT add to vNF)
-    _set_if_attr(nf, "totais_vbc_ibscbs", _opt_decimal(sap, "ibs_base_calculo") or _opt_decimal(sap, "cbs_base_calculo"))
-    _set_if_attr(nf, "totais_ibs_uf", _opt_decimal(sap, "ibs_uf_valor_total"))
-    _set_if_attr(nf, "totais_ibs_mun", _opt_decimal(sap, "ibs_mun_valor_total"))
-    _set_if_attr(nf, "totais_ibs", _opt_decimal(sap, "ibs_valor_total"))
-    _set_if_attr(nf, "totais_cbs", _opt_decimal(sap, "cbs_valor_total"))
-
-    if _get(sap, "modalidade_frete") is not None:
+    if _get(sap, "modalidade_frete") is not None and str(_get(sap, "modalidade_frete")).strip() != "":
         nf.modalidade_frete = _parse_int(sap, "modalidade_frete")
 
     info_contrib = (
@@ -157,6 +171,14 @@ def _build_nota_fiscal(sap: dict, homologacao: bool) -> NotaFiscal:
     if not items:
         raise SapNfeMapperError("items[] is required and cannot be empty")
 
+    # Reforma totals (IBSCBSTot) are rebuilt from the items by
+    # sefaz/ibscbs_nfe.py — SAP header totals are not trusted for the XML.
+
+    nf.adicionar_responsavel_tecnico(**_RESPONSAVEL_TECNICO)
+    _map_fatura(nf, sap)
+    _map_autorizados(nf, sap)
+    _map_tributos_aproximados(nf, sap)
+
     # Upstream PyNFe (main) serializes valor_tributos_aprox but the entity
     # field is missing on some commits — set a safe default so exportar works.
     for prod in getattr(nf, "produtos_e_servicos", []) or []:
@@ -166,11 +188,53 @@ def _build_nota_fiscal(sap: dict, homologacao: bool) -> NotaFiscal:
     return nf
 
 
+def _map_fatura(nf: NotaFiscal, sap: dict) -> None:
+    numero = _get(sap, "numero_fatura")
+    if not numero:
+        return
+    nf.fatura_numero = str(numero)[:60]
+    nf.fatura_valor_original = _parse_decimal(sap, "valor_original_fatura", default=Decimal("0"))
+    nf.fatura_valor_desconto = _parse_decimal(sap, "valor_desconto_fatura", default=Decimal("0"))
+    nf.fatura_valor_liquido = _parse_decimal(
+        sap, "valor_liquido_fatura", default=nf.fatura_valor_original
+    )
+
+
+def _map_autorizados(nf: NotaFiscal, sap: dict) -> None:
+    for person in _get(sap, "pessoas_autorizadas") or []:
+        if not isinstance(person, dict):
+            continue
+        raw = _get(person, "cnpj") or _get(person, "cpf") or ""
+        if not str(raw).strip():
+            continue
+        try:
+            if any(ch.isalpha() for ch in str(raw)) or len(_digits(raw)) != 11:
+                doc = normalize_cnpj(raw, field="pessoas_autorizadas.cnpj")
+            else:
+                doc = normalize_cpf(raw, field="pessoas_autorizadas.cpf")
+        except CnpjDocError as exc:
+            raise SapNfeMapperError(str(exc)) from exc
+        nf.adicionar_autorizados_baixar_xml(CPFCNPJ=doc)
+
+
+def _map_tributos_aproximados(nf: NotaFiscal, sap: dict) -> None:
+    """vTotTrib is optional, but the header must equal the sum of the items."""
+    products = list(getattr(nf, "produtos_e_servicos", []) or [])
+    item_sum = sum((getattr(prod, "valor_tributos_aprox", None) or Decimal("0")) for prod in products)
+    header = _money2(_opt_decimal(sap, "valor_total_tributos"))
+    if item_sum:
+        nf.totais_tributos_aproximado = item_sum
+        return
+    if header is not None and len(products) == 1:
+        products[0].valor_tributos_aprox = header
+        nf.totais_tributos_aproximado = header
+
+
 def _build_emitente(sap: dict) -> Emitente:
     emit = Emitente()
     emit.razao_social = _parse_str(sap, "nome_emitente")
     emit.nome_fantasia = _get(sap, "nome_fantasia_emitente") or ""
-    emit.cnpj = _digits(_parse_str(sap, "cnpj_emitente"))
+    emit.cnpj = _cnpj14(_parse_str(sap, "cnpj_emitente"), field="cnpj_emitente")
     emit.codigo_de_regime_tributario = _parse_str(sap, "regime_tributario_emitente")
     emit.inscricao_estadual = _parse_str(sap, "inscricao_estadual_emitente")
     emit.endereco_logradouro = _parse_str(sap, "logradouro_emitente")
@@ -182,6 +246,8 @@ def _build_emitente(sap: dict) -> Emitente:
     emit.endereco_pais = _get(sap, "codigo_pais_emitente") or "1058"
     if _get(sap, "telefone_emitente"):
         emit.endereco_telefone = _digits(_get(sap, "telefone_emitente"))
+    if _get(sap, "complemento_emitente"):
+        emit.endereco_complemento = str(_get(sap, "complemento_emitente"))[:60]
     cmun = _resolve_emitente_ibge(sap)
     if cmun:
         emit.endereco_cod_municipio = cmun
@@ -206,6 +272,16 @@ def _resolve_emitente_ibge(sap: dict) -> str | None:
             digits = "".join(ch for ch in str(val) if ch.isdigit())
             if len(digits) == 7:
                 return digits
+    # SAP often omits the IBGE code. PyNFe still resolves emit/cMun from the
+    # city name; ide/cMunFG is a separate field and SEFAZ reports the next
+    # tag (tpImp) when it is missing.
+    if city and uf:
+        try:
+            from pynfe.utils import obter_codigo_por_municipio
+
+            return str(obter_codigo_por_municipio(city, uf))
+        except (ValueError, OSError):
+            return None
     return None
 
 
@@ -227,15 +303,38 @@ def _build_destinatario(sap: dict) -> Cliente:
     cliente.endereco_cep = _digits(_get(sap, "cep_destinatario"))
     cliente.endereco_pais = pais
 
-    if is_export and len(_digits(cnpj)) != 14 and len(_digits(cpf)) != 11:
+    cnpj_d = _digits(cnpj)
+    cpf_d = _digits(cpf)
+    cnpj_has_alpha = any(ch.isalpha() for ch in cnpj)
+
+    if is_export and not cnpj_has_alpha and len(cnpj_d) != 14 and len(cpf_d) != 11:
+        # Also allow truncated numeric that pads to 14.
+        try:
+            cnpj_try = normalize_cnpj(cnpj, field="cnpj_destinatario", required=False) if cnpj else ""
+        except CnpjDocError:
+            cnpj_try = ""
+        if len(cnpj_try) != 14 and len(cpf_d) != 11:
+            cliente.tipo_documento = "CNPJ"
+            cliente.numero_documento = ""
+        elif len(cnpj_try) == 14:
+            cliente.tipo_documento = "CNPJ"
+            cliente.numero_documento = cnpj_try
+        else:
+            cliente.tipo_documento = "CPF"
+            cliente.numero_documento = normalize_cpf(cpf, field="cpf_destinatario")
+    elif cnpj_has_alpha or cnpj_d:
         cliente.tipo_documento = "CNPJ"
-        cliente.numero_documento = ""
-    elif len(_digits(cpf)) == 11 and len(_digits(cnpj)) != 14:
+        cliente.numero_documento = _cnpj14(cnpj or _get(sap, "cnpj_destinatario"), field="cnpj_destinatario")
+    elif len(cpf_d) == 11 or cpf_d:
         cliente.tipo_documento = "CPF"
-        cliente.numero_documento = _digits(cpf)
+        cliente.numero_documento = _cpf11(cpf, field="cpf_destinatario")
+    elif not is_export:
+        raise SapNfeMapperError(
+            "cnpj_destinatario ou cpf_destinatario é obrigatório (CNPJ 14 caracteres ou CPF 11)."
+        )
     else:
         cliente.tipo_documento = "CNPJ"
-        cliente.numero_documento = _digits(cnpj) or _digits(_parse_str(sap, "cnpj_destinatario"))
+        cliente.numero_documento = ""
 
     ie = _get(sap, "inscricao_estadual_destinatario") or _get(sap, "inscricao_estadual_dest")
     if ie:
@@ -244,6 +343,10 @@ def _build_destinatario(sap: dict) -> Cliente:
         cliente.endereco_cod_municipio = _get(sap, "codigo_municipio_destinatario")
     if _get(sap, "email_destinatario"):
         cliente.email = _get(sap, "email_destinatario")
+    if _get(sap, "complemento_destinatario"):
+        cliente.endereco_complemento = str(_get(sap, "complemento_destinatario"))[:60]
+    if _get(sap, "telefone_destinatario"):
+        cliente.endereco_telefone = _digits(_get(sap, "telefone_destinatario"))
     if id_estr and id_estr not in ("0", "00") and hasattr(cliente, "id_estrangeiro"):
         cliente.id_estrangeiro = id_estr
     if _get(sap, "inscricao_suframa_destinatario"):
@@ -293,6 +396,36 @@ def _add_produto(nf: NotaFiscal, item: dict, sap: dict) -> None:
     if icms_mod:
         kwargs["icms_modalidade_determinacao_bc"] = str(icms_mod)
 
+    # ICMS-ST (CST 10/30/70/90). PyNFe writes modBCST/vBCST/vICMSST from these
+    # fields and adds icms_st_valor into vNF. Omitting them leaves CST 10 with
+    # every ST amount at zero and dumps the payment gap into vTroco.
+    mod_st = _get(item, "icms_st_modalidade") or _get(item, "icms_mod_base_calculo_st")
+    if mod_st is not None and str(mod_st).strip() != "":
+        digits = "".join(ch for ch in str(mod_st) if ch.isdigit())
+        kwargs["icms_st_modalidade_determinacao_bc"] = int(digits[-1]) if digits else 0
+    for src, dst in (
+        ("icms_st_mva_aliquota", "icms_st_percentual_adicional"),
+        ("icms_margem_valor_adic_st", "icms_st_percentual_adicional"),
+        ("icms_st_reducao_percent", "icms_st_percentual_reducao_bc"),
+        ("icms_reducao_base_calculo_st", "icms_st_percentual_reducao_bc"),
+        ("icms_st_base", "icms_st_valor_base_calculo"),
+        ("icms_base_calculo_st", "icms_st_valor_base_calculo"),
+        ("icms_st_aliquota", "icms_st_aliquota"),
+        ("icms_aliquota_st", "icms_st_aliquota"),
+        ("icms_st_valor", "icms_st_valor"),
+        ("icms_valor_st", "icms_st_valor"),
+        ("icms_st_fcp_aliquota", "fcp_st_aliquota"),
+        ("fcp_percentual_st", "fcp_st_aliquota"),
+        ("icms_st_fcp_valor", "fcp_st_valor"),
+        ("fcp_valor_st", "fcp_st_valor"),
+    ):
+        if _get(item, src) is not None and dst not in kwargs:
+            kwargs[dst] = _parse_decimal(item, src, default=Decimal("0"))
+    if kwargs.get("fcp_st_valor") and "fcp_st_base_calculo" not in kwargs:
+        base_st = kwargs.get("icms_st_valor_base_calculo")
+        if base_st is not None:
+            kwargs["fcp_st_base_calculo"] = base_st
+
     ind_total = _get(item, "inclui_no_total") or _get(item, "ind_total") or "1"
     try:
         kwargs["ind_total"] = int(ind_total)
@@ -326,92 +459,69 @@ def _add_produto(nf: NotaFiscal, item: dict, sap: dict) -> None:
     if _get(item, "cbenef") or _get(item, "codigo_beneficio_fiscal"):
         kwargs["cbenef"] = _get(item, "cbenef") or _get(item, "codigo_beneficio_fiscal")
 
-    # PIS / COFINS / IPI (ABAP may send *_situacao_tributaria / *_aliquota_porcentual)
-    pis_cst = _get(item, "pis_cst") or _get(item, "pis_situacao_tributaria")
-    if pis_cst:
-        kwargs["pis_modalidade"] = pis_cst
-        kwargs["pis_valor_base_calculo"] = _parse_decimal(
-            item, "pis_base", default=_parse_decimal(item, "pis_base_calculo", default=Decimal("0"))
-        )
-        kwargs["pis_aliquota_percentual"] = _parse_decimal(
-            item, "pis_aliquota", default=_parse_decimal(item, "pis_aliquota_porcentual", default=Decimal("0"))
-        )
-        kwargs["pis_valor"] = _parse_decimal(item, "pis_valor", default=Decimal("0"))
-    cofins_cst = _get(item, "cofins_cst") or _get(item, "cofins_situacao_tributaria")
-    if cofins_cst:
-        kwargs["cofins_modalidade"] = cofins_cst
-        kwargs["cofins_valor_base_calculo"] = _parse_decimal(
-            item, "cofins_base", default=_parse_decimal(item, "cofins_base_calculo", default=Decimal("0"))
-        )
-        kwargs["cofins_aliquota_percentual"] = _parse_decimal(
-            item, "cofins_aliquota", default=_parse_decimal(item, "cofins_aliquota_porcentual", default=Decimal("0"))
-        )
-        kwargs["cofins_valor"] = _parse_decimal(item, "cofins_valor", default=Decimal("0"))
+    # PIS / COFINS / IPI (ABAP may send *_situacao_tributaria / *_aliquota_porcentual).
+    # Require CST on each item and set both PyNFe field aliases used by the
+    # entity vs serialização layers.
+    item_label = _item_label(item)
+    pis_cst = _normalize_pis_cofins_cst(
+        _get(item, "pis_cst") or _get(item, "pis_situacao_tributaria") or _get(item, "pis_modalidade"),
+        imposto="PIS",
+        item_label=item_label,
+        fields="pis_cst ou pis_situacao_tributaria",
+    )
+    kwargs["pis_modalidade"] = pis_cst
+    kwargs["pis_situacao_tributaria"] = pis_cst
+    kwargs["pis_valor_base_calculo"] = _parse_decimal(
+        item, "pis_base", default=_parse_decimal(item, "pis_base_calculo", default=Decimal("0"))
+    )
+    kwargs["pis_aliquota_percentual"] = _parse_decimal(
+        item, "pis_aliquota", default=_parse_decimal(item, "pis_aliquota_porcentual", default=Decimal("0"))
+    )
+    kwargs["pis_valor"] = _parse_decimal(item, "pis_valor", default=Decimal("0"))
+
+    cofins_cst = _normalize_pis_cofins_cst(
+        _get(item, "cofins_cst")
+        or _get(item, "cofins_situacao_tributaria")
+        or _get(item, "cofins_modalidade"),
+        imposto="COFINS",
+        item_label=item_label,
+        fields="cofins_cst ou cofins_situacao_tributaria",
+    )
+    kwargs["cofins_modalidade"] = cofins_cst
+    kwargs["cofins_situacao_tributaria"] = cofins_cst
+    kwargs["cofins_valor_base_calculo"] = _parse_decimal(
+        item, "cofins_base", default=_parse_decimal(item, "cofins_base_calculo", default=Decimal("0"))
+    )
+    kwargs["cofins_aliquota_percentual"] = _parse_decimal(
+        item, "cofins_aliquota", default=_parse_decimal(item, "cofins_aliquota_porcentual", default=Decimal("0"))
+    )
+    kwargs["cofins_valor"] = _parse_decimal(item, "cofins_valor", default=Decimal("0"))
     ipi_cst = _get(item, "ipi_cst") or _get(item, "ipi_situacao_tributaria")
     if ipi_cst:
-        kwargs["ipi_codigo_enquadramento"] = (
+        # PyNFe treats ipi_codigo_enquadramento as the CST (IPINT vs IPITrib)
+        # and ipi_classe_enquadramento as cEnq.
+        kwargs["ipi_codigo_enquadramento"] = str(ipi_cst).zfill(2)[-2:]
+        enq = str(
             _get(item, "ipi_enquadramento") or _get(item, "ipi_codigo_enquadramento_legal") or "999"
         )
+        enq_digits = "".join(ch for ch in enq if ch.isdigit()) or "999"
+        kwargs["ipi_classe_enquadramento"] = enq_digits.zfill(3)[-3:]
         kwargs["ipi_valor_base_calculo"] = _parse_decimal(
             item, "ipi_base", default=_parse_decimal(item, "ipi_base_calculo", default=Decimal("0"))
         )
         kwargs["ipi_aliquota"] = _parse_decimal(item, "ipi_aliquota", default=Decimal("0"))
         kwargs["ipi_valor_ipi"] = _parse_decimal(item, "ipi_valor", default=Decimal("0"))
+    if _get(item, "informacoes_adicionais_item"):
+        kwargs["informacoes_adicionais"] = str(_get(item, "informacoes_adicionais_item"))[:500]
+    trib_item = _money2(_opt_decimal(item, "valor_tributos") or _opt_decimal(item, "valor_total_tributos"))
+    if trib_item is not None:
+        kwargs["valor_tributos_aprox"] = trib_item
 
-    # IBSCBS (reforma) — PyNFe main field names
-    ibs_cst = (
-        _get(item, "ibs_cst")
-        or _get(item, "cbs_cst")
-        or _get(item, "ibs_cbs_situacao_tributaria")
-    )
-    if ibs_cst:
-        kwargs["ibscbs_cst"] = str(ibs_cst).zfill(3)
-        cclass = (
-            _get(item, "ibs_c_class_trib")
-            or _get(item, "cbs_c_class_trib")
-            or _get(item, "ibs_cbs_classificacao_tribut")
-            or "000001"
-        )
-        kwargs["ibscbs_c_class_trib"] = str(cclass).zfill(6)
-        vbc = (
-            _opt_decimal(item, "ibs_base")
-            or _opt_decimal(item, "cbs_base")
-            or _opt_decimal(item, "ibs_cbs_base_calculo")
-        )
-        if vbc is not None:
-            kwargs["ibscbs_vbc"] = vbc
-        p_uf = _opt_decimal(item, "ibs_aliquota_uf") or _opt_decimal(item, "ibs_uf_aliquota") or _opt_decimal(item, "ibs_aliquota")
-        if p_uf is not None:
-            kwargs["ibscbs_p_ibs_uf"] = p_uf
-        v_uf = _opt_decimal(item, "ibs_valor_uf") or _opt_decimal(item, "ibs_uf_valor") or _opt_decimal(item, "ibs_valor")
-        if v_uf is not None:
-            kwargs["ibscbs_v_ibs_uf"] = v_uf
-        p_mun = _opt_decimal(item, "ibs_aliquota_mun") or _opt_decimal(item, "ibs_mun_aliquota")
-        if p_mun is not None:
-            kwargs["ibscbs_p_ibs_mun"] = p_mun
-        v_mun = _opt_decimal(item, "ibs_valor_mun") or _opt_decimal(item, "ibs_mun_valor")
-        if v_mun is not None:
-            kwargs["ibscbs_v_ibs_mun"] = v_mun
-        v_ibs = _opt_decimal(item, "ibs_valor") or _opt_decimal(item, "ibs_valor_total")
-        if v_ibs is not None:
-            kwargs["ibscbs_v_ibs"] = v_ibs
-        p_cbs = _opt_decimal(item, "cbs_aliquota")
-        if p_cbs is not None:
-            kwargs["ibscbs_p_cbs"] = p_cbs
-        v_cbs = _opt_decimal(item, "cbs_valor")
-        if v_cbs is not None:
-            kwargs["ibscbs_v_cbs"] = v_cbs
-        # Monofásico CST 620
-        if str(ibs_cst).zfill(3) == "620":
-            for src, dst in (
-                ("ibscbs_q_bc_mono", "ibscbs_q_bc_mono"),
-                ("ibscbs_ad_rem_ibs", "ibscbs_ad_rem_ibs"),
-                ("ibscbs_v_ibs_mono", "ibscbs_v_ibs_mono"),
-                ("ibscbs_ad_rem_cbs", "ibscbs_ad_rem_cbs"),
-                ("ibscbs_v_cbs_mono", "ibscbs_v_cbs_mono"),
-            ):
-                if _get(item, src) is not None:
-                    kwargs[dst] = _parse_decimal(item, src)
+    # IBS/CBS (reforma): NOT passed to PyNFe. Its serializer picks the group
+    # from a fixed CST list (wrong for 011/220/221/222/400/515/550/620/800/
+    # 810/811/830) and has no gIBSCBSMono/gRed/gDif/... — the whole
+    # det/imposto/IBSCBS and total/IBSCBSTot are built by
+    # sefaz/ibscbs_nfe.py from the SAP item, driven by data/cst_ibscbs.json.
 
     # gCred / crédito presumido
     presumidos = _get(item, "infos_credito_presumido") or []
@@ -458,18 +568,132 @@ def _add_produto(nf: NotaFiscal, item: dict, sap: dict) -> None:
             "valor_unitario_comercial", "valor_total_bruto", "unidade_tributavel",
             "quantidade_tributavel", "valor_unitario_tributavel", "ean", "ean_tributavel",
             "ind_total", "icms_origem", "icms_modalidade", "icms_csosn",
-            "pis_modalidade", "cofins_modalidade", "pis_valor", "cofins_valor",
+            "pis_modalidade", "pis_situacao_tributaria",
+            "cofins_modalidade", "cofins_situacao_tributaria",
+            "pis_valor", "cofins_valor",
         )}
         nf.adicionar_produto_servico(**safe)
-        # Set remaining attrs on the last product
+        # Set remaining attrs on the last product. Use object.__setattr__ so
+        # serialization-only aliases (pis_modalidade) stick even when the
+        # class declares a different name and hasattr() is False.
         if nf.produtos_e_servicos:
             prod = nf.produtos_e_servicos[-1]
             for k, v in kwargs.items():
-                if hasattr(prod, k):
-                    try:
-                        setattr(prod, k, v)
-                    except Exception:
-                        pass
+                try:
+                    object.__setattr__(prod, k, v)
+                except Exception:
+                    pass
+
+    # Guarantee PyNFe serialização aliases exist on the instance.
+    if nf.produtos_e_servicos:
+        prod = nf.produtos_e_servicos[-1]
+        object.__setattr__(prod, "pis_modalidade", kwargs["pis_modalidade"])
+        object.__setattr__(prod, "pis_situacao_tributaria", kwargs["pis_situacao_tributaria"])
+        object.__setattr__(prod, "cofins_modalidade", kwargs["cofins_modalidade"])
+        object.__setattr__(prod, "cofins_situacao_tributaria", kwargs["cofins_situacao_tributaria"])
+        _apply_combustivel(prod, item, sap)
+
+
+# SEFAZ cStat 660: these CFOPs require prod/comb (cProdANP, descANP, UFCons).
+_CFOP_COMBUSTIVEL = frozenset({
+    "1651", "1652", "1653", "1658", "1659", "1660", "1661", "1662", "1663", "1664",
+    "2651", "2652", "2653", "2658", "2659", "2660", "2661", "2662", "2663", "2664",
+    "3651", "3652", "3653",
+    "5651", "5652", "5653", "5654", "5655", "5656", "5657", "5658", "5659",
+    "5660", "5661", "5662", "5663", "5664", "5665", "5666", "5667",
+    "6651", "6652", "6653", "6654", "6655", "6656", "6657", "6658", "6659",
+    "6660", "6661", "6662", "6663", "6664", "6665", "6666", "6667",
+    "7651", "7654", "7667",
+})
+
+
+def _apply_combustivel(prod: Any, item: dict, sap: dict) -> None:
+    """Map YNEX flat combustivel_* fields onto PyNFe so <comb> is serialized.
+
+    SAP sends zeros and a zero-filled CODIF as placeholders. Those must stay
+    out of the XML: optional comb children are omitted when absent, and a
+    CODIF of zeros is not an ANP registration.
+    """
+    label = _item_label(item)
+    cfop = "".join(ch for ch in str(_get(item, "cfop") or "") if ch.isdigit())
+    anp = "".join(ch for ch in str(_get(item, "combustivel_codigo_anp") or "") if ch.isdigit())
+    if not anp:
+        if cfop in _CFOP_COMBUSTIVEL:
+            raise SapNfeMapperError(
+                f"{label}: CFOP {cfop} exige o grupo de combustível "
+                "(combustivel_codigo_anp, combustivel_descricao_anp, combustivel_sigla_uf)."
+            )
+        return
+    anp = anp.zfill(9)[-9:]
+    desc = str(_get(item, "combustivel_descricao_anp") or "").strip()
+    if len(desc) < 2:
+        raise SapNfeMapperError(f"{label}: combustivel_descricao_anp é obrigatório com código ANP.")
+    uf = str(
+        _get(item, "combustivel_sigla_uf") or _get(sap, "uf_destinatario") or ""
+    ).strip().upper()
+    if len(uf) != 2:
+        raise SapNfeMapperError(f"{label}: combustivel_sigla_uf é obrigatório com código ANP.")
+
+    object.__setattr__(prod, "cProdANP", anp)
+    object.__setattr__(prod, "descANP", desc[:95])
+    object.__setattr__(prod, "UFCons", uf)
+
+    for src, dst in (
+        ("combustivel_percentual_glp", "pGLP"),
+        ("combustivel_percentual_gas_na", "pGNn"),
+        ("combustivel_percentual_gas_im", "pGNi"),
+        ("combustivel_valor_partida", "vPart"),
+        ("combustivel_percentual_biodies", "comb_p_bio"),
+    ):
+        val = _opt_decimal(item, src)
+        if val is not None and val != 0:
+            object.__setattr__(prod, dst, val)
+
+    codif = "".join(ch for ch in str(_get(item, "combustivel_registro_codif") or "") if ch.isdigit())
+    if codif and int(codif) != 0:
+        object.__setattr__(prod, "comb_codif", codif[:21])
+
+    qtemp = _opt_decimal(item, "combustivel_quantidade_temp")
+    if qtemp is not None and qtemp != 0:
+        object.__setattr__(prod, "comb_q_temp", f"{qtemp:.4f}")
+
+    bico = "".join(ch for ch in str(_get(item, "combustivel_numero_bico") or "") if ch.isdigit())
+    if bico and int(bico) != 0:
+        object.__setattr__(prod, "comb_n_bico", int(bico))
+        bomba = "".join(ch for ch in str(_get(item, "combustivel_numero_bomba") or "") if ch.isdigit())
+        tanque = "".join(ch for ch in str(_get(item, "combustivel_numero_tanque") or "") if ch.isdigit())
+        if bomba and int(bomba) != 0:
+            object.__setattr__(prod, "comb_n_bomba", int(bomba))
+        object.__setattr__(prod, "comb_n_tanque", int(tanque or "0"))
+        object.__setattr__(
+            prod, "comb_v_enc_ini", _parse_decimal(item, "combustivel_valor_encerrante_i", default=Decimal("0"))
+        )
+        object.__setattr__(
+            prod, "comb_v_enc_fin", _parse_decimal(item, "combustivel_valor_encerrante_f", default=Decimal("0"))
+        )
+
+
+def _item_label(item: dict) -> str:
+    nitem = _get(item, "numero_item") or _get(item, "nitem")
+    if nitem is not None and str(nitem).strip() != "":
+        return f"Item {nitem}"
+    codigo = _get(item, "codigo_produto")
+    if codigo:
+        return f"Item {codigo}"
+    return "Item"
+
+
+def _normalize_pis_cofins_cst(
+    value: Any, *, imposto: str, item_label: str, fields: str
+) -> str:
+    """Return a 2-digit PIS/COFINS CST or raise a user-facing mapper error."""
+    raw = str(value or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        raise SapNfeMapperError(
+            f"{item_label}: falta CST de {imposto} no JSON ({fields})."
+        )
+    return digits.zfill(2)[-2:]
 
 
 def _accepts(cls: type, name: str) -> bool:
@@ -496,6 +720,46 @@ def _digits(val: Any) -> str:
     return "".join(ch for ch in str(val or "") if ch.isdigit())
 
 
+def _cnpj14(value: Any, *, field: str) -> str:
+    """CNPJ 14 chars (NT 2026.004 alfanumérico ou numérico clássico)."""
+    try:
+        return normalize_cnpj(value, field=field)
+    except CnpjDocError as exc:
+        raise SapNfeMapperError(str(exc)) from exc
+
+
+def _cpf11(value: Any, *, field: str) -> str:
+    try:
+        return normalize_cpf(value, field=field)
+    except CnpjDocError as exc:
+        raise SapNfeMapperError(str(exc)) from exc
+
+
+def format_nfe_serie(value: str) -> str:
+    """NF-e ide/serie (TSerie): ``0`` or ``[1-9][0-9]{0,2}``. Rejects ``000``."""
+    digits = "".join(ch for ch in str(value).strip() if ch.isdigit())
+    if digits == "":
+        raise SapNfeMapperError("serie is required")
+    number = int(digits)
+    if number > 999:
+        raise SapNfeMapperError("serie must be between 0 and 999")
+    return str(number)
+
+
+def _parse_nfe_number(d: dict, key: str) -> int:
+    """Parse ide/nNF. Leading zeros from SAP (``000034155``) are fine; 0 is not."""
+    val = _get(d, key)
+    if val is None or str(val).strip() == "":
+        raise SapNfeMapperError(f"Missing required field: {key}")
+    digits = "".join(ch for ch in str(val).strip() if ch.isdigit())
+    if digits == "":
+        raise SapNfeMapperError(f"Invalid {key}: {val!r}")
+    number = int(digits)
+    if number < 1 or number > 999_999_999:
+        raise SapNfeMapperError(f"{key} must be between 1 and 999999999, got {number}")
+    return number
+
+
 def _parse_str(d: dict, key: str) -> str:
     val = _get(d, key)
     if val is None:
@@ -505,11 +769,15 @@ def _parse_str(d: dict, key: str) -> str:
 
 def _parse_int(d: dict, key: str, default: int | None = None) -> int:
     val = _get(d, key)
-    if val is None:
+    text = "" if val is None else str(val).strip()
+    if text == "":
         if default is not None:
             return default
         raise SapNfeMapperError(f"Missing required field: {key}")
-    return int(val)
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise SapNfeMapperError(f"Invalid integer for {key}: {val!r}") from exc
 
 
 def _parse_decimal(d: dict, key: str, default: Decimal | None = None) -> Decimal:
@@ -531,6 +799,14 @@ def _opt_decimal(d: dict, key: str) -> Decimal | None:
     return Decimal(text)
 
 
+_CENTS = Decimal("0.01")
+
+
+def _money2(value: Decimal | None) -> Decimal | None:
+    """PyNFe writes item vTotTrib via str(); TDec_1302 needs exactly 2 decimals."""
+    return None if value is None else value.quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
 def _parse_datetime(d: dict, key: str, required: bool = True) -> datetime | None:
     val = _get(d, key)
     if val is None:
@@ -540,6 +816,24 @@ def _parse_datetime(d: dict, key: str, required: bool = True) -> datetime | None
     if isinstance(val, str):
         return datetime.fromisoformat(val.replace("Z", "+00:00"))
     raise SapNfeMapperError(f"Field {key} must be ISO8601 string")
+
+
+def _to_brasilia(dt: datetime) -> datetime:
+    """Naive values are taken as Brasília time; aware values are converted."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_BRASILIA_TZ)
+    return dt.astimezone(_BRASILIA_TZ)
+
+
+def _clamp_future_emission(dh_emi: datetime, now: datetime | None = None) -> datetime:
+    """SEFAZ rejects dhEmi after its receipt time (cStat 703).
+
+    SAP may send a placeholder time (e.g. document date + 12:00:00); in that
+    case emit with the current time, keeping a margin for clock skew.
+    """
+    limit = (now or datetime.now(_BRASILIA_TZ)).astimezone(_BRASILIA_TZ) - _EMISSION_CLOCK_MARGIN
+    limit = limit.replace(microsecond=0)
+    return limit if dh_emi > limit else dh_emi
 
 
 # Re-export for callers / tests

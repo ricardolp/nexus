@@ -48,6 +48,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Tabelas da Reforma Tributária (CST/cClassTrib → grupos, regras de cIndOp).
+nfe_gateway = ["sefaz/data/*.json", "nfse/data/*.json", "nfse/providers/data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

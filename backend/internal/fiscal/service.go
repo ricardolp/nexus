@@ -1,6 +1,7 @@
 package fiscal
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -135,6 +136,40 @@ func (s *Service) Receive(ctx context.Context, in ReceiveInput) (*ReceiveResult,
 
 	requestHash := crypto.SHA256Hex(payloadBytes)
 
+	// Reforma tributária: complete IBS/CBS (CST, cClassTrib, cIndOp) from the
+	// company NFS-e service catalog when SAP omitted them. Done after the
+	// request hash so idempotency keeps comparing the payload SAP sent.
+	if docType == "nfse" && direction == "outbound" && sapNFSePayload != nil {
+		enriched, filled, err := s.applyNFSeIBSCBSDefaults(ctx, in.OrganizationID, companyID, sapNFSePayload, payloadBytes)
+		if err != nil {
+			return nil, err
+		}
+		if len(filled) > 0 {
+			payloadBytes = enriched
+		}
+	}
+
+	naturalKey := ""
+	if docType == "nfe" && direction == "outbound" && nfe != nil {
+		naturalKey = OutboundNFeNaturalKey(nfe.Series, nfe.Number)
+	}
+	if docType == "nfse" && direction == "outbound" && nfse != nil {
+		naturalKey = OutboundNFSeNaturalKey(nfse.RPSSeries, nfse.RPSNumber)
+	}
+	resend := outboundResend{
+		in: in, sapPayload: sapPayload, sapNFSePayload: sapNFSePayload, nfe: nfe, payload: payloadBytes,
+		contentType: contentType, requestHash: requestHash, companyUF: company.UF,
+	}
+	if naturalKey != "" {
+		existing, err := s.findByNaturalKey(ctx, in.OrganizationID, companyID, env, naturalKey)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return s.handleOutboundResend(ctx, existing, resend)
+		}
+	}
+
 	// Idempotência: se já existe e hash bate, devolve o documento.
 	existing, err := s.findByIdempotency(ctx, in.OrganizationID, companyID, in.SourceSystem, in.IdempotencyKey)
 	if err != nil {
@@ -170,6 +205,10 @@ func (s *Service) Receive(ctx context.Context, in ReceiveInput) (*ReceiveResult,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
+	var naturalKeyArg *string
+	if naturalKey != "" {
+		naturalKeyArg = &naturalKey
+	}
 	if in.ExternalID != "" {
 		doc.ExternalID = &in.ExternalID
 	}
@@ -191,17 +230,20 @@ func (s *Service) Receive(ctx context.Context, in ReceiveInput) (*ReceiveResult,
 				id, organization_id, organization_company_id, document_type, direction, environment,
 				external_id, source_system, source_document_id, idempotency_key, document_key,
 				status, processing_status, current_version, correlation_id, trace_id,
-				received_at, created_at, updated_at
+				received_at, created_at, updated_at, natural_key
 			) values (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
 			)
 		`,
 			doc.ID, doc.OrganizationID, doc.OrganizationCompanyID, doc.DocumentType, doc.Direction, doc.Environment,
 			doc.ExternalID, doc.SourceSystem, doc.SourceDocumentID, doc.IdempotencyKey, doc.DocumentKey,
 			doc.Status, doc.ProcessingStatus, doc.CurrentVersion, doc.CorrelationID, doc.TraceID,
-			doc.ReceivedAt, doc.CreatedAt, doc.UpdatedAt,
+			doc.ReceivedAt, doc.CreatedAt, doc.UpdatedAt, naturalKeyArg,
 		)
 		if err != nil {
+			if strings.Contains(err.Error(), naturalKeyUniqueIndex) {
+				return errNaturalKeyRace
+			}
 			if strings.Contains(err.Error(), "organization_documents") && strings.Contains(err.Error(), "unique") {
 				return domainerr.Conflict("idempotency_key_reuse", "Document already received")
 			}
@@ -296,6 +338,17 @@ func (s *Service) Receive(ctx context.Context, in ReceiveInput) (*ReceiveResult,
 		})
 		return err
 	})
+	if errors.Is(err, errNaturalKeyRace) {
+		_ = s.store.Delete(ctx, objectKey)
+		existing, findErr := s.findByNaturalKey(ctx, in.OrganizationID, companyID, env, naturalKey)
+		if findErr != nil {
+			return nil, findErr
+		}
+		if existing == nil {
+			return nil, domainerr.Conflict("document_in_processing", outboundDocumentLabel(docType)+" já está em processamento")
+		}
+		return s.handleOutboundResend(ctx, existing, resend)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +386,11 @@ const (
 	PayloadSefazResponse   = "sefaz_response"
 	PayloadCancelRequest   = "cancel_request"
 	PayloadCancelResponse  = "cancel_response"
+	PayloadCceRequest      = "cce_request"
+	PayloadCceResponse     = "cce_response"
+	PayloadProtocol        = "protocol"
 	PayloadDanfse          = "danfse"
+	PayloadDanfe           = "danfe"
 )
 
 func originalPayloadObjectKeyTx(ctx context.Context, tx pgx.Tx, documentID uuid.UUID) (string, error) {
@@ -341,7 +398,7 @@ func originalPayloadObjectKeyTx(ctx context.Context, tx pgx.Tx, documentID uuid.
 	err := tx.QueryRow(ctx, `
 		select storage_object_key from organization_document_payloads
 		where organization_document_id = $1 and payload_type = 'original_request'
-		order by created_at asc limit 1
+		order by created_at desc limit 1
 	`, documentID).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", domainerr.NotFound("payload_not_found", "Original request payload not found")
@@ -358,9 +415,9 @@ func (s *Service) registerStoredPayload(ctx context.Context, tx pgx.Tx, organiza
 	if err := tx.QueryRow(ctx, `
 		select exists(
 			select 1 from organization_document_payloads
-			where organization_document_id = $1 and payload_type = $2
+			where organization_document_id = $1 and payload_type = $2 and storage_object_key = $3
 		)
-	`, documentID, payloadType).Scan(&exists); err != nil || exists {
+	`, documentID, payloadType, objectKey).Scan(&exists); err != nil || exists {
 		return
 	}
 	data, err := s.store.Get(ctx, objectKey)
@@ -379,16 +436,28 @@ func (s *Service) registerStoredPayload(ctx context.Context, tx pgx.Tx, organiza
 }
 
 // RegisterCancelPayloads records cancel_request / cancel_response object keys
-// after an accepted (or rejected-with-XML) cancel/CC-e event from nfe-gateway.
+// after an accepted (or rejected-with-XML) cancel event from nfe-gateway.
 func (s *Service) RegisterCancelPayloads(ctx context.Context, organizationID, documentID uuid.UUID, requestKey, responseKey string) error {
+	return s.RegisterEventPayloads(ctx, organizationID, documentID, "cancel", requestKey, responseKey)
+}
+
+// RegisterEventPayloads records request/response XML for cancel or CC-e events.
+func (s *Service) RegisterEventPayloads(ctx context.Context, organizationID, documentID uuid.UUID, eventKind, requestKey, responseKey string) error {
 	requestKey = strings.TrimSpace(requestKey)
 	responseKey = strings.TrimSpace(responseKey)
 	if requestKey == "" && responseKey == "" {
 		return nil
 	}
+	reqType, respType := PayloadCancelRequest, PayloadCancelResponse
+	switch strings.ToLower(eventKind) {
+	case "cce":
+		reqType, respType = PayloadCceRequest, PayloadCceResponse
+	case "inutilization":
+		reqType, respType = PayloadInutilizationRequest, PayloadInutilizationResponse
+	}
 	return s.pool.WithTenant(ctx, organizationID, func(ctx context.Context, tx pgx.Tx) error {
-		s.registerStoredPayload(ctx, tx, organizationID, documentID, PayloadCancelRequest, requestKey, "application/xml")
-		s.registerStoredPayload(ctx, tx, organizationID, documentID, PayloadCancelResponse, responseKey, "application/xml")
+		s.registerStoredPayload(ctx, tx, organizationID, documentID, reqType, requestKey, "application/xml")
+		s.registerStoredPayload(ctx, tx, organizationID, documentID, respType, responseKey, "application/xml")
 		return nil
 	})
 }
@@ -402,7 +471,7 @@ func (s *Service) OriginalPayloadObjectKey(ctx context.Context, documentID uuid.
 	err := s.pool.QueryRow(ctx, `
 		select storage_object_key from organization_document_payloads
 		where organization_document_id = $1 and payload_type = 'original_request'
-		order by created_at asc limit 1
+		order by created_at desc limit 1
 	`, documentID).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", domainerr.NotFound("payload_not_found", "Original request payload not found")
@@ -435,6 +504,7 @@ func (s *Service) DownloadOriginalPayload(ctx context.Context, organizationID, d
 //
 // payload_type=danfse generates the national DANFSe PDF on demand from the
 // authorized NFS-e XML (sefaz_response).
+// payload_type=protocol extracts protNFe from the authorized NF-e XML.
 func (s *Service) DownloadPayload(ctx context.Context, organizationID, documentID uuid.UUID, payloadType string) (*DocumentPayloadDownload, error) {
 	doc, err := s.GetDocument(ctx, organizationID, documentID)
 	if err != nil {
@@ -444,6 +514,11 @@ func (s *Service) DownloadPayload(ctx context.Context, organizationID, documentI
 	wanted := strings.TrimSpace(payloadType)
 	if wanted == "" || wanted == "auto" {
 		if strings.EqualFold(doc.Direction, "outbound") {
+			// Prefer authorized XML when available so list/detail default downloads
+			// match NFe{chave}.xml instead of the pre-authorization signed XML.
+			if dl, err := s.loadPayload(ctx, doc, PayloadSefazResponse); err == nil {
+				return dl, nil
+			}
 			if dl, err := s.loadPayload(ctx, doc, PayloadProviderRequest); err == nil {
 				return dl, nil
 			}
@@ -453,12 +528,18 @@ func (s *Service) DownloadPayload(ctx context.Context, organizationID, documentI
 	if wanted == PayloadDanfse {
 		return s.renderDanfse(ctx, doc)
 	}
+	if wanted == PayloadProtocol {
+		return s.extractProtocolPayload(ctx, doc)
+	}
 	return s.loadPayload(ctx, doc, wanted)
 }
 
 func (s *Service) renderDanfse(ctx context.Context, doc *Document) (*DocumentPayloadDownload, error) {
 	if !strings.EqualFold(doc.DocumentType, "nfse") {
 		return nil, domainerr.Validation("danfse_not_supported", "DANFSe is only available for NFS-e documents")
+	}
+	if dl := s.providerDanfsePDF(ctx, doc); dl != nil {
+		return dl, nil
 	}
 	xmlDL, err := s.loadPayload(ctx, doc, PayloadSefazResponse)
 	if err != nil {
@@ -471,12 +552,7 @@ func (s *Service) renderDanfse(ctx context.Context, doc *Document) (*DocumentPay
 	if err != nil {
 		return nil, domainerr.Validation("danfse_render_failed", "Failed to generate DANFSe PDF: "+err.Error())
 	}
-	name := doc.ID.String()
-	if doc.DocumentKey != nil && *doc.DocumentKey != "" {
-		name = *doc.DocumentKey
-	} else if doc.ExternalID != nil && *doc.ExternalID != "" {
-		name = *doc.ExternalID
-	}
+	name := s.downloadBaseName(ctx, doc)
 	return &DocumentPayloadDownload{
 		Document:    doc,
 		Data:        pdf,
@@ -485,11 +561,138 @@ func (s *Service) renderDanfse(ctx context.Context, doc *Document) (*DocumentPay
 	}, nil
 }
 
-// danfseRenderOptions maps document lifecycle to NT 008 watermarks.
+func (s *Service) extractProtocolPayload(ctx context.Context, doc *Document) (*DocumentPayloadDownload, error) {
+	if !strings.EqualFold(doc.DocumentType, "nfe") {
+		return nil, domainerr.Validation("protocol_not_supported", "Protocol XML is only available for NF-e documents")
+	}
+	xmlDL, err := s.loadPayload(ctx, doc, PayloadSefazResponse)
+	if err != nil {
+		return nil, domainerr.NotFound("protocol_xml_not_found", "Authorized NF-e XML not found")
+	}
+	prot, err := extractElementByLocalName(xmlDL.Data, "protNFe")
+	if err != nil {
+		return nil, domainerr.NotFound("protocol_not_found", "Authorization protocol (protNFe) not found in authorized XML")
+	}
+	name := s.downloadBaseName(ctx, doc)
+	return &DocumentPayloadDownload{
+		Document:    doc,
+		Data:        prot,
+		ContentType: "application/xml",
+		Filename:    name + "-protocolo.xml",
+	}, nil
+}
+
+// extractElementByLocalName returns the first XML element with the given local
+// name (namespace prefix optional), including its open/close tags.
+func extractElementByLocalName(data []byte, localName string) ([]byte, error) {
+	raw := string(bytes.TrimSpace(data))
+	if raw == "" || raw[0] != '<' {
+		return nil, errors.New("not xml")
+	}
+	lower := strings.ToLower(raw)
+	needle := strings.ToLower(localName)
+
+	start := -1
+	for i := 0; i < len(lower); i++ {
+		if lower[i] != '<' {
+			continue
+		}
+		rest := lower[i+1:]
+		tagEnd := strings.IndexAny(rest, " \t\r\n>/")
+		if tagEnd < 0 {
+			continue
+		}
+		tagName := rest[:tagEnd]
+		if tagName == needle || strings.HasSuffix(tagName, ":"+needle) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil, errors.New("element not found")
+	}
+
+	end := -1
+	searchFrom := start + 1
+	for i := searchFrom; i < len(lower); i++ {
+		if lower[i] != '<' || i+1 >= len(lower) || lower[i+1] != '/' {
+			continue
+		}
+		rest := lower[i+2:]
+		tagEnd := strings.IndexByte(rest, '>')
+		if tagEnd < 0 {
+			continue
+		}
+		tagName := rest[:tagEnd]
+		if tagName == needle || strings.HasSuffix(tagName, ":"+needle) {
+			end = i + 2 + tagEnd + 1
+			break
+		}
+	}
+	if end <= start {
+		return nil, errors.New("element close tag not found")
+	}
+
+	out := []byte(raw[start:end])
+	if !bytes.HasPrefix(bytes.TrimSpace(out), []byte("<?xml")) {
+		prefixed := make([]byte, 0, len(`<?xml version="1.0" encoding="UTF-8"?>`)+1+len(out))
+		prefixed = append(prefixed, []byte(`<?xml version="1.0" encoding="UTF-8"?>`+"\n")...)
+		prefixed = append(prefixed, out...)
+		out = prefixed
+	}
+	return out, nil
+}
+
+// danfseRenderOptions maps document lifecycle to NT 008 watermarks and, when
+// the company opted in, the custom header logo.
 // Cancel/substitution are events — authorized XML keeps cStat=100.
+// providerDanfsePDF devolve o PDF oficial do provedor municipal (ex.: IPM),
+// gravado pelo nfe-gateway, quando a nota não tem XML do padrão nacional.
+func (s *Service) providerDanfsePDF(ctx context.Context, doc *Document) *DocumentPayloadDownload {
+	var key *string
+	err := s.pool.QueryRow(ctx, `
+		select nullif(trim(provider_pdf_object_key), '')
+		from organization_nfse
+		where organization_id = $1 and organization_document_id = $2
+	`, doc.OrganizationID, doc.ID).Scan(&key)
+	if err != nil || key == nil || s.store == nil {
+		return nil
+	}
+	data, err := s.store.Get(ctx, *key)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return &DocumentPayloadDownload{
+		Document:    doc,
+		Data:        data,
+		ContentType: "application/pdf",
+		Filename:    s.downloadBaseName(ctx, doc) + "-danfse.pdf",
+	}
+}
+
+// SetNFSeProviderRoute congela na nota o provedor municipal e a configuração
+// usados na emissão; cancelamento e consulta usam o mesmo, mesmo que o
+// catálogo mude depois.
+func (s *Service) SetNFSeProviderRoute(ctx context.Context, organizationID, documentID uuid.UUID, providerCode string, config map[string]any) error {
+	cfg, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		update organization_nfse
+		set provider_code = $3, provider_config = $4::jsonb
+		where organization_id = $1 and organization_document_id = $2
+	`, organizationID, documentID, providerCode, string(cfg))
+	return err
+}
+
 func (s *Service) danfseRenderOptions(ctx context.Context, doc *Document) danfse.RenderOptions {
 	var opts danfse.RenderOptions
-	if doc == nil || !strings.EqualFold(doc.Status, StatusCancelled) {
+	if doc == nil {
+		return opts
+	}
+	opts.Logo = s.companyDanfseLogo(ctx, doc.OrganizationID, doc.OrganizationCompanyID)
+	if !strings.EqualFold(doc.Status, StatusCancelled) {
 		return opts
 	}
 	var reason string
@@ -507,6 +710,27 @@ func (s *Service) danfseRenderOptions(ctx context.Context, doc *Document) danfse
 		opts.Cancelled = true
 	}
 	return opts
+}
+
+// companyDanfseLogo returns the print-ready header image when the flag is on.
+// Logos saved before the print copy existed fall back to the original file.
+// Any miss keeps the national NFS-e mark.
+func (s *Service) companyDanfseLogo(ctx context.Context, organizationID, companyID uuid.UUID) []byte {
+	if s == nil || s.pool == nil || companyID == uuid.Nil {
+		return nil
+	}
+	var logo []byte
+	err := s.pool.QueryRow(ctx, `
+		select coalesce(danfse_logo_print, danfse_logo)
+		from organization_companies
+		where id = $1 and organization_id = $2
+		  and danfse_custom_logo_enabled
+		  and coalesce(danfse_logo_print, danfse_logo) is not null
+	`, companyID, organizationID).Scan(&logo)
+	if err != nil || len(logo) == 0 {
+		return nil
+	}
+	return logo
 }
 
 func looksLikeNFSeXML(data []byte) bool {
@@ -543,6 +767,24 @@ func (s *Service) loadPayload(ctx context.Context, doc *Document, payloadType st
 		case PayloadCancelResponse:
 			objectKey = originalKey + ".cancel_response.xml"
 			contentType = "application/xml"
+		case PayloadCceRequest:
+			objectKey = originalKey + ".cce_request.xml"
+			contentType = "application/xml"
+		case PayloadCceResponse:
+			objectKey = originalKey + ".cce_response.xml"
+			contentType = "application/xml"
+		case PayloadInutilizationRequest:
+			objectKey = originalKey + ".inutilization_request.xml"
+			contentType = "application/xml"
+		case PayloadInutilizationResponse:
+			objectKey = originalKey + ".inutilization_response.xml"
+			contentType = "application/xml"
+		case PayloadManifestationEvent:
+			objectKey = originalKey + ".manifestation_event.xml"
+			contentType = "application/xml"
+		case PayloadProtocol:
+			objectKey = originalKey + ".protocol.xml"
+			contentType = "application/xml"
 		default:
 			return nil, domainerr.NotFound("payload_not_found", "Payload not found")
 		}
@@ -555,48 +797,188 @@ func (s *Service) loadPayload(ctx context.Context, doc *Document, payloadType st
 		return nil, domainerr.NotFound("payload_not_found", "Payload not found")
 	}
 
-	name := doc.ID.String()
-	if doc.DocumentKey != nil && *doc.DocumentKey != "" {
-		name = *doc.DocumentKey
-	} else if doc.ExternalID != nil && *doc.ExternalID != "" {
-		name = *doc.ExternalID
-	}
-	switch payloadType {
-	case PayloadProviderRequest:
-		name += "-enviado.xml"
-		if contentType == "" {
-			contentType = "application/xml"
-		}
-	case PayloadSefazResponse:
-		name += "-retorno"
-		if strings.Contains(contentType, "json") || looksLikeJSON(data) {
-			name += ".json"
+	if contentType == "" {
+		if looksLikeJSON(data) {
 			contentType = "application/json"
 		} else {
-			name += ".xml"
-			if contentType == "" {
-				contentType = "application/xml"
-			}
-		}
-	case PayloadCancelRequest:
-		name += "-pedido-cancelamento.xml"
-		if contentType == "" {
 			contentType = "application/xml"
 		}
-	case PayloadCancelResponse:
-		name += "-cancelamento.xml"
-		if contentType == "" {
-			contentType = "application/xml"
-		}
-	default:
-		ext := ".xml"
-		if strings.Contains(contentType, "json") {
-			ext = ".json"
-		}
-		name += ext
 	}
 
-	return &DocumentPayloadDownload{Document: doc, Data: data, ContentType: contentType, Filename: name}, nil
+	filename := s.downloadFilename(ctx, doc, payloadType, contentType, data)
+	return &DocumentPayloadDownload{Document: doc, Data: data, ContentType: contentType, Filename: filename}, nil
+}
+
+func (s *Service) downloadBaseName(ctx context.Context, doc *Document) string {
+	if key := s.lookupAccessKey(ctx, doc); key != "" {
+		prefix := "NFe"
+		if strings.EqualFold(doc.DocumentType, "nfse") {
+			prefix = "NFSe"
+		}
+		return prefix + key
+	}
+	if doc.DocumentKey != nil && *doc.DocumentKey != "" {
+		return *doc.DocumentKey
+	}
+	if doc.ExternalID != nil && *doc.ExternalID != "" {
+		return *doc.ExternalID
+	}
+	return doc.ID.String()
+}
+
+// NFSeConsult is what SAP receives when it reads an outbound NFS-e:
+// numero is the SEFIN nNFSe, numero_rps is the DPS number SAP sent,
+// codigo_verificacao is the verification code persisted at authorization.
+type NFSeConsult struct {
+	AccessKey         string
+	Protocol          string
+	Numero            string
+	NumeroRPS         string
+	Serie             string
+	CodigoVerificacao string
+	// URL é o link oficial da NFS-e no provedor municipal (Focus: "url").
+	URL string
+	// Provider é o provedor municipal usado (vazio = SEFIN Nacional).
+	Provider string
+}
+
+func (s *Service) NFSeConsult(ctx context.Context, doc *Document) (NFSeConsult, error) {
+	if doc == nil || !strings.EqualFold(doc.DocumentType, "nfse") {
+		return NFSeConsult{}, nil
+	}
+	var accessKey, protocol, numero, rpsNumber, series, verification, pdfURL, provider *string
+	err := s.pool.QueryRow(ctx, `
+		select nullif(trim(access_key), ''), nullif(trim(dps_id), ''),
+		       nullif(trim(nfse_number), ''), nullif(trim(rps_number), ''), nullif(trim(rps_series), ''),
+		       nullif(trim(verification_code), ''), nullif(trim(provider_pdf_url), ''), nullif(trim(provider_code), '')
+		from organization_nfse
+		where organization_id = $1 and organization_document_id = $2
+	`, doc.OrganizationID, doc.ID).Scan(&accessKey, &protocol, &numero, &rpsNumber, &series, &verification, &pdfURL, &provider)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return NFSeConsult{}, nil
+	}
+	if err != nil {
+		return NFSeConsult{}, err
+	}
+	out := NFSeConsult{
+		AccessKey:         derefTrim(accessKey),
+		Protocol:          derefTrim(protocol),
+		Numero:            normalizeNFSeNumber(derefTrim(numero)),
+		NumeroRPS:         derefTrim(rpsNumber),
+		Serie:             derefTrim(series),
+		CodigoVerificacao: derefTrim(verification),
+		URL:               derefTrim(pdfURL),
+		Provider:          derefTrim(provider),
+	}
+	if out.Numero == "" {
+		out.Numero = s.nfseNumberFromStoredXML(ctx, doc)
+	}
+	return out, nil
+}
+
+func derefTrim(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(*s)
+}
+
+func normalizeNFSeNumber(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return raw
+		}
+	}
+	raw = strings.TrimLeft(raw, "0")
+	if raw == "" {
+		return "0"
+	}
+	return raw
+}
+
+func (s *Service) nfseNumberFromStoredXML(ctx context.Context, doc *Document) string {
+	if s == nil || s.store == nil || doc == nil {
+		return ""
+	}
+	dl, err := s.loadPayload(ctx, doc, PayloadSefazResponse)
+	if err != nil || dl == nil || len(dl.Data) == 0 {
+		return ""
+	}
+	parsed, err := danfse.ParseXML(dl.Data)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return normalizeNFSeNumber(parsed.InfNFSe.NNFSe)
+}
+
+func (s *Service) lookupAccessKey(ctx context.Context, doc *Document) string {
+	var key *string
+	var err error
+	if strings.EqualFold(doc.DocumentType, "nfse") {
+		err = s.pool.QueryRow(ctx, `
+			select nullif(trim(access_key), '') from organization_nfse
+			where organization_document_id = $1 and organization_id = $2
+		`, doc.ID, doc.OrganizationID).Scan(&key)
+	} else {
+		err = s.pool.QueryRow(ctx, `
+			select nullif(trim(access_key), '') from organization_nfe
+			where organization_document_id = $1 and organization_id = $2
+		`, doc.ID, doc.OrganizationID).Scan(&key)
+	}
+	if err != nil || key == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range *key {
+		if (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func (s *Service) downloadFilename(ctx context.Context, doc *Document, payloadType, contentType string, data []byte) string {
+	name := s.downloadBaseName(ctx, doc)
+	jsonish := strings.Contains(contentType, "json") || looksLikeJSON(data)
+	switch payloadType {
+	case PayloadSefazResponse, PayloadOriginalRequest:
+		if jsonish {
+			return name + ".json"
+		}
+		return name + ".xml"
+	case PayloadProviderRequest:
+		if jsonish {
+			return name + "-enviado.json"
+		}
+		return name + "-enviado.xml"
+	case PayloadCancelRequest:
+		return name + "-pedido-cancelamento.xml"
+	case PayloadCancelResponse:
+		return name + "-cancelamento.xml"
+	case PayloadCceRequest:
+		return name + "-pedido-cce.xml"
+	case PayloadCceResponse:
+		return name + "-cce.xml"
+	case PayloadInutilizationRequest:
+		return name + "-pedido-inutilizacao.xml"
+	case PayloadInutilizationResponse:
+		return name + "-inutilizacao.xml"
+	case PayloadManifestationEvent:
+		return name + "-manifestacao.xml"
+	case PayloadProtocol:
+		return name + "-protocolo.xml"
+	case PayloadDanfe:
+		return name + "-danfe.pdf"
+	default:
+		if jsonish {
+			return name + ".json"
+		}
+		return name + ".xml"
+	}
 }
 
 func looksLikeJSON(data []byte) bool {
@@ -883,6 +1265,13 @@ func (s *Service) ApplyTransmissionResult(ctx context.Context, doc Document, toS
 	if result.Protocol != "" {
 		meta["protocol"] = result.Protocol
 	}
+	authStatus := result.Outcome
+	if result.Outcome == "retry" {
+		// Keep the note out of rejected/failed. The worker claims it again
+		// after CalculatorTimeoutRetryAfter.
+		meta["reason"] = "calculator_timeout"
+		authStatus = ""
+	}
 	if result.AccessKey != "" {
 		meta["access_key"] = result.AccessKey
 	}
@@ -892,6 +1281,21 @@ func (s *Service) ApplyTransmissionResult(ctx context.Context, doc Document, toS
 	if result.ResponseObjectKey != "" {
 		meta["response_object_key"] = result.ResponseObjectKey
 		meta["sefaz_response_object_key"] = result.ResponseObjectKey
+	}
+	if doc.DocumentType == "nfse" {
+		if v := strings.TrimSpace(result.VerificationCode); v != "" {
+			meta["codigo_verificacao"] = v
+		}
+		if v := strings.TrimSpace(result.PDFURL); v != "" {
+			meta["url"] = v
+		}
+		if v := strings.TrimSpace(result.ProviderCode); v != "" {
+			meta["nfse_provider"] = v
+		}
+	}
+	if doc.DocumentType == "nfse" && !result.IBSCBS.Empty() {
+		// Webhook / SAP: IBS e CBS oficiais, calculados pela SEFIN Nacional.
+		meta["ibs_cbs"] = result.IBSCBS.WebhookMap()
 	}
 
 	return s.pool.WithTenant(ctx, doc.OrganizationID, func(ctx context.Context, tx pgx.Tx) error {
@@ -903,7 +1307,7 @@ func (s *Service) ApplyTransmissionResult(ctx context.Context, doc Document, toS
 			update organization_documents
 			set status = $3,
 			    processing_status = $4,
-			    completed_at = coalesce($5, completed_at),
+			    completed_at = $5,
 			    updated_at = $6,
 			    version = version + 1
 			where organization_id = $1 and id = $2 and status = $7
@@ -920,7 +1324,7 @@ func (s *Service) ApplyTransmissionResult(ctx context.Context, doc Document, toS
 			authorizedAt = now
 		}
 
-		var series, number *string
+		var series, number, rpsNumber *string
 		if doc.DocumentType == "nfse" {
 			_, err = tx.Exec(ctx, `
 				update organization_nfse
@@ -931,17 +1335,26 @@ func (s *Service) ApplyTransmissionResult(ctx context.Context, doc Document, toS
 				    authorization_status = coalesce(nullif($7, ''), authorization_status),
 				    authorization_code = coalesce(nullif($8, ''), authorization_code),
 				    authorization_message = coalesce(nullif($9, ''), authorization_message),
-				    authorized_at = coalesce($10, authorized_at)
+				    authorized_at = coalesce($10, authorized_at),
+				    provider_pdf_url = coalesce(nullif($11, ''), provider_pdf_url),
+				    provider_pdf_object_key = coalesce(nullif($12, ''), provider_pdf_object_key)
 				where organization_document_id = $1 and organization_id = $2
 			`, doc.ID, doc.OrganizationID, result.AccessKey, result.Protocol, result.Number,
-				result.VerificationCode, result.Outcome, code, motivo, authorizedAt)
+				result.VerificationCode, authStatus, code, motivo, authorizedAt,
+				strings.TrimSpace(result.PDFURL), strings.TrimSpace(result.PDFObjectKey))
 			if err != nil {
 				return err
 			}
+			if !result.IBSCBS.Empty() {
+				if err := persistNFSeIBSCBSResultTx(ctx, tx, doc, result.IBSCBS, now); err != nil {
+					return err
+				}
+			}
 			_ = tx.QueryRow(ctx, `
-				select rps_series, coalesce(nfse_number, rps_number) from organization_nfse
+				select nullif(trim(rps_series), ''), nullif(trim(nfse_number), ''), nullif(trim(rps_number), '')
+				from organization_nfse
 				where organization_document_id = $1 and organization_id = $2
-			`, doc.ID, doc.OrganizationID).Scan(&series, &number)
+			`, doc.ID, doc.OrganizationID).Scan(&series, &number, &rpsNumber)
 			if result.Outcome == "authorized" {
 				if err := s.markSubstitutedOriginalTx(ctx, tx, doc, result.AccessKey, now); err != nil {
 					return err
@@ -990,7 +1403,16 @@ func (s *Service) ApplyTransmissionResult(ctx context.Context, doc Document, toS
 			outboxData["serie"] = *series
 		}
 		if number != nil {
-			outboxData["numero"] = *number
+			n := strings.TrimSpace(*number)
+			if doc.DocumentType == "nfse" {
+				n = normalizeNFSeNumber(n)
+			}
+			if n != "" {
+				outboxData["numero"] = n
+			}
+		}
+		if rpsNumber != nil {
+			outboxData["numero_rps"] = *rpsNumber
 		}
 		for k, v := range meta {
 			outboxData[k] = v
@@ -1203,6 +1625,23 @@ func (s *Service) ResubmitOutbound(ctx context.Context, organizationID, document
 	return s.GetDocument(ctx, organizationID, documentID)
 }
 
+// CalculatorTimeoutRetries counts automatic requeues after an IBS/CBS
+// calculator timeout. The next timeout past CalculatorTimeoutMaxRetries
+// closes the note as failed.
+func (s *Service) CalculatorTimeoutRetries(ctx context.Context, organizationID, documentID uuid.UUID) (int, error) {
+	var n int
+	err := s.pool.WithTenant(ctx, organizationID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			select count(*)
+			from organization_document_events
+			where organization_id = $1 and organization_document_id = $2
+			  and event_type = $3
+			  and metadata_json->>'reason' = 'calculator_timeout'
+		`, organizationID, documentID, messaging.EventDocumentRetryScheduled).Scan(&n)
+	})
+	return n, err
+}
+
 func (s *Service) ClaimQueuedDocuments(ctx context.Context, limit int) ([]Document, error) {
 	var docs []Document
 	err := s.pool.WithTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
@@ -1212,11 +1651,15 @@ func (s *Service) ClaimQueuedDocuments(ctx context.Context, limit int) ([]Docume
 			       status, processing_status, current_version, correlation_id, trace_id,
 			       received_at, completed_at, created_at, updated_at
 			from organization_documents
-			where processing_status in ('queued','retry_scheduled') and status = 'received' and direction = 'outbound'
+			where status = 'received' and direction = 'outbound'
+			  and (
+			    processing_status = 'queued'
+			    or (processing_status = 'retry_scheduled' and updated_at <= $2)
+			  )
 			order by received_at
 			limit $1
 			for update skip locked
-		`, limit)
+		`, limit, time.Now().UTC().Add(-CalculatorTimeoutRetryAfter))
 		if err != nil {
 			return err
 		}
@@ -1307,7 +1750,7 @@ func (s *Service) sameRequestHash(ctx context.Context, documentID uuid.UUID, has
 	err := s.pool.QueryRow(ctx, `
 		select sha256 from organization_document_payloads
 		where organization_document_id = $1 and payload_type = 'original_request'
-		order by created_at asc limit 1
+		order by created_at desc limit 1
 	`, documentID).Scan(&stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

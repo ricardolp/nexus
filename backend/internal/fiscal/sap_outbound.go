@@ -3,6 +3,7 @@ package fiscal
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -561,6 +562,10 @@ func ValidateSAPNFeOutbound(p *SAPNFePayload) error {
 	if p.Numero == nil || strings.TrimSpace(*p.Numero) == "" {
 		return domainerr.Validation("missing_number", "numero is required for outbound NF-e")
 	}
+	numeroDigits := strings.TrimLeft(strings.TrimSpace(*p.Numero), "0")
+	if numeroDigits == "" {
+		return domainerr.Validation("invalid_number", "numero must be between 1 and 999999999")
+	}
 
 	// Items required
 	if len(p.Items) == 0 {
@@ -577,6 +582,19 @@ func ValidateSAPNFeOutbound(p *SAPNFePayload) error {
 	}
 	if !recipientOk {
 		return domainerr.Validation("missing_recipient", "cnpj_destinatario or cpf_destinatario is required for outbound NF-e")
+	}
+
+	for i, item := range p.Items {
+		itemNo := i + 1
+		if item.NumeroItem != nil && *item.NumeroItem > 0 {
+			itemNo = *item.NumeroItem
+		}
+		if item.PisCst == nil || strings.TrimSpace(*item.PisCst) == "" {
+			return domainerr.Validation("missing_pis_cst", fmt.Sprintf("item %d: pis_cst (ou pis_situacao_tributaria) é obrigatório", itemNo))
+		}
+		if item.CofinsCst == nil || strings.TrimSpace(*item.CofinsCst) == "" {
+			return domainerr.Validation("missing_cofins_cst", fmt.Sprintf("item %d: cofins_cst (ou cofins_situacao_tributaria) é obrigatório", itemNo))
+		}
 	}
 
 	return nil

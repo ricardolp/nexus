@@ -61,6 +61,11 @@ function motivoAlreadyHasCode(motivo: string, cstat: string): boolean {
   );
 }
 
+/** SEFAZ/SEFIN cStat is a short numeric code. Gateway errors (certificate_not_found) are not. */
+function isSefazCstat(value: string): boolean {
+  return /^\d{3,4}$/.test(value.trim());
+}
+
 /** SEFAZ/SEFIN rejection payload uses cstat + x_motivo (not inbound's `reason`). */
 export function describeAuthorityResult(meta: Record<string, unknown>): string | undefined {
   const cstat = metaText(meta.cstat) ?? metaText(meta.error_code) ?? metaText(meta.authorization_code);
@@ -70,11 +75,19 @@ export function describeAuthorityResult(meta: Record<string, unknown>): string |
     metaText(meta.error_message) ??
     metaText(meta.authorization_message);
   if (cstat && motivo) {
-    return motivoAlreadyHasCode(motivo, cstat) ? motivo : `${cstat} — ${motivo}`;
+    if (!isSefazCstat(cstat) || motivoAlreadyHasCode(motivo, cstat)) return motivo;
+    return `${cstat} — ${motivo}`;
   }
   if (motivo) return motivo;
-  if (cstat) return `Código ${cstat}`;
+  if (cstat) return isSefazCstat(cstat) ? `Código ${cstat}` : cstat;
   return undefined;
+}
+
+export function formatAuthorityReturn(code?: string | null, message?: string | null): string {
+  const cstat = code?.trim() ?? '';
+  const motivo = message?.trim() ?? '';
+  if (cstat && motivo && isSefazCstat(cstat)) return `${cstat} — ${motivo}`;
+  return motivo || cstat || '—';
 }
 
 export interface DescribedEvent {
@@ -117,6 +130,86 @@ export function describeInboundEvent(event: ApiDocumentEvent): DescribedEvent {
       };
     }
 
+    case 'fiscal.document.cce_requested.v1': {
+      const bits: string[] = [];
+      const correcao = metaText(meta.correcao);
+      const nSeq = metaText(meta.n_seq_evento);
+      if (nSeq) bits.push(`Seq. ${nSeq}`);
+      if (correcao) bits.push(correcao);
+      return {
+        title: 'Carta de correção solicitada',
+        description: bits.join(' · ') || undefined
+      };
+    }
+
+    case 'fiscal.document.correction_registered.v1': {
+      const bits = [describeAuthorityResult(meta)];
+      if (typeof meta.protocol === 'string' && meta.protocol) bits.push(`Protocolo ${meta.protocol}`);
+      return {
+        title: 'Carta de correção registrada',
+        description: bits.filter(Boolean).join(' · ') || undefined
+      };
+    }
+
+    case 'fiscal.document.inutilization_requested.v1': {
+      const bits: string[] = [];
+      const serie = metaText(meta.serie);
+      const ini = metaText(meta.numero_inicial);
+      const fim = metaText(meta.numero_final);
+      if (serie) bits.push(`Série ${serie}`);
+      if (ini && fim) bits.push(`Números ${ini}–${fim}`);
+      return {
+        title: 'Inutilização solicitada',
+        description: bits.join(' · ') || undefined
+      };
+    }
+
+    case 'fiscal.document.protocol_requested.v1':
+      return {
+        title: 'Protocolo solicitado',
+        description: 'Consulta do protocolo de autorização enviada à SEFAZ.'
+      };
+
+    case 'fiscal.document.danfe_uploaded.v1':
+      return {
+        title: 'DANFE recebida',
+        description: 'PDF da DANFE gerado no SAP e anexado à nota.'
+      };
+
+    case 'fiscal.document.protocol_result.v1': {
+      const bits = [describeAuthorityResult(meta)];
+      if (typeof meta.protocol === 'string' && meta.protocol) bits.push(`Protocolo ${meta.protocol}`);
+      return {
+        title: 'Protocolo consultado',
+        description: bits.filter(Boolean).join(' · ') || undefined
+      };
+    }
+
+    case 'manifestacao': {
+      const type = metaText(meta.manifestation_type);
+      const titleByType: Record<string, string> = {
+        confirmacao_da_operacao: 'Destinatário confirmou a operação',
+        ciencia_da_operacao: 'Destinatário registrou ciência',
+        desconhecimento_da_operacao: 'Destinatário desconheceu a operação',
+        operacao_nao_realizada: 'Destinatário recusou a operação'
+      };
+      const bits: string[] = [];
+      if (typeof meta.protocol === 'string' && meta.protocol) bits.push(`Protocolo ${meta.protocol}`);
+      if (typeof meta.justification === 'string' && meta.justification) bits.push(meta.justification);
+      return {
+        title: (type && titleByType[type]) || 'Manifestação do destinatário',
+        description: bits.join(' · ') || undefined
+      };
+    }
+
+    case 'fiscal.document.event_received.v1':
+      return {
+        title: 'Evento DistDFe recebido',
+        description:
+          describeAuthorityResult(meta) ??
+          (typeof meta.tp_evento === 'string' ? `tpEvento ${meta.tp_evento}` : undefined)
+      };
+
     case 'fiscal.document.cancelled.v1': {
       const bits = [describeAuthorityResult(meta)];
       if (typeof meta.protocol === 'string' && meta.protocol) bits.push(`Protocolo ${meta.protocol}`);
@@ -126,6 +219,25 @@ export function describeInboundEvent(event: ApiDocumentEvent): DescribedEvent {
       };
     }
 
+    case 'fiscal.document.status_changed.v1': {
+      const kind = metaText(meta.event_kind);
+      const outcome = metaText(meta.outcome);
+      const result = describeAuthorityResult(meta);
+      if (kind === 'cancel' && outcome !== 'accepted') {
+        return {
+          title: outcome === 'error' ? 'Falha ao enviar cancelamento' : 'Cancelamento rejeitado',
+          description: result ? `${result} · A nota continua autorizada.` : 'A nota continua autorizada.'
+        };
+      }
+      if (kind === 'cce' && outcome !== 'accepted') {
+        return {
+          title: outcome === 'error' ? 'Falha ao enviar carta de correção' : 'Carta de correção rejeitada',
+          description: result
+        };
+      }
+      return { title: 'Status atualizado', description: result };
+    }
+
     case 'fiscal.document.rejected.v1':
       return {
         title: 'Documento rejeitado pela autoridade',
@@ -133,16 +245,65 @@ export function describeInboundEvent(event: ApiDocumentEvent): DescribedEvent {
       };
 
     case 'fiscal.document.failed.v1':
+      if (metaText(meta.error_code) === 'certificate_not_found' || metaText(meta.cstat) === 'certificate_not_found') {
+        return {
+          title: 'Certificado digital ausente',
+          description:
+            describeAuthorityResult(meta) ??
+            'A empresa não tem certificado A1 ativo. Cadastre o certificado em Configurações → Empresas para transmitir a nota.'
+        };
+      }
+      if (metaText(meta.error_code) === 'certificate_expired' || metaText(meta.cstat) === 'certificate_expired') {
+        return {
+          title: 'Certificado digital vencido',
+          description:
+            describeAuthorityResult(meta) ??
+            'O certificado A1 da empresa está vencido ou ainda não é válido. Envie um certificado válido em Configurações → Empresas.'
+        };
+      }
+      if (metaText(meta.error_code) === 'processing_cancelled' || metaText(meta.cstat) === 'processing_cancelled') {
+        return {
+          title: 'Processamento cancelado',
+          description:
+            describeAuthorityResult(meta) ??
+            'Um administrador interrompeu o processamento antes do envio à autoridade fiscal.'
+        };
+      }
       return {
         title: 'Falha na transmissão',
         description: describeAuthorityResult(meta) ?? 'Erro ao transmitir o documento.'
       };
 
     case 'fiscal.document.retry_scheduled.v1':
+      if (metaText(meta.reason) === 'calculator_timeout') {
+        return {
+          title: 'Calculadora indisponível',
+          description:
+            metaText(meta.x_motivo) ||
+            metaText(meta.error_message) ||
+            'A calculadora do IBS/CBS não respondeu a tempo. A nota volta para a fila em alguns minutos.'
+        };
+      }
+      if (metaText(meta.reason) === 'stale_processing') {
+        return {
+          title: 'Processamento retomado',
+          description: 'A nota ficou parada por mais de 10 minutos e voltou para a fila de envio.'
+        };
+      }
       return {
         title: 'Reenvio enfileirado',
         description: 'A nota será transmitida novamente à autoridade fiscal.'
       };
+
+    case 'fiscal.document.resubmitted.v1': {
+      const previous = [metaText(meta.previous_cstat), metaText(meta.previous_xmotivo)].filter(Boolean).join(' - ');
+      return {
+        title: 'Reenviada pelo SAP (payload atualizado)',
+        description: previous
+          ? `A nota foi recebida novamente e voltou para a fila de envio. Retorno anterior: ${previous}.`
+          : 'A nota foi recebida novamente e voltou para a fila de envio com o novo payload.'
+      };
+    }
 
     case 'fiscal.inbound.scenario_not_found.v1': {
       const bits: string[] = [];

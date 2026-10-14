@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Wrapper de teste (não é schema oficial): valida os grupos da Reforma
+     Tributária isoladamente contra os tipos oficiais do DFeTiposBasicos. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns="http://www.portalfiscal.inf.br/nfe"
+           targetNamespace="http://www.portalfiscal.inf.br/nfe"
+           elementFormDefault="qualified" attributeFormDefault="unqualified">
+	<xs:include schemaLocation="DFeTiposBasicos_v1.00.xsd"/>
+	<xs:element name="IBSCBS" type="TTribNFe"/>
+	<xs:element name="IBSCBSTot" type="TIBSCBSMonoTot"/>
+</xs:schema>

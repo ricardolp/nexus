@@ -18,11 +18,15 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/nexus/fiscal-messaging/internal/certificate"
 	"github.com/nexus/fiscal-messaging/internal/config"
+	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/integrationlog"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
+	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/db"
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
 	"github.com/nexus/fiscal-messaging/internal/platform/keyvault"
 	"github.com/nexus/fiscal-messaging/internal/platform/metrics"
+	"github.com/nexus/fiscal-messaging/internal/platform/storage"
 	"github.com/nexus/fiscal-messaging/internal/transport/httpapi"
 )
 
@@ -56,9 +60,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	store, err := storage.Resolve(cfg.StorageBackend, cfg.StorageLocalPath, cfg.SecretsEncryptionKey)
+	if err != nil {
+		logger.Error("storage", "error", err)
+		os.Exit(1)
+	}
+
+	orgs := organization.NewService(pool)
 	api := &httpapi.InternalAPI{
 		Certificates:    certificate.NewService(pool, certStore),
 		IntegrationLogs: integrationlog.NewRecorder(pool, logger),
+		Fiscal:          fiscal.NewService(pool, store, orgs, cfg.ObjectStoragePrefix),
+		NFSeProviders:   nfseprovider.NewService(pool, cfg.SecretsEncryptionKey),
 		ServiceToken:    cfg.NFEGatewayServiceToken,
 	}
 

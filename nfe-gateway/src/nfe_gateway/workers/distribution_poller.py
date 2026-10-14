@@ -18,19 +18,25 @@ import logging
 from datetime import datetime, timezone
 
 from nfe_gateway.backend_client import BackendClient
-from nfe_gateway.config import load_settings
+from nfe_gateway.config import encryption_key_bytes, load_settings
 from nfe_gateway.credentials import CredentialsStore
 from nfe_gateway.db import Database, DueCompany
 from nfe_gateway.distribution_state import PollOutcome, PollState, decide_next_poll, record_call
 from nfe_gateway.oauth import TokenCache
 from nfe_gateway.sefaz.client import SefazClient
-from nfe_gateway.sefaz.distribution import classify_cstat, parse_pending_summary
+from nfe_gateway.sefaz.distribution import classify_cstat
+from nfe_gateway.storage import ObjectStore, build_object_store
+from nfe_gateway.workers.dist_route import route_non_proc_nfe_document
 
 logger = logging.getLogger("nfe_gateway.distribution_poller")
 
 
 async def process_company(
-    db: Database, backend: BackendClient, sefaz: SefazClient, company: DueCompany
+    db: Database,
+    backend: BackendClient,
+    sefaz: SefazClient,
+    company: DueCompany,
+    store: ObjectStore | None = None,
 ) -> None:
     started = datetime.now(timezone.utc)
     try:
@@ -76,48 +82,17 @@ async def process_company(
     try:
         for doc in result.documents:
             if not doc.schema.startswith("procNFe"):
-                # distNSU's first hit on a backlog is often resNFe/resEvento
-                # (a lightweight summary — chave/CNPJ/date, no full signed
-                # body) rather than a complete procNFe. procEventoNFe (CC-e,
-                # cancelamento, ciencia da operacao, ...) is a real full
-                # document too, but its body is <envEvento>/<infEvento>, not
-                # <infNFe> — it belongs to a different schema family, not a
-                # "lighter" version of procNFe. The backend's inbound
-                # endpoint resolves organization_company_id from issuer/
-                # recipient CNPJ *inside* an <infNFe> element (see
-                # backend/internal/inbound/nfe_header_extract.go —
-                # ExtractNFeHeader scans for one at any depth); neither
-                # resNFe/resEvento nor procEventoNFe ever has one, so the
-                # header comes back nil and resolveCompany rejects with
-                # missing_company — confirmed live 2026-08-16 (5 real
-                # procEventoNFe docs from LS Mtron all failed this way).
-                # There is no Go-side endpoint for ingesting standalone NF-e
-                # events yet (separate future feature), so for now these are
-                # skipped the same as summary-only docs. Fetching a full
-                # procNFe document by chave is a separate on-demand call
-                # (see workers/query_worker.py's chave query type) — not
-                # this poller's job. Advancing past it here instead of
-                # retrying matters *right now*: retrying with an unadvanced
-                # last_nsu re-requests the identical NSU, and SEFAZ's own
-                # real response to that is cStat 656 ("Deve ser utilizado o
-                # ultNSU nas solicitacoes subsequentes") — confirmed live
-                # 2026-08-16, not a hypothetical risk.
                 documents_summary_only += 1
-                summary = parse_pending_summary(doc.xml_bytes)
-                if summary is not None and summary.chave:
-                    await db.upsert_pending_manifestation_document(
-                        organization_id=company.organization_id,
-                        organization_company_id=company.organization_company_id,
-                        chave=summary.chave,
-                        nsu=doc.nsu,
-                        schema=doc.schema,
-                        cnpj_emitente=summary.cnpj_emitente,
-                        nome_emitente=summary.nome_emitente,
-                        valor=summary.valor,
-                        data_emissao=summary.data_emissao,
-                        protocolo=summary.protocolo,
-                        situacao=summary.situacao,
-                    )
+                await route_non_proc_nfe_document(
+                    db=db,
+                    backend=backend,
+                    store=store,
+                    organization_id=company.organization_id,
+                    organization_company_id=company.organization_company_id,
+                    schema=doc.schema,
+                    nsu=doc.nsu,
+                    xml_bytes=doc.xml_bytes,
+                )
                 await db.advance_nsu(company.state_id, last_nsu=doc.nsu, max_nsu=result.max_nsu)
                 continue
             await backend.ingest_inbound_nfe(
@@ -239,6 +214,11 @@ async def run() -> None:
         token_cache,
     )
     sefaz: SefazClient = _build_sefaz_client(settings.sefaz_force_homologacao)
+    store = build_object_store(
+        settings.storage_backend,
+        settings.storage_local_path,
+        encryption_key_bytes(settings),
+    )
     semaphore = asyncio.Semaphore(settings.distribution_max_concurrent_sefaz_calls)
 
     logger.info("distribution_poller started")
@@ -250,7 +230,7 @@ async def run() -> None:
 
             async def bounded(c: DueCompany) -> None:
                 async with semaphore:
-                    await process_company(db, backend, sefaz, c)
+                    await process_company(db, backend, sefaz, c, store=store)
 
             await asyncio.gather(*(bounded(c) for c in companies))
             await asyncio.sleep(settings.distribution_poll_tick_seconds)

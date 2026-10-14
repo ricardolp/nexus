@@ -13,6 +13,10 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
 )
 
+// maxCapturedBodyBytes must stay above every LimitBody applied before this
+// middleware (e.g. the SAP DANFE upload), otherwise large bodies get truncated.
+const maxCapturedBodyBytes = 32 << 20
+
 // Middleware logs inbound HTTP exchanges (Tokens / inbound_api).
 // Skip /health. Capture is best-effort and never alters the response.
 func Middleware(rec *Recorder) func(http.Handler) http.Handler {
@@ -26,7 +30,7 @@ func Middleware(rec *Recorder) func(http.Handler) http.Handler {
 			start := time.Now().UTC()
 			var reqBody []byte
 			if r.Body != nil {
-				limited := io.LimitReader(r.Body, httpx.DefaultMaxBodyBytes+1)
+				limited := io.LimitReader(r.Body, maxCapturedBodyBytes)
 				buf, err := io.ReadAll(limited)
 				_ = r.Body.Close()
 				if err == nil {
@@ -37,6 +41,8 @@ func Middleware(rec *Recorder) func(http.Handler) http.Handler {
 				}
 			}
 
+			ctx, resolvedPrincipal := auth.WithPrincipalSlot(r.Context())
+			r = r.WithContext(ctx)
 			rw := &captureWriter{ResponseWriter: w, status: http.StatusOK, limit: DefaultBodyPreviewLimit}
 			next.ServeHTTP(rw, r)
 
@@ -48,7 +54,7 @@ func Middleware(rec *Recorder) func(http.Handler) http.Handler {
 			actorType := "api_client"
 			actorID := ""
 			var orgID *uuid.UUID
-			if p, ok := auth.PrincipalFrom(r.Context()); ok {
+			if p, ok := resolvedPrincipal(); ok {
 				if p.OrganizationID != uuid.Nil {
 					id := p.OrganizationID
 					orgID = &id
@@ -81,6 +87,12 @@ func Middleware(rec *Recorder) func(http.Handler) http.Handler {
 
 			summary := r.Method + " " + r.URL.Path
 			level := LevelFromStatus(status)
+			reqPreviewSrc := reqBody
+			respPreviewSrc := rw.body.Bytes()
+			if r.URL.Path == "/v1/oauth/token" {
+				reqPreviewSrc = RedactJSONFields(reqBody, "client_secret")
+				respPreviewSrc = RedactJSONFields(respPreviewSrc, "access_token")
+			}
 			entry := Entry{
 				OrganizationID:      orgID,
 				CorrelationID:       httpx.CorrelationIDFrom(r.Context()),
@@ -100,8 +112,8 @@ func Middleware(rec *Recorder) func(http.Handler) http.Handler {
 				RequestHash:         HashBody(reqBody),
 				RequestHeaders:      HeadersJSON(r.Header),
 				ResponseHeaders:     HeadersJSON(rw.Header()),
-				RequestBodyPreview:  TruncateBody(reqBody, DefaultBodyPreviewLimit),
-				ResponseBodyPreview: TruncateBody(rw.body.Bytes(), DefaultBodyPreviewLimit),
+				RequestBodyPreview:  TruncateBody(reqPreviewSrc, DefaultBodyPreviewLimit),
+				ResponseBodyPreview: TruncateBody(respPreviewSrc, DefaultBodyPreviewLimit),
 				StartedAt:           start,
 				FinishedAt:          &finished,
 			}

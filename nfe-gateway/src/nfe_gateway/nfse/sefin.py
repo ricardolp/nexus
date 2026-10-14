@@ -12,6 +12,8 @@ from typing import Any
 import requests
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, pkcs12
 
+from nfe_gateway.nfse.retorno import extract_ibscbs, extract_nfse_number
+
 SEFIN_PROD = "https://sefin.nfse.gov.br/SefinNacional"
 SEFIN_HOMOLOG = "https://sefin.producaorestrita.nfse.gov.br/SefinNacional"
 
@@ -61,6 +63,46 @@ def _lookup(data: dict[str, Any], *keys: str) -> str:
         if text:
             return text
     return ""
+
+
+def is_calculator_unavailable(message: str) -> bool:
+    """SEFIN wraps a cancelled or timed-out call to the IBS/CBS calculator.
+
+    The inner text is the .NET exception ("A task was canceled.",
+    "The operation has timed out"), not a tax rule. Those responses must not
+    close the note.
+    """
+    text = (message or "").casefold()
+    return any(
+        marker in text
+        for marker in (
+            "the operation has timed out",
+            "a task was canceled",
+            "a task was cancelled",
+        )
+    )
+
+
+def _retry_result(
+    *,
+    signed_xml: bytes,
+    message: str,
+    codigo: str = "calculator_timeout",
+    http_status: int = 504,
+    response_xml: bytes = b"",
+    raw: Any = None,
+) -> dict[str, Any]:
+    return {
+        "outcome": "retry",
+        "error_code": codigo or "calculator_timeout",
+        "error_message": message,
+        "cstat": codigo or "calculator_timeout",
+        "x_motivo": message,
+        "response_xml": response_xml,
+        "signed_xml": signed_xml,
+        "http_status": http_status,
+        "raw": raw if raw is not None else {"message": message},
+    }
 
 
 def _format_sefin_errors(payload: Any, *, fallback: str) -> tuple[str, str]:
@@ -125,13 +167,23 @@ def post_dps(
     key_path, cert_path = _materialize_mtls_files(pfx)
     http = session or requests.Session()
     try:
-        resp = http.post(
-            url,
-            data=json.dumps(body),
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            cert=(str(cert_path), str(key_path)),
-            timeout=timeout,
-        )
+        try:
+            resp = http.post(
+                url,
+                data=json.dumps(body),
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                cert=(str(cert_path), str(key_path)),
+                timeout=timeout,
+            )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            return _retry_result(
+                signed_xml=signed_xml,
+                message=(
+                    "A calculadora da NFS-e não respondeu a tempo. "
+                    "A nota volta para a fila automaticamente. "
+                    f"({exc.__class__.__name__})"
+                ),
+            )
     finally:
         _shred(key_path)
         _shred(cert_path)
@@ -149,11 +201,16 @@ def post_dps(
                 nfse_xml = gunzip_b64(nfse_b64)
             except Exception:  # noqa: BLE001
                 nfse_xml = b""
-        return {
+        number = extract_nfse_number(nfse_xml) if nfse_xml else ""
+        if not number:
+            number = str(payload.get("numero") or payload.get("nNFSe") or "").strip()
+            if number.isdigit():
+                number = number.lstrip("0") or "0"
+        result = {
             "outcome": "authorized",
             "access_key": str(payload.get("chaveAcesso") or payload.get("chave_acesso") or ""),
             "protocol": str(payload.get("idDps") or payload.get("id_dps") or ""),
-            "number": str(payload.get("numero") or payload.get("nNFSe") or ""),
+            "number": number,
             "verification_code": str(payload.get("codigoVerificacao") or payload.get("codigo_verificacao") or ""),
             "cstat": "100",
             "x_motivo": "NFS-e autorizada",
@@ -162,10 +219,25 @@ def post_dps(
             "http_status": resp.status_code,
             "raw": payload,
         }
+        # IBS/CBS calculado pela SEFIN (infNFSe/IBSCBS) — o backend persiste e
+        # devolve ao cliente; a DPS não carrega esses valores.
+        ibscbs = extract_ibscbs(nfse_xml) if nfse_xml else None
+        if ibscbs:
+            result["ibscbs"] = ibscbs
+        return result
 
     codigo, mensagem = _format_sefin_errors(payload, fallback=str(resp.reason or f"HTTP {resp.status_code}"))
     if not codigo:
         codigo = str(resp.status_code)
+    if is_calculator_unavailable(mensagem):
+        return _retry_result(
+            signed_xml=signed_xml,
+            message=mensagem,
+            codigo=codigo,
+            http_status=resp.status_code,
+            response_xml=resp.content if isinstance(resp.content, (bytes, bytearray)) else b"",
+            raw=payload,
+        )
 
     return {
         "outcome": "rejected" if 400 <= resp.status_code < 500 else "error",

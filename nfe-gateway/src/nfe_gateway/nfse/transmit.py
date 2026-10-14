@@ -28,6 +28,11 @@ def transmit_nfse(
         }
 
     homologacao = resolve_homologacao(environment, force_homologacao)
+    return transmit_dps(payload, pfx=pfx, homologacao=homologacao)
+
+
+def transmit_dps(payload: dict[str, Any], *, pfx: bytes, homologacao: bool) -> dict[str, Any]:
+    """Map the canonical NFS-e JSON to a DPS, sign and POST it to SEFIN."""
     try:
         unsigned = build_unsigned_dps(payload, homologacao=homologacao)
     except SapNfseMapperError as exc:

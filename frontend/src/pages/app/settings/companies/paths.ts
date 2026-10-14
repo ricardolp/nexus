@@ -4,6 +4,7 @@ export type CompanyTab =
   | 'general'
   | 'certificate'
   | 'nfse-activities'
+  | 'nfse-provider'
   | 'process-flows'
   | 'emails'
   | 'danger';

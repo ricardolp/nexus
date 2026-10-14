@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 
 import type { ApiFiscalDocument } from '@/lib/api-types';
+import type { FiscalDocumentListCounts } from '@/lib/endpoints';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -29,14 +30,25 @@ const KPI_CONFIG: {
 
 export function KpiSummaryCards({
   documents,
+  totals,
   activeFilter,
   onFilterChange
 }: {
   documents: ApiFiscalDocument[];
+  totals?: FiscalDocumentListCounts;
   activeFilter: DocumentListFilter;
   onFilterChange: (filter: DocumentListFilter) => void;
 }) {
   const counts = useMemo(() => {
+    if (totals) {
+      return {
+        all: totals.all,
+        action_needed: totals.action_needed,
+        in_progress: totals.in_progress,
+        completed: totals.completed,
+        problem: totals.problem
+      };
+    }
     const c: Record<DocumentListFilter, number> = {
       all: documents.length,
       action_needed: 0,
@@ -48,7 +60,7 @@ export function KpiSummaryCards({
       c[documentListBucket(doc.status)]++;
     }
     return c;
-  }, [documents]);
+  }, [documents, totals]);
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -150,11 +151,61 @@ func (a *ControlPlane) resubmitOutboundDocument(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (a *ControlPlane) cancelOutboundNFSe(w http.ResponseWriter, r *http.Request) {
+func (a *ControlPlane) abortOutboundProcessing(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFrom(r.Context())
 	orgID, docID, err := parseOrgAndID(r, "document_id")
 	if err != nil {
 		writeErr(w, r, err)
+		return
+	}
+	if err := a.ensureProcessingAdmin(r, orgID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	updated, err := a.Fiscal.AbortOutboundProcessing(r.Context(), orgID, docID, "user", p.UserID.String())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"document_id":       updated.ID,
+		"status":            updated.Status,
+		"processing_status": updated.ProcessingStatus,
+	})
+}
+
+func (a *ControlPlane) cancelOutboundDocument(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	doc, err := a.Fiscal.GetDocument(r.Context(), orgID, docID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if strings.EqualFold(doc.DocumentType, "nfe") {
+		if err := a.ensureOrganizationPermission(r, orgID, "nfe:cancel"); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		var body fiscal.CancelNFeInput
+		if err := httpx.DecodeJSON(r, &body); err != nil {
+			writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+			return
+		}
+		updated, err := a.Fiscal.RequestCancelNFe(r.Context(), orgID, docID, body, "user", p.UserID.String())
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+			"document_id":       updated.ID,
+			"status":            updated.Status,
+			"processing_status": updated.ProcessingStatus,
+		})
 		return
 	}
 	if err := a.ensureOrganizationPermission(r, orgID, "nfse:cancel"); err != nil {
@@ -176,6 +227,85 @@ func (a *ControlPlane) cancelOutboundNFSe(w http.ResponseWriter, r *http.Request
 		"status":            updated.Status,
 		"processing_status": updated.ProcessingStatus,
 	})
+}
+
+func (a *ControlPlane) requestOutboundCCe(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, "nfe:cancel"); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body fiscal.CCeInput
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	updated, err := a.Fiscal.RequestCCe(r.Context(), orgID, docID, body, "user", p.UserID.String())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"document_id":       updated.ID,
+		"status":            updated.Status,
+		"processing_status": updated.ProcessingStatus,
+	})
+}
+
+func (a *ControlPlane) requestOutboundProtocol(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, docID, err := parseOrgAndID(r, "document_id")
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, "nfe:create"); err != nil {
+		if err2 := a.ensureOrganizationPermission(r, orgID, "nfe_inbound:manage"); err2 != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	updated, err := a.Fiscal.RequestProtocol(r.Context(), orgID, docID, "user", p.UserID.String())
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"document_id": updated.ID,
+		"status":      "queued",
+	})
+}
+
+func (a *ControlPlane) requestInutilization(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	orgID, err := uuid.Parse(chi.URLParam(r, "organization_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "Invalid organization_id"))
+		return
+	}
+	if err := a.ensureOrganizationPermission(r, orgID, "nfe:cancel"); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body fiscal.InutilizationInput
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	if err := a.Fiscal.RequestInutilization(r.Context(), orgID, body, "user", p.UserID.String()); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "queued"})
+}
+
+func (a *ControlPlane) cancelOutboundNFSe(w http.ResponseWriter, r *http.Request) {
+	a.cancelOutboundDocument(w, r)
 }
 
 func (a *ControlPlane) downloadFiscalDocumentsZip(w http.ResponseWriter, r *http.Request) {

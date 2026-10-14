@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,9 +43,17 @@ func (w *Worker) processOne(ctx context.Context, doc Document) error {
 	finished := time.Now().UTC()
 	if err != nil {
 		w.recordAttempt(ctx, doc, 1, result, started, finished, "error", err.Error())
-		return w.docs.UpdateStatus(ctx, doc.OrganizationID, doc.ID, doc.Status, StatusFailed, ProcessingFailed, "worker", "fiscal_worker", messaging.EventDocumentStatusChanged, map[string]any{
-			"error": err.Error(),
-		})
+		meta := map[string]any{"error": err.Error(), "error_message": err.Error()}
+		var de *domainerr.Error
+		if errors.As(err, &de) && de.Code != "" {
+			meta["error_code"] = de.Code
+			meta["cstat"] = de.Code
+		}
+		if updateErr := w.docs.UpdateStatus(ctx, doc.OrganizationID, doc.ID, doc.Status, StatusFailed, ProcessingFailed, "worker", "fiscal_worker", EventTypeForOutcome("error"), meta); updateErr != nil {
+			return updateErr
+		}
+		_ = w.docs.StampAuthorizationFailure(ctx, doc, metaString(meta, "error_code"), err.Error())
+		return nil
 	}
 
 	outcome := result.Outcome
@@ -57,13 +66,25 @@ func (w *Worker) processOne(ctx context.Context, doc Document) error {
 	eventType := EventTypeForOutcome(outcome)
 
 	meta := map[string]any{}
-	if outcome == "rejected" {
+	if result.ErrorCode != "" {
 		meta["error_code"] = result.ErrorCode
-	} else if result.Protocol != "" {
+		meta["cstat"] = result.ErrorCode
+	}
+	if result.ErrorMessage != "" {
+		meta["error_message"] = result.ErrorMessage
+		meta["x_motivo"] = result.ErrorMessage
+	}
+	if result.Protocol != "" {
 		meta["protocol"] = result.Protocol
 	}
 
-	return w.docs.UpdateStatus(ctx, doc.OrganizationID, doc.ID, doc.Status, status, processing, "provider", result.Provider, eventType, meta)
+	if err := w.docs.UpdateStatus(ctx, doc.OrganizationID, doc.ID, doc.Status, status, processing, "provider", result.Provider, eventType, meta); err != nil {
+		return err
+	}
+	if outcome == "error" || outcome == "rejected" {
+		_ = w.docs.StampAuthorizationFailure(ctx, doc, result.ErrorCode, result.ErrorMessage)
+	}
+	return nil
 }
 
 // TransmissionResult is the payload shape nfe-gateway publishes on
@@ -84,6 +105,17 @@ type TransmissionResult struct {
 	TpEmis            int       `json:"tp_emis"`
 	Number            string    `json:"number"`            // NFS-e number (SEFIN)
 	VerificationCode  string    `json:"verification_code"` // NFS-e codigo verificacao
+	// IBSCBS is the IBS/CBS the SEFIN Nacional calculated on the authorized
+	// NFS-e (infNFSe/IBSCBS). Nil for NF-e and for NFS-e without the group.
+	IBSCBS *NFSeIBSCBSResult `json:"ibscbs,omitempty"`
+	// ProviderCode é o provedor municipal de NFS-e que respondeu
+	// (sefin_nacional, ipm, ...). Ver docs/architecture/25_nfse_provedores_municipais.md.
+	ProviderCode string `json:"provider_code,omitempty"`
+	// PDFURL é o link oficial da NFS-e no provedor municipal (Focus: "url").
+	PDFURL string `json:"pdf_url,omitempty"`
+	// PDFObjectKey é o PDF oficial do provedor gravado no object store pelo
+	// gateway — usado no download do DANFSe quando não há XML nacional.
+	PDFObjectKey string `json:"pdf_object_key,omitempty"`
 }
 
 // EventResult is the payload shape nfe-gateway publishes on
@@ -153,6 +185,10 @@ func (w *Worker) HandleTransmissionResult(ctx context.Context, payload []byte) e
 		return err
 	}
 
+	if err := w.exhaustCalculatorTimeout(ctx, doc.OrganizationID, doc.ID, &result); err != nil {
+		return err
+	}
+
 	now := time.Now().UTC()
 	w.recordAttempt(ctx, *doc, 2, ProviderResult{
 		Outcome:      result.Outcome,
@@ -189,9 +225,22 @@ func (w *Worker) HandleEventResult(ctx context.Context, payload []byte) error {
 	if err != nil {
 		return err
 	}
+
+	// Inutilization is number-range scoped. When optionally linked to a document,
+	// keep the note's legal status (authorized etc.) and only store XML proofs.
+	if result.EventKind == "inutilization" {
+		_ = w.docs.RegisterEventPayloads(ctx, doc.OrganizationID, doc.ID, result.EventKind, result.RequestObjectKey, result.ResponseObjectKey)
+		return nil
+	}
+
 	status, processing, ok := NextStatusesFromEventResult(result.EventKind, result.Outcome)
 	if !ok {
 		status, processing = StatusFailed, ProcessingFailed
+	}
+	// A rejected CC-e leaves the NF-e legally unchanged (authorized or
+	// correction_registered).
+	if result.EventKind == "cce" && result.Outcome != "accepted" {
+		status, processing = doc.Status, ProcessingCompleted
 	}
 	eventType := EventTypeForOutcome(result.Outcome)
 	if result.Outcome == "accepted" {
@@ -200,17 +249,19 @@ func (w *Worker) HandleEventResult(ctx context.Context, payload []byte) error {
 			eventType = EventTypeForOutcome("cancelled")
 		case "cce":
 			eventType = EventTypeForOutcome("correction_registered")
-		case "inutilization":
-			eventType = EventTypeForOutcome("inutilized")
 		}
-	} else if result.EventKind == "cancel" && status == StatusAuthorized {
+	} else if (result.EventKind == "cancel" && status == StatusAuthorized) || result.EventKind == "cce" {
 		eventType = messaging.EventDocumentStatusChanged
 	}
 	meta := map[string]any{
 		"event_kind": result.EventKind,
+		"outcome":    result.Outcome,
 		"cstat":      result.CStat,
 		"x_motivo":   result.XMotivo,
 		"protocol":   result.Protocol,
+	}
+	if result.ErrorMessage != "" {
+		meta["error_message"] = result.ErrorMessage
 	}
 	if result.RequestObjectKey != "" {
 		meta["request_object_key"] = result.RequestObjectKey
@@ -225,9 +276,41 @@ func (w *Worker) HandleEventResult(ctx context.Context, payload []byte) error {
 		return err
 	}
 	if result.EventKind == "cancel" || result.EventKind == "cce" {
-		_ = w.docs.RegisterCancelPayloads(ctx, doc.OrganizationID, doc.ID, result.RequestObjectKey, result.ResponseObjectKey)
+		_ = w.docs.RegisterEventPayloads(ctx, doc.OrganizationID, doc.ID, result.EventKind, result.RequestObjectKey, result.ResponseObjectKey)
 	}
 	return nil
+}
+
+func (w *Worker) exhaustCalculatorTimeout(ctx context.Context, organizationID, documentID uuid.UUID, result *TransmissionResult) error {
+	if result.Outcome != "retry" {
+		return nil
+	}
+	n, err := w.docs.CalculatorTimeoutRetries(ctx, organizationID, documentID)
+	if err != nil {
+		return err
+	}
+	if n < CalculatorTimeoutMaxRetries {
+		return nil
+	}
+	result.Outcome = "error"
+	msg := strings.TrimSpace(result.ErrorMessage)
+	if msg == "" {
+		msg = strings.TrimSpace(result.XMotivo)
+	}
+	const suffix = "Tentativas automáticas esgotadas. Reenvie a nota."
+	if msg == "" {
+		msg = suffix
+	} else if !strings.Contains(msg, suffix) {
+		msg = msg + " " + suffix
+	}
+	result.ErrorMessage = msg
+	result.XMotivo = msg
+	return nil
+}
+
+func metaString(meta map[string]any, key string) string {
+	value, _ := meta[key].(string)
+	return value
 }
 
 func (w *Worker) recordAttempt(ctx context.Context, doc Document, attempt int, result ProviderResult, started, finished time.Time, outcome, errMsg string) {

@@ -1,0 +1,110 @@
+{
+  "info": {
+    "_postman_id": "c4e1a8b2-7f3d-4a91-9c6e-2b8d5f0a1e44",
+    "name": "Nexus — SAP NFS-e DANFSE",
+    "description": "Consulta o PDF da DANFSE (DANFE da nota de serviço) de uma NFS-e de saída já autorizada.\n\nUse o environment **SAP NF-e Saída** (mesmas variáveis `base_inbound` e `x_org_token`).\n\n- Auth: header `X-Org-Token`\n- A nota precisa estar autorizada na SEFIN (XML em `sefaz_response`). Sem isso a API responde `danfse_xml_not_found`.\n- O path aceita a chave nacional da NFS-e (50 dígitos) ou o `document_id` (UUID) devolvido na emissão.\n- Resposta: `application/pdf`. No Postman use **Send and Download** para gravar o arquivo.\n\nSem barra no final.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Download DANFSE por chave",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('DANFSE PDF', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.headers.get('Content-Type') || '').to.include('application/pdf');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{base_inbound}}/v1/nfse/documents/sap/{{chave_nfse}}/danfe",
+        "description": "PDF da DANFSE gerado na hora a partir do XML autorizado.\n\nPreencha `chave_nfse` com a chave de acesso nacional da NFS-e (50 dígitos).\n\nAuth: header `X-Org-Token` (o mesmo da emissão SAP).\nEscopo exigido: `fiscal_documents:outbound:create`."
+      },
+      "response": []
+    },
+    {
+      "name": "Download DANFSE por document_id",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('DANFSE PDF', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.headers.get('Content-Type') || '').to.include('application/pdf');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{base_inbound}}/v1/nfse/documents/sap/{{nfse_document_id}}/danfe",
+        "description": "Mesmo PDF, localizando a NFS-e pelo UUID `document_id` retornado no POST de emissão (`/v1/fiscal_documents/nfse`).\n\nPreencha `nfse_document_id`."
+      },
+      "response": []
+    },
+    {
+      "name": "Download XML por chave",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('XML autorizado', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.headers.get('Content-Type') || '').to.include('xml');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{base_inbound}}/v1/nfse/documents/sap/{{chave_nfse}}/xml",
+        "description": "XML autorizado da NFS-e (resposta da SEFIN). Aceita a chave de 50 dígitos em `chave_nfse`."
+      },
+      "response": []
+    },
+    {
+      "name": "Download XML por document_id",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('XML autorizado', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.headers.get('Content-Type') || '').to.include('xml');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{base_inbound}}/v1/nfse/documents/sap/{{nfse_document_id}}/xml",
+        "description": "Mesmo XML autorizado, localizando a NFS-e pelo UUID `nfse_document_id`."
+      },
+      "response": []
+    }
+  ]
+}

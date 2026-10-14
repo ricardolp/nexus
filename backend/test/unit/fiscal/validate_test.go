@@ -94,6 +94,23 @@ func TestStatusHelpers(t *testing.T) {
 	if !ok || status != fiscal.StatusRejected || processing != fiscal.ProcessingCompleted {
 		t.Fatalf("got %s %s %v", status, processing, ok)
 	}
+	status, processing, ok = fiscal.NextStatusesFromProvider("error")
+	if !ok || status != fiscal.StatusFailed || processing != fiscal.ProcessingFailed {
+		t.Fatalf("error outcome got %s %s %v", status, processing, ok)
+	}
+	status, processing, ok = fiscal.NextStatusesFromProvider("retry")
+	if !ok || status != fiscal.StatusReceived || processing != fiscal.ProcessingRetry {
+		t.Fatalf("retry outcome got %s %s %v", status, processing, ok)
+	}
+	if fiscal.EventTypeForOutcome("retry") != "fiscal.document.retry_scheduled.v1" {
+		t.Fatal("retry event type mismatch")
+	}
+	if fiscal.IsTerminalStatus(fiscal.StatusReceived) {
+		t.Fatal("received must stay open so a calculator timeout can be retried")
+	}
+	if fiscal.EventTypeForOutcome("error") != "fiscal.document.failed.v1" {
+		t.Fatal("error event type mismatch")
+	}
 	_, _, ok = fiscal.NextStatusesFromProvider("unknown")
 	if ok {
 		t.Fatal("expected unknown outcome to fail")

@@ -11,7 +11,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/nexus/fiscal-messaging/internal/certificate"
+	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/integrationlog"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
 )
@@ -24,6 +26,8 @@ import (
 type InternalAPI struct {
 	Certificates    *certificate.Service
 	IntegrationLogs *integrationlog.Recorder
+	Fiscal          *fiscal.Service
+	NFSeProviders   *nfseprovider.Service
 	ServiceToken    string
 }
 
@@ -35,7 +39,9 @@ func (a *InternalAPI) Routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(a.requireServiceToken)
 		r.Post("/internal/v1/companies/{company_id}/certificates/signing-material", a.signingMaterial)
+		r.Post("/internal/v1/companies/{company_id}/nfse-provider-credentials", a.nfseProviderCredentials)
 		r.Post("/internal/v1/integration_logs", a.createIntegrationLog)
+		r.Post("/internal/v1/fiscal/outbound_events", a.attachOutboundDistEvent)
 	})
 	return r
 }
@@ -96,6 +102,40 @@ func (a *InternalAPI) signingMaterial(w http.ResponseWriter, r *http.Request) {
 		"thumbprint": cert.Thumbprint,
 		"not_after":  cert.NotAfter,
 	})
+}
+
+// nfseProviderCredentials entrega ao nfe-gateway o usuário/senha do
+// webservice municipal de NFS-e (ex.: IPM) — mesmo token de serviço do
+// signing-material. Ver docs/architecture/25_nfse_provedores_municipais.md.
+func (a *InternalAPI) nfseProviderCredentials(w http.ResponseWriter, r *http.Request) {
+	if a.NFSeProviders == nil {
+		writeErr(w, r, domainerr.New(503, "nfse_providers_unconfigured", "Service Unavailable", "NFS-e provider settings are not configured"))
+		return
+	}
+	companyID, err := uuid.Parse(chi.URLParam(r, "company_id"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_company_id", "Invalid company_id"))
+		return
+	}
+	var body struct {
+		OrganizationID string `json:"organization_id"`
+		ProviderCode   string `json:"provider_code"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	orgID, err := uuid.Parse(body.OrganizationID)
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "organization_id is required"))
+		return
+	}
+	creds, err := a.NFSeProviders.Credentials(r.Context(), orgID, companyID, body.ProviderCode)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, creds)
 }
 
 type internalIntegrationLogBody struct {
@@ -185,5 +225,60 @@ func (a *InternalAPI) createIntegrationLog(w http.ResponseWriter, r *http.Reques
 		entry.TraceID = tid
 	}
 	a.IntegrationLogs.Record(r.Context(), entry)
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (a *InternalAPI) attachOutboundDistEvent(w http.ResponseWriter, r *http.Request) {
+	if a.Fiscal == nil {
+		writeErr(w, r, domainerr.New(503, "fiscal_unconfigured", "Service Unavailable", "fiscal service is not configured on internal_api"))
+		return
+	}
+	var body struct {
+		OrganizationID    string `json:"organization_id"`
+		DocumentID        string `json:"document_id"`
+		EventKind         string `json:"event_kind"`
+		TpEvento          string `json:"tp_evento"`
+		ManifestationType string `json:"manifestation_type"`
+		Protocol          string `json:"protocol"`
+		NSeqEvento        string `json:"n_seq_evento"`
+		Justification     string `json:"justification"`
+		DhEvento          string `json:"dh_evento"`
+		Schema            string `json:"schema"`
+		NSU               *int   `json:"nsu"`
+		XMLObjectKey      string `json:"xml_object_key"`
+		XMLBase64         string `json:"xml_base64"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
+		return
+	}
+	orgID, err := uuid.Parse(strings.TrimSpace(body.OrganizationID))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_organization_id", "organization_id is required"))
+		return
+	}
+	docID, err := uuid.Parse(strings.TrimSpace(body.DocumentID))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_document_id", "document_id is required"))
+		return
+	}
+	if err := a.Fiscal.AttachOutboundDistEvent(r.Context(), fiscal.OutboundDistEventInput{
+		OrganizationID:    orgID,
+		DocumentID:        docID,
+		EventKind:         strings.TrimSpace(body.EventKind),
+		TpEvento:          strings.TrimSpace(body.TpEvento),
+		ManifestationType: strings.TrimSpace(body.ManifestationType),
+		Protocol:          strings.TrimSpace(body.Protocol),
+		NSeqEvento:        strings.TrimSpace(body.NSeqEvento),
+		Justification:     strings.TrimSpace(body.Justification),
+		DhEvento:          strings.TrimSpace(body.DhEvento),
+		Schema:            strings.TrimSpace(body.Schema),
+		NSU:               body.NSU,
+		XMLObjectKey:      strings.TrimSpace(body.XMLObjectKey),
+		XMLBase64:         strings.TrimSpace(body.XMLBase64),
+	}); err != nil {
+		writeErr(w, r, err)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }

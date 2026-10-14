@@ -4,7 +4,9 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
-	"image/png"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"strings"
 
 	"github.com/signintech/gopdf"
@@ -22,9 +24,12 @@ var embeddedLogo []byte
 
 // RenderOptions controls marks that are not present in the authorized XML
 // (cancel/substitution are events; cStat stays 100).
+// Logo, when set, replaces the national NFS-e mark in the header. Empty keeps
+// the embedded national logo.
 type RenderOptions struct {
 	Cancelled   bool
 	Substituted bool
+	Logo        []byte
 }
 
 type DanfseRenderer interface {
@@ -47,6 +52,37 @@ func NewDanfseRenderer() DanfseRenderer {
 
 func cmToPt(cm float64) float64 {
 	return cm * 28.34645669
+}
+
+// drawHeaderLogo fits a PNG or JPEG inside the national header slot
+// (4.00 cm × 1.16 cm) without stretching, vertically centered.
+func drawHeaderLogo(pdf *gopdf.GoPdf, data []byte) error {
+	const maxWcm, maxHcm = 4.00, 1.16
+	maxW, maxH := cmToPt(maxWcm), cmToPt(maxHcm)
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		if err == nil {
+			err = fmt.Errorf("dimensões inválidas")
+		}
+		return fmt.Errorf("pdf: logo da danfse ilegível: %w", err)
+	}
+	logoW, logoH := maxW, maxW*float64(cfg.Height)/float64(cfg.Width)
+	if logoH > maxH {
+		logoH = maxH
+		logoW = logoH * float64(cfg.Width) / float64(cfg.Height)
+	}
+	logoY := cmToPt(0.30)
+	if logoH < maxH {
+		logoY += (maxH - logoH) / 2
+	}
+	holder, err := gopdf.ImageHolderByBytes(data)
+	if err != nil {
+		return fmt.Errorf("pdf: logo da danfse: %w", err)
+	}
+	if err := pdf.ImageByHolder(holder, cmToPt(0.49), logoY, &gopdf.Rect{W: logoW, H: logoH}); err != nil {
+		return fmt.Errorf("pdf: logo da danfse: %w", err)
+	}
+	return nil
 }
 
 // ufByIBGEPrefix mapeia os dois primeiros dígitos do código IBGE do município
@@ -77,6 +113,9 @@ func mergeRenderOptions(opts []RenderOptions) RenderOptions {
 		}
 		if o.Substituted {
 			out.Substituted = true
+		}
+		if len(o.Logo) > 0 {
+			out.Logo = o.Logo
 		}
 	}
 	return out
@@ -115,22 +154,11 @@ func (r *renderer) Render(xmlData []byte, opts ...RenderOptions) ([]byte, error)
 	pdf.RectFromUpperLeftWithStyle(cmToPt(0.30), cmToPt(0.30), cmToPt(20.40), cmToPt(1.17), "F")
 	pdf.SetFillColor(0, 0, 0)
 
-	// Logo (aspect ratio fix)
-	var logoW, logoH float64 = cmToPt(4.00), cmToPt(1.16)
-	if img, decErr := png.DecodeConfig(bytes.NewReader(r.logoData)); decErr == nil {
-		ratio := float64(img.Height) / float64(img.Width)
-		logoH = logoW * ratio
+	logo := r.logoData
+	if len(opt.Logo) > 0 {
+		logo = opt.Logo
 	}
-	logoY := cmToPt(0.30)
-	if logoH < cmToPt(1.16) {
-		logoY += (cmToPt(1.16) - logoH) / 2
-	}
-	logoHolder, err := gopdf.ImageHolderByBytes(r.logoData)
-	if err != nil {
-		return nil, err
-	}
-	err = pdf.ImageByHolder(logoHolder, cmToPt(0.49), logoY, &gopdf.Rect{W: logoW, H: logoH})
-	if err != nil {
+	if err := drawHeaderLogo(&pdf, logo); err != nil {
 		return nil, err
 	}
 
@@ -1109,8 +1137,8 @@ func (r *renderer) Render(xmlData []byte, opts ...RenderOptions) ([]byte, error)
 	pdf.SetFont("LiberationSans", "", 7)
 	pdf.SetY(dy(18.69))
 
-	cst := firstNonEmpty(ibsDPS.Valores.Trib.GIBSCBS.CST, ibsSefin.Valores.Trib.GIBSCBS.CST)
-	cClass := firstNonEmpty(ibsDPS.Valores.Trib.GIBSCBS.CClassTrib, ibsSefin.Valores.Trib.GIBSCBS.CClassTrib)
+	cst := firstNonEmpty(ibsDPS.Valores.Trib.CST, ibsDPS.Valores.Trib.GIBSCBS.CST, ibsSefin.Valores.Trib.CST, ibsSefin.Valores.Trib.GIBSCBS.CST)
+	cClass := firstNonEmpty(ibsDPS.Valores.Trib.CClassTrib, ibsDPS.Valores.Trib.GIBSCBS.CClassTrib, ibsSefin.Valores.Trib.CClassTrib, ibsSefin.Valores.Trib.GIBSCBS.CClassTrib)
 	pdf.SetX(cmToPt(5.41))
 	fitCell(&pdf, colX3, formatCSTClass(cst, cClass))
 

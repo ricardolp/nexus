@@ -51,6 +51,133 @@
         "description": "SAP → Nexus → SEFAZ (direction=outbound).\n\nURL completa em `sap_nfe_url` (não concatene path de novo).\nNão use barra no final — `/sap/` retorna 404.\n\nAuth: header `X-Org-Token`.\nAjuste `company_cnpj_digits` para o CNPJ da empresa emissora."
       },
       "response": []
+    },
+    {
+      "name": "Cancelar NF-e",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Org-Token", "value": "{{x_org_token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"chave_acesso\": \"{{chave_acesso}}\",\n  \"justificativa\": \"Erro na emissao da nota fiscal\"\n}"
+        },
+        "url": "{{sap_nfe_url}}/cancel",
+        "description": "Evento 110111. Assíncrono: responde 202 e o resultado aparece em `/{chave}/status`. Justificativa com no mínimo 15 caracteres."
+      },
+      "response": []
+    },
+    {
+      "name": "Carta de correção (CC-e)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Org-Token", "value": "{{x_org_token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"chave_acesso\": \"{{chave_acesso}}\",\n  \"correcao\": \"Correcao do endereco de entrega do destinatario\",\n  \"n_seq_evento\": 1,\n  \"data_evento\": \"2026-09-27T19:40:37-03:00\"\n}"
+        },
+        "url": "{{sap_nfe_url}}/cce",
+        "description": "Evento 110110. `n_seq_evento` começa em 1 e sobe a cada nova CC-e da mesma nota (máx. 20). Correção com no mínimo 15 caracteres. Responde 202."
+      },
+      "response": []
+    },
+    {
+      "name": "Inutilizar numeração",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Org-Token", "value": "{{x_org_token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"cnpj_emitente\": \"{{company_cnpj_digits}}\",\n  \"serie\": \"{{nfe_series}}\",\n  \"numero_inicial\": 100,\n  \"numero_final\": 105,\n  \"ano\": 2026,\n  \"justificativa\": \"Faixa de numeracao nao utilizada\"\n}"
+        },
+        "url": "{{sap_nfe_url}}/inutilization",
+        "description": "Inutiliza uma faixa de numeração da série. Empresa resolvida por `cnpj_emitente`. Responde 202."
+      },
+      "response": []
+    },
+    {
+      "name": "Status da NF-e",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/status",
+        "description": "Status atual, protocolo, se há DANFE e o último evento registrado."
+      },
+      "response": []
+    },
+    {
+      "name": "Consultar protocolo na SEFAZ",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/protocol",
+        "description": "Enfileira ConsultaProtocolo. Responde 202; acompanhe por `/status`."
+      },
+      "response": []
+    },
+    {
+      "name": "Download XML autorizado",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/xml",
+        "description": "procNFe (NF-e + protNFe) retornado pela SEFAZ.\n\nO último segmento aceita a chave de 44 dígitos (`chave_acesso`) ou o UUID `document_id`."
+      },
+      "response": []
+    },
+    {
+      "name": "Download XML de evento",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/events/cce/1/xml",
+        "description": "`tipo_evento`: `cancel` ou `cce`. Para CC-e, o último segmento é o `n_seq_evento`; para cancelamento use 1."
+      },
+      "response": []
+    },
+    {
+      "name": "Upload DANFE (PDF base64)",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "X-Org-Token", "value": "{{x_org_token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"pdf_base64\": \"JVBERi0xLjQKJeLjz9MK...\",\n  \"filename\": \"DANFE.pdf\"\n}"
+        },
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/danfe",
+        "description": "PDF da DANFE gerado no SAP, em base64 (aceita também data URI). Máx. 10 MB. Reenvio substitui a DANFE anterior. Responde 201."
+      },
+      "response": []
+    },
+    {
+      "name": "Download DANFE",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/danfe",
+        "description": "Última DANFE enviada pelo SAP (application/pdf)."
+      },
+      "response": []
     }
   ]
 }

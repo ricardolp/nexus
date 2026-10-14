@@ -1,28 +1,40 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  BanIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   CopyIcon,
   DownloadIcon,
+  FilePenLineIcon,
+  HashIcon,
   RefreshCwIcon,
-  RotateCcwIcon,
-  BanIcon,
   ReplaceIcon,
+  RotateCcwIcon,
+  ScrollTextIcon,
   Trash2Icon
 } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { ApiError } from '@/lib/api';
+import type { ApiDocumentEvent } from '@/lib/api-types';
 import {
+  abortOutboundProcessing,
+  cancelOutboundNFe,
   cancelOutboundNFSe,
   deleteFiscalDocument,
   downloadFiscalDocument,
   getFiscalDocument,
   getOrchestration,
   listCompanies,
+  listDocumentEvents,
+  listMemberRoles,
+  listMembers,
   reprocessInboundDocument,
+  requestNFeInutilization,
+  requestOutboundCCe,
+  requestOutboundProtocol,
   resetInboundDocument,
   resubmitOutboundDocument
 } from '@/lib/endpoints';
@@ -38,35 +50,68 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { AbortProcessingDialog } from './abort-processing-dialog';
+import { CancelNFeDialog } from './cancel-nfe-dialog';
 import { CancelNFSeDialog } from './cancel-nfse-dialog';
+import { CCeDialog } from './cce-dialog';
 import { DeleteDocumentDialog } from './delete-document-dialog';
-import { ResetDocumentDialog } from './reset-document-dialog';
 import { DocumentIntegrationPanel } from './document-integration-panel';
 import { DocumentStageTracker } from './document-stage-tracker';
 import {
-  formatDateTime,
-  formatCurrency,
+  canAbortOutboundProcessing,
   canResetInboundDocument,
+  finalityLabel,
+  formatCurrency,
+  formatDateTime,
   isDocumentInFlight,
   isInboundProcessing,
   operationTypeLabel,
-  finalityLabel,
   sourceSystemLabel
 } from './format';
+import { InutilizationDialog } from './inutilization-dialog';
 import { NFePartyCard } from './nfe-party-card';
 import { TotalsTaxChips } from './nfe-tax-chips';
+import { ResetDocumentDialog } from './reset-document-dialog';
 import { badgeFor, processingStatusLabels, statusLabels } from './status-labels';
 import { SubstituteNFSeDialog } from './substitute-nfse-dialog';
+
+function hasPayload(document: { payloads?: Array<{ payload_type: string }> | null }, type: string) {
+  return (document.payloads ?? []).some((p) => p.payload_type === type);
+}
+
+function latestRecipientManifestation(events: ApiDocumentEvent[]): string | null {
+  const labels: Record<string, string> = {
+    confirmacao_da_operacao: 'Destinatário confirmou',
+    ciencia_da_operacao: 'Destinatário com ciência',
+    desconhecimento_da_operacao: 'Destinatário desconheceu',
+    operacao_nao_realizada: 'Destinatário recusou'
+  };
+  for (const event of events) {
+    if (event.event_type !== 'manifestacao') continue;
+    const meta = event.metadata_json && typeof event.metadata_json === 'object'
+      ? (event.metadata_json as Record<string, unknown>)
+      : {};
+    const type = typeof meta.manifestation_type === 'string' ? meta.manifestation_type : '';
+    if (type && labels[type]) return labels[type];
+    return 'Manifestação do destinatário';
+  }
+  return null;
+}
 
 export default function FiscalDocumentDetailPage() {
   const { documentId } = useParams<{ documentId: string }>();
   const navigate = useNavigate();
   const token = useAuthStore((s) => s.token);
   const organizationId = useAuthStore((s) => s.organizationId);
+  const user = useAuthStore((s) => s.user);
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmCancelNFe, setConfirmCancelNFe] = useState(false);
+  const [confirmCCe, setConfirmCCe] = useState(false);
+  const [confirmInutilization, setConfirmInutilization] = useState(false);
+  const [confirmAbort, setConfirmAbort] = useState(false);
   const [confirmSubstitute, setConfirmSubstitute] = useState(false);
 
   const documentQuery = useQuery({
@@ -102,6 +147,21 @@ export default function FiscalDocumentDetailPage() {
         ? '/app/nfe/saida'
         : '/app/nfe';
 
+  const abortable = documentQuery.data ? canAbortOutboundProcessing(documentQuery.data) : false;
+  const isPlatformAdmin = user?.platformRole === 'admin';
+  const membersQuery = useQuery({
+    queryKey: ['members', organizationId],
+    queryFn: () => listMembers(token!, organizationId!),
+    enabled: !!token && !!organizationId && abortable && !isPlatformAdmin
+  });
+  const currentMember = membersQuery.data?.items.find((member) => member.user_id === user?.id);
+  const memberRolesQuery = useQuery({
+    queryKey: ['member-roles', organizationId, currentMember?.id],
+    queryFn: () => listMemberRoles(token!, organizationId!, currentMember!.id),
+    enabled: !!token && !!organizationId && abortable && !isPlatformAdmin && !!currentMember?.id
+  });
+  const isOrgAdmin = (memberRolesQuery.data?.items ?? []).some((role) => role.role_slug === 'administrador');
+
   const companiesQuery = useQuery({
     queryKey: ['companies', organizationId],
     queryFn: () => listCompanies(token!, organizationId!),
@@ -110,6 +170,18 @@ export default function FiscalDocumentDetailPage() {
   const companyName = companiesQuery.data?.items.find(
     (c) => c.id === document?.organization_company_id
   )?.legal_name;
+
+  const eventsQuery = useQuery({
+    queryKey: ['document-events', organizationId, documentId],
+    queryFn: () => listDocumentEvents(token!, organizationId!, documentId!),
+    enabled:
+      !!token &&
+      !!organizationId &&
+      !!documentId &&
+      documentQuery.data?.direction.toLowerCase() === 'outbound' &&
+      documentQuery.data?.document_type === 'nfe'
+  });
+  const manifestationBadge = latestRecipientManifestation(eventsQuery.data?.items ?? []);
 
   const reprocessMutation = useMutation({
     mutationFn: () => reprocessInboundDocument(token!, organizationId!, documentId!),
@@ -140,6 +212,20 @@ export default function FiscalDocumentDetailPage() {
     }
   });
 
+  const abortMutation = useMutation({
+    mutationFn: () => abortOutboundProcessing(token!, organizationId!, documentId!),
+    onSuccess: () => {
+      setConfirmAbort(false);
+      toast.success('Processamento cancelado. A nota pode ser reenviada quando estiver pronta.');
+      queryClient.invalidateQueries({ queryKey: ['fiscal-document', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['document-events', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['fiscal-documents', organizationId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível cancelar o processamento.');
+    }
+  });
+
   const resubmitMutation = useMutation({
     mutationFn: () => resubmitOutboundDocument(token!, organizationId!, documentId!),
     onSuccess: () => {
@@ -165,6 +251,68 @@ export default function FiscalDocumentDetailPage() {
     },
     onError: (err: unknown) => {
       toast.error(err instanceof ApiError ? err.message : 'Não foi possível cancelar a NFS-e.');
+    }
+  });
+
+  const cancelNFeMutation = useMutation({
+    mutationFn: (input: { justificativa: string }) =>
+      cancelOutboundNFe(token!, organizationId!, documentId!, input),
+    onSuccess: () => {
+      setConfirmCancelNFe(false);
+      toast.success('Cancelamento enfileirado na SEFAZ');
+      queryClient.invalidateQueries({ queryKey: ['fiscal-document', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['document-events', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['fiscal-documents', organizationId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível cancelar a NF-e.');
+    }
+  });
+
+  const cceMutation = useMutation({
+    mutationFn: (input: { correcao: string; n_seq_evento: number }) =>
+      requestOutboundCCe(token!, organizationId!, documentId!, input),
+    onSuccess: () => {
+      setConfirmCCe(false);
+      toast.success('Carta de correção enfileirada na SEFAZ');
+      queryClient.invalidateQueries({ queryKey: ['fiscal-document', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['document-events', organizationId, documentId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível emitir a CC-e.');
+    }
+  });
+
+  const protocolMutation = useMutation({
+    mutationFn: () => requestOutboundProtocol(token!, organizationId!, documentId!),
+    onSuccess: () => {
+      toast.success('Consulta de protocolo enfileirada');
+      queryClient.invalidateQueries({ queryKey: ['document-events', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['fiscal-document', organizationId, documentId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível solicitar o protocolo.');
+    }
+  });
+
+  const inutilizationMutation = useMutation({
+    mutationFn: (input: {
+      organization_company_id: string;
+      serie: string;
+      numero_inicial: number;
+      numero_final: number;
+      ano: number;
+      justificativa: string;
+      document_id?: string;
+    }) => requestNFeInutilization(token!, organizationId!, input),
+    onSuccess: () => {
+      setConfirmInutilization(false);
+      toast.success('Inutilização enfileirada na SEFAZ');
+      queryClient.invalidateQueries({ queryKey: ['document-events', organizationId, documentId] });
+      queryClient.invalidateQueries({ queryKey: ['fiscal-document', organizationId, documentId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof ApiError ? err.message : 'Não foi possível inutilizar a numeração.');
     }
   });
 
@@ -228,16 +376,30 @@ export default function FiscalDocumentDetailPage() {
   const status = badgeFor(statusLabels, document.status);
   const processingStatus = badgeFor(processingStatusLabels, document.processing_status);
   const outbound = document.direction.toLowerCase() === 'outbound';
+  const isNfeAuthorized =
+    document.document_type === 'nfe' &&
+    ['authorized', 'cancelled', 'correction_registered'].includes(document.status.toLowerCase());
   const canResubmit =
     outbound &&
     ['rejected', 'failed'].includes(document.status.toLowerCase()) &&
     !isDocumentInFlight(document.processing_status);
+  const canAbort = abortable && (isPlatformAdmin || isOrgAdmin);
   const canCancelNFSe =
     outbound &&
     document.document_type === 'nfse' &&
     document.status.toLowerCase() === 'authorized' &&
     !!document.access_key &&
     !isDocumentInFlight(document.processing_status);
+  const canCancelNFe =
+    outbound &&
+    document.document_type === 'nfe' &&
+    ['authorized', 'correction_registered'].includes(document.status.toLowerCase()) &&
+    !!document.access_key &&
+    !isDocumentInFlight(document.processing_status);
+  const canCCe = canCancelNFe;
+  const canRequestProtocol =
+    outbound && document.document_type === 'nfe' && !!document.access_key;
+  const canInutilize = outbound && document.document_type === 'nfe';
   const canSubstituteNFSe = canCancelNFSe;
   const canReset =
     orchestrationQuery.isSuccess &&
@@ -307,6 +469,11 @@ export default function FiscalDocumentDetailPage() {
                 <Badge variant="outline" className="font-normal">
                   {sourceSystemLabel(document.source_system)}
                 </Badge>
+                {manifestationBadge && (
+                  <Badge variant="outline" className="font-normal text-amber-700 dark:text-amber-400">
+                    {manifestationBadge}
+                  </Badge>
+                )}
               </div>
 
               {document.access_key && (
@@ -335,6 +502,13 @@ export default function FiscalDocumentDetailPage() {
                   <span>
                     <span className="text-foreground/70 font-medium">Emissão </span>
                     {formatDateTime(document.issued_at)}
+                  </span>
+                )}
+                {document.authorized_at && (
+                  <span>
+                    <span className="text-foreground/70 font-medium">Protocolo </span>
+                    {formatDateTime(document.authorized_at)}
+                    {document.authorization_protocol ? ` · ${document.authorization_protocol}` : ''}
                   </span>
                 )}
                 <span>
@@ -378,6 +552,19 @@ export default function FiscalDocumentDetailPage() {
                   Resetar
                 </Button>
               )}
+              {canAbort && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:text-destructive"
+                  disabled={abortMutation.isPending}
+                  onClick={() => setConfirmAbort(true)}
+                >
+                  <BanIcon />
+                  Cancelar processamento
+                </Button>
+              )}
               {canResubmit && (
                 <Button
                   type="button"
@@ -393,6 +580,47 @@ export default function FiscalDocumentDetailPage() {
                 <Button type="button" size="sm" variant="outline" onClick={() => setConfirmSubstitute(true)}>
                   <ReplaceIcon />
                   Substituir
+                </Button>
+              )}
+              {canCCe && (
+                <Button type="button" size="sm" variant="outline" onClick={() => setConfirmCCe(true)}>
+                  <FilePenLineIcon />
+                  Carta de correção
+                </Button>
+              )}
+              {canRequestProtocol && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={protocolMutation.isPending}
+                  onClick={() => protocolMutation.mutate()}
+                >
+                  <ScrollTextIcon />
+                  {protocolMutation.isPending ? 'Solicitando…' : 'Solicitar protocolo'}
+                </Button>
+              )}
+              {canInutilize && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setConfirmInutilization(true)}
+                >
+                  <HashIcon />
+                  Inutilizar
+                </Button>
+              )}
+              {canCancelNFe && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setConfirmCancelNFe(true)}
+                >
+                  <BanIcon />
+                  Cancelar
                 </Button>
               )}
               {canCancelNFSe && (
@@ -463,18 +691,67 @@ export default function FiscalDocumentDetailPage() {
                     ) : (
                       <>
                         <DropdownMenuItem
+                          disabled={!isNfeAuthorized}
+                          onSelect={() => {
+                            void handleDownload('sefaz_response');
+                          }}
+                        >
+                          XML da NF-e
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!hasPayload(document, 'protocol')}
+                          onSelect={() => {
+                            void handleDownload('protocol');
+                          }}
+                        >
+                          XML do protocolo
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!hasPayload(document, 'danfe')}
+                          onSelect={() => {
+                            void handleDownload('danfe');
+                          }}
+                        >
+                          DANFE (PDF)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!hasPayload(document, 'cancel_response')}
+                          onSelect={() => {
+                            void handleDownload('cancel_response');
+                          }}
+                        >
+                          XML de cancelamento
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!hasPayload(document, 'cce_response')}
+                          onSelect={() => {
+                            void handleDownload('cce_response');
+                          }}
+                        >
+                          XML da carta de correção
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!hasPayload(document, 'inutilization_response')}
+                          onSelect={() => {
+                            void handleDownload('inutilization_response');
+                          }}
+                        >
+                          XML de inutilização
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!hasPayload(document, 'manifestation_event')}
+                          onSelect={() => {
+                            void handleDownload('manifestation_event');
+                          }}
+                        >
+                          XML da manifestação
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
                           onSelect={() => {
                             void handleDownload('provider_request');
                           }}
                         >
                           XML de envio
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            void handleDownload('sefaz_response');
-                          }}
-                        >
-                          Retorno da autoridade
                         </DropdownMenuItem>
                       </>
                     )}
@@ -589,11 +866,35 @@ export default function FiscalDocumentDetailPage() {
         onOpenChange={(open) => !open && setConfirmReset(false)}
         onConfirm={() => resetMutation.mutate()}
       />
+      <AbortProcessingDialog
+        document={confirmAbort ? document : null}
+        pending={abortMutation.isPending}
+        onOpenChange={(open) => !open && setConfirmAbort(false)}
+        onConfirm={() => abortMutation.mutate()}
+      />
       <CancelNFSeDialog
         document={confirmCancel ? document : null}
         pending={cancelMutation.isPending}
         onOpenChange={(open) => !open && setConfirmCancel(false)}
         onConfirm={(input) => cancelMutation.mutate(input)}
+      />
+      <CancelNFeDialog
+        document={confirmCancelNFe ? document : null}
+        pending={cancelNFeMutation.isPending}
+        onOpenChange={(open) => !open && setConfirmCancelNFe(false)}
+        onConfirm={(input) => cancelNFeMutation.mutate(input)}
+      />
+      <CCeDialog
+        document={confirmCCe ? document : null}
+        pending={cceMutation.isPending}
+        onOpenChange={(open) => !open && setConfirmCCe(false)}
+        onConfirm={(input) => cceMutation.mutate(input)}
+      />
+      <InutilizationDialog
+        document={confirmInutilization ? document : null}
+        pending={inutilizationMutation.isPending}
+        onOpenChange={(open) => !open && setConfirmInutilization(false)}
+        onConfirm={(input) => inutilizationMutation.mutate(input)}
       />
       <SubstituteNFSeDialog
         document={confirmSubstitute ? document : null}

@@ -40,12 +40,16 @@ type Company struct {
 	// TaxRegime is NFS-e opSimpNac: 1=Não Optante, 2=MEI, 3=ME/EPP.
 	TaxRegime *string `json:"tax_regime,omitempty"`
 	// SpecialTaxRegime is NFS-e regEspTrib: 0=Nenhum … 7=Específicos municipais.
-	SpecialTaxRegime *string         `json:"special_tax_regime,omitempty"`
-	Environment      string          `json:"environment"`
-	Status           string          `json:"status"`
-	MetadataJSON     json.RawMessage `json:"metadata_json"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	SpecialTaxRegime *string `json:"special_tax_regime,omitempty"`
+	Environment      string  `json:"environment"`
+	Status           string  `json:"status"`
+	// DanfseCustomLogoEnabled prints the uploaded company logo on the DANFSe
+	// header when a logo file is also stored. Off keeps the national NFS-e mark.
+	DanfseCustomLogoEnabled bool            `json:"danfse_custom_logo_enabled"`
+	HasDanfseLogo           bool            `json:"has_danfse_logo"`
+	MetadataJSON            json.RawMessage `json:"metadata_json"`
+	CreatedAt               time.Time       `json:"created_at"`
+	UpdatedAt               time.Time       `json:"updated_at"`
 }
 
 // OrganizationService is a contract catalog row joined with its activation
@@ -197,7 +201,10 @@ type UpdateCompanyDetailsInput struct {
 	IBGEMunicipalityCode  string
 	TaxRegime             string
 	SpecialTaxRegime      string
-	ActorUserID           uuid.UUID
+	// DanfseCustomLogoEnabled is nil when the client omits the field, so a
+	// cadastral save does not clear a logo flag it never sent.
+	DanfseCustomLogoEnabled *bool
+	ActorUserID             uuid.UUID
 }
 
 type UpdateCompanyStatusInput struct {

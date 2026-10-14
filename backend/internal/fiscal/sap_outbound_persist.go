@@ -34,9 +34,12 @@ func (s *Service) persistOutboundNFe(
 			destination_indicator = $10,
 			intermediary_cnpj = $11,
 			intermediary_id = $12,
-			emission_date = $13,
+			-- emission_date is date; issued_at is timestamptz. Cast $13 to one type
+			-- first so Postgres does not raise 42P08 (inconsistent types deduced).
+			emission_date = ($13::timestamptz)::date,
 			entry_exit_date = $14,
 			unique_code = $15,
+			issued_at = coalesce($13::timestamptz, issued_at),
 			emission_type = $126,
 			access_key_precomputed = $127,
 			contingency_at = $128,

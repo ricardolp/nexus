@@ -117,7 +117,27 @@ export function isDocumentInFlight(processingStatus?: string | null) {
     value === 'queued' ||
     value === 'processing' ||
     value === 'waiting_external' ||
+    value === 'waiting_recibo' ||
     value === 'retry_scheduled'
+  );
+}
+
+/** Admin may stop outbound processing only before the note reaches the authority. */
+export function canAbortOutboundProcessing(document: {
+  direction?: string | null;
+  status?: string | null;
+  processing_status?: string | null;
+  payloads?: Array<{ payload_type: string }> | null;
+}) {
+  if (document.direction?.toLowerCase() !== 'outbound') return false;
+  const status = document.status?.toLowerCase() ?? '';
+  if (status !== 'received' && status !== 'submitted') return false;
+  const processing = document.processing_status?.toLowerCase() ?? '';
+  if (!['pending', 'queued', 'processing', 'retry_scheduled', 'waiting_external'].includes(processing)) {
+    return false;
+  }
+  return !(document.payloads ?? []).some(
+    (payload) => payload.payload_type === 'provider_request' || payload.payload_type === 'sefaz_response'
   );
 }
 

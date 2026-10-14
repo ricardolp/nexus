@@ -3,11 +3,14 @@ package fiscal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/messaging"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
 	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/broker"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
@@ -28,10 +31,26 @@ import (
 // builds/signs the XML itself. For NF-e, UF is required to route the
 // SEFAZ webservice; for NFS-e, municipality_code routes SEFIN Nacional.
 type MessagingProvider struct {
-	docs *Service
-	orgs *organization.Service
-	bus  broker.Publisher
-	logs *integrationlog.Recorder
+	docs   *Service
+	orgs   *organization.Service
+	bus    broker.Publisher
+	logs   *integrationlog.Recorder
+	routes NFSeRouteResolver
+}
+
+// NFSeRouteResolver decide o provedor municipal de NFS-e (catálogo
+// nfse_municipal_providers + settings da empresa). Implementado por
+// *nfseprovider.Service.
+type NFSeRouteResolver interface {
+	Resolve(ctx context.Context, organizationID, companyID uuid.UUID, municipalityCode string) (nfseprovider.Route, error)
+	HasCredentials(ctx context.Context, organizationID, companyID uuid.UUID, providerCode string) (bool, error)
+}
+
+// WithNFSeProviders liga o roteamento por município. Sem ele toda NFS-e vai
+// para a SEFIN Nacional (comportamento anterior).
+func (p *MessagingProvider) WithNFSeProviders(routes NFSeRouteResolver) *MessagingProvider {
+	p.routes = routes
+	return p
 }
 
 func NewMessagingProvider(docs *Service, bus broker.Publisher) *MessagingProvider {
@@ -50,6 +69,32 @@ func (p *MessagingProvider) WithIntegrationLog(rec *integrationlog.Recorder) *Me
 }
 
 func (p *MessagingProvider) Transmit(ctx context.Context, doc Document) (ProviderResult, error) {
+	code, message, err := p.docs.CertificateBlock(ctx, doc.OrganizationID, doc.OrganizationCompanyID)
+	if err != nil {
+		return ProviderResult{}, err
+	}
+	if code != "" {
+		return ProviderResult{
+			Outcome:      "error",
+			Provider:     "nfe_gateway",
+			ErrorCode:    code,
+			ErrorMessage: message,
+		}, nil
+	}
+
+	code, message, err = p.docs.RegistrationBlock(ctx, doc.OrganizationID, doc.ID)
+	if err != nil {
+		return ProviderResult{}, err
+	}
+	if code != "" {
+		return ProviderResult{
+			Outcome:      "error",
+			Provider:     "nfe_gateway",
+			ErrorCode:    code,
+			ErrorMessage: message,
+		}, nil
+	}
+
 	objectKey, err := p.docs.OriginalPayloadObjectKey(ctx, doc.ID)
 	if err != nil {
 		return ProviderResult{}, err
@@ -71,6 +116,36 @@ func (p *MessagingProvider) Transmit(ctx context.Context, doc Document) (Provide
 		}
 		if municipio != "" {
 			data["municipality_code"] = municipio
+		}
+		if p.routes != nil {
+			route, err := p.routes.Resolve(ctx, doc.OrganizationID, doc.OrganizationCompanyID, municipio)
+			if err != nil {
+				var de *domainerr.Error
+				if errors.As(err, &de) {
+					return ProviderResult{Outcome: "error", Provider: "nfe_gateway", ErrorCode: de.Code, ErrorMessage: de.Detail}, nil
+				}
+				return ProviderResult{}, err
+			}
+			if desc, ok := nfseprovider.Lookup(route.ProviderCode); ok && desc.Credentials != nfseprovider.CredentialsNone {
+				has, err := p.routes.HasCredentials(ctx, doc.OrganizationID, doc.OrganizationCompanyID, route.ProviderCode)
+				if err != nil {
+					return ProviderResult{}, err
+				}
+				if !has {
+					return ProviderResult{
+						Outcome:   "error",
+						Provider:  "nfe_gateway",
+						ErrorCode: "provider_credentials_missing",
+						ErrorMessage: "Empresa sem usuário/senha do webservice municipal de NFS-e (" + desc.Name +
+							"). Cadastre em Configurações → Empresas → NFS-e municipal.",
+					}, nil
+				}
+			}
+			if err := p.docs.SetNFSeProviderRoute(ctx, doc.OrganizationID, doc.ID, route.ProviderCode, route.Config); err != nil {
+				return ProviderResult{}, err
+			}
+			data["nfse_provider"] = route.ProviderCode
+			data["nfse_provider_config"] = route.Config
 		}
 		// UF is optional for SEFIN; include when known for logging/routing hints.
 		if uf, ufErr := p.resolveCompanyUFOptional(ctx, doc); ufErr == nil && uf != "" {

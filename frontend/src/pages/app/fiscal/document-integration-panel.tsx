@@ -47,7 +47,7 @@ import { AlternativeUnitSelect } from './alternative-unit-select';
 import { DocumentPayloadPanel } from './document-payload-panel';
 import { DocumentTimeline } from './document-timeline';
 import { ResetDocumentDialog } from './reset-document-dialog';
-import { describeInboundEvent } from './event-descriptions';
+import { describeInboundEvent, formatAuthorityReturn } from './event-descriptions';
 import { formatDateTime, formatCurrency, formatQuantity, canResetInboundDocument, isInboundProcessing, sourceSystemLabel, issqnTributeLabel, issqnRetentionLabel, pisCofinsRetentionLabel } from './format';
 import { ItemTaxChips } from './nfe-tax-chips';
 import {
@@ -557,10 +557,7 @@ export function DocumentIntegrationPanel({
     { label: 'Chave de acesso', value: document.access_key ?? '—', mono: true },
     {
       label: 'Retorno da autoridade',
-      value:
-        document.authorization_code && document.authorization_message
-          ? `${document.authorization_code} — ${document.authorization_message}`
-          : document.authorization_message ?? document.authorization_code ?? '—',
+      value: formatAuthorityReturn(document.authorization_code, document.authorization_message),
       highlight: Boolean(document.authorization_message || document.authorization_code)
     },
     { label: 'ID de correlação', value: document.correlation_id, mono: true }

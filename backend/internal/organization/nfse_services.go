@@ -28,12 +28,16 @@ type CompanyNFSeService struct {
 	NBSDescription        *string   `json:"nbs_description,omitempty"`
 	DefaultISSAliquot     *float64  `json:"default_iss_aliquot,omitempty"`
 	DefaultDiscrimination *string   `json:"default_discrimination,omitempty"`
-	IsPrimary             bool      `json:"is_primary"`
-	IsFavorite            bool      `json:"is_favorite"`
-	SortOrder             int       `json:"sort_order"`
-	Status                string    `json:"status"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	// Reforma tributária: padrões de IBS/CBS aplicados quando o SAP não envia.
+	IBSCBSCST                *string   `json:"ibs_cbs_cst,omitempty"`
+	IBSCBSClassTrib          *string   `json:"ibs_cbs_class_trib,omitempty"`
+	IBSCBSOperationIndicator *string   `json:"ibs_cbs_operation_indicator,omitempty"`
+	IsPrimary                bool      `json:"is_primary"`
+	IsFavorite               bool      `json:"is_favorite"`
+	SortOrder                int       `json:"sort_order"`
+	Status                   string    `json:"status"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }
 
 type UpsertCompanyNFSeServiceInput struct {
@@ -48,11 +52,15 @@ type UpsertCompanyNFSeServiceInput struct {
 	NBSDescription        string
 	DefaultISSAliquot     *float64
 	DefaultDiscrimination string
-	IsPrimary             bool
-	IsFavorite            bool
-	SortOrder             int
-	Status                string
-	ActorUserID           uuid.UUID
+	// nil = not sent (kept on update); "" = clear.
+	IBSCBSCST                *string
+	IBSCBSClassTrib          *string
+	IBSCBSOperationIndicator *string
+	IsPrimary                bool
+	IsFavorite               bool
+	SortOrder                int
+	Status                   string
+	ActorUserID              uuid.UUID
 }
 
 func (s *Service) ListCompanyNFSeServices(ctx context.Context, organizationID, companyID uuid.UUID) ([]CompanyNFSeService, error) {
@@ -63,6 +71,7 @@ func (s *Service) ListCompanyNFSeServices(ctx context.Context, organizationID, c
 		select id, organization_id, organization_company_id,
 		       cnae_code, cnae_description, service_list_item, service_description,
 		       nbs_code, nbs_description, default_iss_aliquot, default_discrimination,
+		       ibs_cbs_cst, ibs_cbs_class_trib, ibs_cbs_operation_indicator,
 		       is_primary, is_favorite, sort_order, status, created_at, updated_at
 		from organization_company_nfse_services
 		where organization_id = $1 and organization_company_id = $2
@@ -185,6 +194,11 @@ func (s *Service) upsertCompanyNFSeService(ctx context.Context, in UpsertCompany
 		aliquot = &v
 	}
 
+	ibs, err := normalizeNFSeIBSCBSDefaults(in.IBSCBSCST, in.IBSCBSClassTrib, in.IBSCBSOperationIndicator)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now().UTC()
 	creating := in.ServiceID == uuid.Nil
 	if creating {
@@ -209,17 +223,20 @@ func (s *Service) upsertCompanyNFSeService(ctx context.Context, in UpsertCompany
 					id, organization_id, organization_company_id,
 					cnae_code, cnae_description, service_list_item, service_description,
 					nbs_code, nbs_description, default_iss_aliquot, default_discrimination,
-					is_primary, is_favorite, sort_order, status, created_at, updated_at
+					is_primary, is_favorite, sort_order, status, created_at, updated_at,
+					ibs_cbs_cst, ibs_cbs_class_trib, ibs_cbs_operation_indicator
 				) values (
 					$1,$2,$3,
 					$4,$5,$6,$7,
 					$8,$9,$10,$11,
-					$12,$13,$14,$15,$16,$16
+					$12,$13,$14,$15,$16,$16,
+					$17,$18,$19
 				)
 			`, in.ServiceID, in.OrganizationID, in.CompanyID,
 				cnae, optionalTrimmed(cnaeDesc), optionalTrimmed(item), optionalTrimmed(desc),
 				optionalTrimmed(nbs), optionalTrimmed(nbsDesc), aliquot, optionalTrimmed(in.DefaultDiscrimination),
-				in.IsPrimary, in.IsFavorite, in.SortOrder, status, now)
+				in.IsPrimary, in.IsFavorite, in.SortOrder, status, now,
+				optionalTrimmed(ibs.CST), optionalTrimmed(ibs.ClassTrib), optionalTrimmed(ibs.OperationIndicator))
 			if err != nil {
 				return err
 			}
@@ -238,12 +255,17 @@ func (s *Service) upsertCompanyNFSeService(ctx context.Context, in UpsertCompany
 					is_favorite = $13,
 					sort_order = $14,
 					status = $15,
-					updated_at = $16
+					updated_at = $16,
+					ibs_cbs_cst = case when $20 then $17 else ibs_cbs_cst end,
+					ibs_cbs_class_trib = case when $20 then $18 else ibs_cbs_class_trib end,
+					ibs_cbs_operation_indicator = case when $21 then $19 else ibs_cbs_operation_indicator end
 				where organization_id = $1 and organization_company_id = $2 and id = $3
 			`, in.OrganizationID, in.CompanyID, in.ServiceID,
 				cnae, optionalTrimmed(cnaeDesc), optionalTrimmed(item), optionalTrimmed(desc),
 				optionalTrimmed(nbs), optionalTrimmed(nbsDesc), aliquot, optionalTrimmed(in.DefaultDiscrimination),
-				in.IsPrimary, in.IsFavorite, in.SortOrder, status, now)
+				in.IsPrimary, in.IsFavorite, in.SortOrder, status, now,
+				optionalTrimmed(ibs.CST), optionalTrimmed(ibs.ClassTrib), optionalTrimmed(ibs.OperationIndicator),
+				ibs.SetClassification, ibs.SetOperationIndicator)
 			if err != nil {
 				return err
 			}
@@ -256,6 +278,7 @@ func (s *Service) upsertCompanyNFSeService(ctx context.Context, in UpsertCompany
 			select id, organization_id, organization_company_id,
 			       cnae_code, cnae_description, service_list_item, service_description,
 			       nbs_code, nbs_description, default_iss_aliquot, default_discrimination,
+			       ibs_cbs_cst, ibs_cbs_class_trib, ibs_cbs_operation_indicator,
 			       is_primary, is_favorite, sort_order, status, created_at, updated_at
 			from organization_company_nfse_services
 			where id = $1
@@ -312,6 +335,7 @@ func scanNFSeService(row nfseServiceScanner) (CompanyNFSeService, error) {
 		&item.ID, &item.OrganizationID, &item.OrganizationCompanyID,
 		&item.CNAECode, &item.CNAEDescription, &item.ServiceListItem, &item.ServiceDescription,
 		&item.NBSCode, &item.NBSDescription, &item.DefaultISSAliquot, &item.DefaultDiscrimination,
+		&item.IBSCBSCST, &item.IBSCBSClassTrib, &item.IBSCBSOperationIndicator,
 		&item.IsPrimary, &item.IsFavorite, &item.SortOrder, &item.Status, &item.CreatedAt, &item.UpdatedAt,
 	)
 	return item, err

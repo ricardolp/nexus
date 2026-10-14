@@ -170,13 +170,20 @@ func (a *ControlPlane) createOutboundNFSe(w http.ResponseWriter, r *http.Request
 	}
 
 	status := http.StatusAccepted
-	if result.Replayed {
+	if result.Replayed || result.AlreadyAuthorized {
 		status = http.StatusOK
 	}
-	httpx.WriteJSON(w, status, map[string]any{
+	body := map[string]any{
 		"document_id": result.Document.ID,
 		"trace_id":    result.Document.TraceID,
 		"status":      result.Document.Status,
 		"replayed":    result.Replayed,
-	})
+	}
+	if result.Resubmitted {
+		body["resubmitted"] = true
+	}
+	if result.AlreadyAuthorized {
+		body["already_authorized"] = true
+	}
+	httpx.WriteJSON(w, status, body)
 }

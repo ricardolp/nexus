@@ -12,6 +12,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/integrationlog"
 	"github.com/nexus/fiscal-messaging/internal/messaging"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
 	"github.com/nexus/fiscal-messaging/internal/notification"
 	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/broker"
@@ -58,6 +59,7 @@ func main() {
 	if cfg.FiscalProvider == "messaging" {
 		provider = fiscal.NewMessagingProvider(docs, bus).
 			WithOrganizations(orgs).
+			WithNFSeProviders(nfseprovider.NewService(pool, cfg.SecretsEncryptionKey)).
 			WithIntegrationLog(integrationlog.NewRecorder(pool, logger))
 	}
 	worker := fiscal.NewWorker(pool, docs, provider)
@@ -76,6 +78,12 @@ func main() {
 		return worker.HandleEventResult(ctx, msg.Payload)
 	}); err != nil {
 		logger.Error("subscribe_event_result", "error", err)
+		os.Exit(1)
+	}
+	if err := bus.Subscribe(ctx, messaging.EventDocumentProtocolResult, func(ctx context.Context, msg broker.Message) error {
+		return worker.HandleProtocolResult(ctx, msg.Payload)
+	}); err != nil {
+		logger.Error("subscribe_protocol_result", "error", err)
 		os.Exit(1)
 	}
 
@@ -101,6 +109,12 @@ func main() {
 			logger.Info("fiscal_worker stopping")
 			return
 		case <-ticker.C:
+			requeued, err := docs.RequeueStaleOutbound(ctx, fiscal.StaleOutboundAfter, 50)
+			if err != nil {
+				logger.Error("requeue_stale_outbound", "error", err)
+			} else if requeued > 0 {
+				logger.Info("requeued_stale_outbound", "count", requeued)
+			}
 			n, err := worker.ProcessBatch(ctx, 20)
 			if err != nil {
 				logger.Error("process_batch", "error", err)

@@ -5,6 +5,7 @@ import {
   Building2Icon,
   ChevronLeftIcon,
   FileBadgeIcon,
+  LandmarkIcon,
   ListTreeIcon,
   MailIcon,
   ShieldAlertIcon,
@@ -26,12 +27,14 @@ import { CompanyGeneralTab } from './general-tab';
 import { COMPANIES_PATH, type CompanyTab } from './paths';
 import { CompanyEmailsTab } from './emails-tab';
 import { CompanyNFSeActivitiesTab } from './nfse-activities-tab';
+import { CompanyNFSeProviderTab } from './nfse-provider-tab';
 import { CompanyProcessFlowsTab } from './process-flows-tab';
 
 const baseCompanyTabs: { id: CompanyTab; label: string; icon: ReactNode }[] = [
   { id: 'general', label: 'Geral', icon: <Building2Icon className="size-4" /> },
   { id: 'certificate', label: 'Certificado', icon: <FileBadgeIcon className="size-4" /> },
   { id: 'nfse-activities', label: 'Atividades NFS-e', icon: <ListTreeIcon className="size-4" /> },
+  { id: 'nfse-provider', label: 'NFS-e municipal', icon: <LandmarkIcon className="size-4" /> },
   { id: 'process-flows', label: 'Fluxos de processo', icon: <WorkflowIcon className="size-4" /> },
   { id: 'emails', label: 'E-mails', icon: <MailIcon className="size-4" /> },
   { id: 'danger', label: 'Zona de perigo', icon: <ShieldAlertIcon className="size-4" /> }
@@ -41,6 +44,7 @@ function parseTab(value: string | null): CompanyTab {
   if (
     value === 'certificate' ||
     value === 'nfse-activities' ||
+    value === 'nfse-provider' ||
     value === 'process-flows' ||
     value === 'emails' ||
     value === 'danger'
@@ -73,7 +77,9 @@ export default function CompanyPage() {
 
   const companyTabs = useMemo(() => {
     const nfseOutboundOn = activeServices === null || activeServices.has('nfse_outbound');
-    return baseCompanyTabs.filter((item) => item.id !== 'nfse-activities' || nfseOutboundOn);
+    return baseCompanyTabs.filter(
+      (item) => (item.id !== 'nfse-activities' && item.id !== 'nfse-provider') || nfseOutboundOn
+    );
   }, [activeServices]);
 
   function setTab(next: CompanyTab) {
@@ -120,7 +126,7 @@ export default function CompanyPage() {
   const displayName = company.trade_name || company.legal_name;
   const status = companyStatusLabels[company.status] ?? { label: company.status, className: '' };
   const effectiveTab =
-    tab === 'nfse-activities' && activeServices && !activeServices.has('nfse_outbound')
+    (tab === 'nfse-activities' || tab === 'nfse-provider') && activeServices && !activeServices.has('nfse_outbound')
       ? 'general'
       : tab;
 
@@ -168,6 +174,8 @@ export default function CompanyPage() {
             </div>
           ) : effectiveTab === 'nfse-activities' ? (
             <CompanyNFSeActivitiesTab company={company} />
+          ) : effectiveTab === 'nfse-provider' ? (
+            <CompanyNFSeProviderTab company={company} />
           ) : effectiveTab === 'process-flows' ? (
             <CompanyProcessFlowsTab company={company} />
           ) : effectiveTab === 'emails' ? (

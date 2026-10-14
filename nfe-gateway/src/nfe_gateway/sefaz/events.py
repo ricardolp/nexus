@@ -93,6 +93,12 @@ def build_cce_evento(
 
 def parse_evento_cstat(response_xml: bytes) -> dict[str, Any]:
     root = etree.fromstring(response_xml)
+    # retEnvEvento carries a batch-level cStat (128 = lote processado); the
+    # event outcome lives in retEvento/infEvento.
+    for el in root.iter():
+        if etree.QName(el).localname == "infEvento":
+            root = el
+            break
 
     def find_text(*names: str) -> str | None:
         for el in root.iter():

@@ -301,34 +301,40 @@ func (a *ControlPlane) deleteCompanyNFSeService(w http.ResponseWriter, r *http.R
 
 func decodeNFSeServiceBody(r *http.Request) (organization.UpsertCompanyNFSeServiceInput, error) {
 	var body struct {
-		CNAECode              string   `json:"cnae_code"`
-		CNAEDescription       string   `json:"cnae_description"`
-		ServiceListItem       string   `json:"service_list_item"`
-		ServiceDescription    string   `json:"service_description"`
-		NBSCode               string   `json:"nbs_code"`
-		NBSDescription        string   `json:"nbs_description"`
-		DefaultISSAliquot     *float64 `json:"default_iss_aliquot"`
-		DefaultDiscrimination string   `json:"default_discrimination"`
-		IsPrimary             bool     `json:"is_primary"`
-		IsFavorite            bool     `json:"is_favorite"`
-		SortOrder             int      `json:"sort_order"`
-		Status                string   `json:"status"`
+		CNAECode                 string   `json:"cnae_code"`
+		CNAEDescription          string   `json:"cnae_description"`
+		ServiceListItem          string   `json:"service_list_item"`
+		ServiceDescription       string   `json:"service_description"`
+		NBSCode                  string   `json:"nbs_code"`
+		NBSDescription           string   `json:"nbs_description"`
+		DefaultISSAliquot        *float64 `json:"default_iss_aliquot"`
+		DefaultDiscrimination    string   `json:"default_discrimination"`
+		IBSCBSCST                *string  `json:"ibs_cbs_cst"`
+		IBSCBSClassTrib          *string  `json:"ibs_cbs_class_trib"`
+		IBSCBSOperationIndicator *string  `json:"ibs_cbs_operation_indicator"`
+		IsPrimary                bool     `json:"is_primary"`
+		IsFavorite               bool     `json:"is_favorite"`
+		SortOrder                int      `json:"sort_order"`
+		Status                   string   `json:"status"`
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		return organization.UpsertCompanyNFSeServiceInput{}, domainerr.Validation("invalid_json", "Invalid JSON body")
 	}
 	return organization.UpsertCompanyNFSeServiceInput{
-		CNAECode:              body.CNAECode,
-		CNAEDescription:       body.CNAEDescription,
-		ServiceListItem:       body.ServiceListItem,
-		ServiceDescription:    body.ServiceDescription,
-		NBSCode:               body.NBSCode,
-		NBSDescription:        body.NBSDescription,
-		DefaultISSAliquot:     body.DefaultISSAliquot,
-		DefaultDiscrimination: body.DefaultDiscrimination,
-		IsPrimary:             body.IsPrimary,
-		IsFavorite:            body.IsFavorite,
-		SortOrder:             body.SortOrder,
-		Status:                body.Status,
+		CNAECode:                 body.CNAECode,
+		CNAEDescription:          body.CNAEDescription,
+		ServiceListItem:          body.ServiceListItem,
+		ServiceDescription:       body.ServiceDescription,
+		NBSCode:                  body.NBSCode,
+		NBSDescription:           body.NBSDescription,
+		DefaultISSAliquot:        body.DefaultISSAliquot,
+		DefaultDiscrimination:    body.DefaultDiscrimination,
+		IBSCBSCST:                body.IBSCBSCST,
+		IBSCBSClassTrib:          body.IBSCBSClassTrib,
+		IBSCBSOperationIndicator: body.IBSCBSOperationIndicator,
+		IsPrimary:                body.IsPrimary,
+		IsFavorite:               body.IsFavorite,
+		SortOrder:                body.SortOrder,
+		Status:                   body.Status,
 	}, nil
 }

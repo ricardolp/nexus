@@ -12,6 +12,9 @@ from typing import Any
 
 from lxml import etree
 
+from nfe_gateway.sefaz.ibscbs_nfe import apply_ibscbs_nfe, rebuild_ibscbs_tot
+from nfe_gateway.sefaz.referencias_nfe import patch_dfe_referenciado, patch_ide_referencias
+
 NFE_NS = "http://www.portalfiscal.inf.br/nfe"
 NSMAP = {"nfe": NFE_NS}
 
@@ -35,21 +38,48 @@ def _ns_tag(name: str) -> str:
     return f"{{{NFE_NS}}}{name}"
 
 
+# SEFAZ-BA (cStat 486): autXML with accounting-office CNPJ/CPF is mandatory.
+# When the issuer has no accountant, BA requires its own CNPJ as placeholder.
+SEFAZ_BA_AUTXML_CNPJ = "13937073000156"
+
+
 def apply_all_patches(xml: etree._Element, sap: dict[str, Any] | None = None) -> etree._Element:
     """Apply the full post-serialize patch pipeline. Mutates and returns xml."""
     sap = sap or {}
     ensure_ean_sem_gtin(xml)
     patch_icms51(xml, sap)
     patch_id_estrangeiro(xml, sap)
+    patch_cnpj_documents(xml, sap)
     patch_ii_zero_values(xml)
     patch_fin_nfe_debito_credito(xml, sap)
-    patch_ibscbs_tot(xml, sap)
+    # Reforma: NFref / gCompraGov / gPagAntecipado before IBSCBS (gTribCompraGov
+    # depends on ide/gCompraGov), then item IBSCBS + IBSCBSTot, then
+    # det/DFeReferenciado (devolução por item, VC02-14).
+    patch_ide_referencias(xml, sap)
+    apply_ibscbs_nfe(xml, sap)
+    patch_dfe_referenciado(xml, sap)
+    patch_aut_xml_bahia(xml, sap)
     ensure_empty_payment(xml, sap)
+    ensure_payment_troco(xml, sap)
+    patch_icms_uf_dest(xml, sap)
+    patch_ver_proc(xml)
     sanitize_for_signature(xml)
     strip_whitespace_between_tags(xml)
     remove_empty_elements(xml)
     # Namespace cleanup happens in assinar_nfe (tree rebuild, not string hacks).
     return xml
+
+
+def patch_ver_proc(xml: etree._Element) -> None:
+    """Replace PyNFe's default verProc with the Nexus product identifier."""
+    ide = _find(xml, "ide")
+    if ide is None:
+        return
+    ver = _child(ide, "verProc")
+    if ver is not None:
+        ver.text = "nexus"
+    else:
+        etree.SubElement(ide, _ns_tag("verProc")).text = "nexus"
 
 
 def ensure_ean_sem_gtin(xml: etree._Element) -> None:
@@ -96,6 +126,9 @@ def patch_id_estrangeiro(xml: etree._Element, sap: dict[str, Any]) -> None:
         return
     cnpj = (sap.get("cnpj_destinatario") or "").strip()
     cpf = (sap.get("cpf_destinatario") or "").strip()
+    if any(ch.isalpha() for ch in cnpj):
+        # Alphanumeric CNPJ (NT 2026.004) is a valid BR document.
+        return
     if len("".join(ch for ch in cnpj if ch.isdigit())) == 14:
         return
     if len("".join(ch for ch in cpf if ch.isdigit())) == 11:
@@ -116,6 +149,67 @@ def patch_id_estrangeiro(xml: etree._Element, sap: dict[str, Any]) -> None:
             xnome.addprevious(el)
         else:
             dest.insert(0, el)
+
+
+def patch_cnpj_documents(xml: etree._Element, sap: dict[str, Any]) -> None:
+    """Re-apply CNPJ after PyNFe ``so_numeros()`` strips letters (NT 2026.004).
+
+    Without this, an alphanumeric dest CNPJ becomes a short digit string and
+    SEFAZ rejects with cStat 215 / TCnpj pattern failure.
+    """
+    from nfe_gateway.sefaz.cnpj_doc import CnpjDocError, normalize_cnpj
+
+    emit = _find(xml, "emit")
+    if emit is not None:
+        cnpj_el = _child(emit, "CNPJ")
+        raw = sap.get("cnpj_emitente")
+        if cnpj_el is not None and raw not in (None, ""):
+            try:
+                cnpj_el.text = normalize_cnpj(raw, field="cnpj_emitente")
+            except CnpjDocError:
+                pass
+
+    dest = _find(xml, "dest")
+    if dest is not None and _child(dest, "CPF") is None and _child(dest, "idEstrangeiro") is None:
+        raw = sap.get("cnpj_destinatario")
+        if raw not in (None, ""):
+            try:
+                cleaned = normalize_cnpj(raw, field="cnpj_destinatario")
+            except CnpjDocError:
+                cleaned = None
+            if cleaned:
+                cnpj_el = _child(dest, "CNPJ")
+                if cnpj_el is None:
+                    cnpj_el = etree.Element(_nfe_qname(dest, "CNPJ"))
+                    xnome = _child(dest, "xNome")
+                    if xnome is not None:
+                        xnome.addprevious(cnpj_el)
+                    else:
+                        dest.insert(0, cnpj_el)
+                cnpj_el.text = cleaned
+
+    auts = _find_all(xml, "autXML")
+    pessoas = sap.get("pessoas_autorizadas") or []
+    for idx, aut in enumerate(auts):
+        if idx >= len(pessoas) or not isinstance(pessoas[idx], dict):
+            continue
+        person = pessoas[idx]
+        raw = person.get("cnpj") or person.get("cpf")
+        if raw in (None, ""):
+            continue
+        digit_len = len("".join(ch for ch in str(raw) if ch.isdigit()))
+        if any(ch.isalpha() for ch in str(raw)) or digit_len != 11:
+            try:
+                cleaned = normalize_cnpj(raw, field="pessoas_autorizadas.cnpj")
+            except CnpjDocError:
+                continue
+            cpf_el = _child(aut, "CPF")
+            if cpf_el is not None:
+                aut.remove(cpf_el)
+            cnpj_el = _child(aut, "CNPJ")
+            if cnpj_el is None:
+                cnpj_el = etree.SubElement(aut, _nfe_qname(aut, "CNPJ"))
+            cnpj_el.text = cleaned
 
 
 def patch_ii_zero_values(xml: etree._Element) -> None:
@@ -144,52 +238,339 @@ def patch_fin_nfe_debito_credito(xml: etree._Element, sap: dict[str, Any]) -> No
             _insert_after(ide, "finNFe", "tpNFCredito", str(sap["tp_nf_credito"]))
 
 
-def patch_ibscbs_tot(xml: etree._Element, sap: dict[str, Any]) -> None:
-    """Ensure IBSCBSTot exists when any item has IBSCBS (SEFAZ cStat 1119)."""
-    has_item_ibscbs = bool(_find_all(xml, "IBSCBS"))
-    total = _find(xml, "total")
-    if total is None:
+def patch_aut_xml_bahia(xml: etree._Element, sap: dict[str, Any]) -> None:
+    """Ensure autXML for Bahia issuers (SEFAZ cStat 486).
+
+    BA requires the accounting-office identification in ``autXML``. When SAP
+    sends an empty ``pessoas_autorizadas`` (common), inject the SEFAZ-BA CNPJ
+    documented as the no-accountant fallback (NT 2015.002 / SEFAZ-BA guidance).
+    """
+    if _find_all(xml, "autXML"):
         return
-    ibs_tot = _child(total, "IBSCBSTot")
-    if has_item_ibscbs and ibs_tot is None:
-        ibs_tot = etree.SubElement(total, _ns_tag("IBSCBSTot"))
-        vbc = etree.SubElement(ibs_tot, _ns_tag("vBCIBSCBS"))
-        vbc.text = _fmt2(sap.get("ibs_base_calculo") or sap.get("cbs_base_calculo") or 0)
-    # Header totals if provided
-    if ibs_tot is not None:
-        if sap.get("ibs_uf_valor_total") is not None or sap.get("ibs_valor_total") is not None:
-            g_ibs = _child(ibs_tot, "gIBS")
-            if g_ibs is None:
-                g_ibs = etree.SubElement(ibs_tot, _ns_tag("gIBS"))
-            g_uf = _child(g_ibs, "gIBSUF")
-            if g_uf is None:
-                g_uf = etree.SubElement(g_ibs, _ns_tag("gIBSUF"))
-                for tag, val in (
-                    ("vDif", "0.00"),
-                    ("vDevTrib", "0.00"),
-                    ("vIBSUF", _fmt2(sap.get("ibs_uf_valor_total") or sap.get("ibs_valor_total") or 0)),
-                ):
-                    if _child(g_uf, tag) is None:
-                        etree.SubElement(g_uf, _ns_tag(tag)).text = val
+    emit = _find(xml, "emit")
+    ender = _find(emit, "enderEmit") if emit is not None else None
+    uf = (_child_text(ender, "UF") or str(sap.get("uf_emitente") or "")).upper()
+    if uf != "BA":
+        return
+    inf = _find(xml, "infNFe")
+    if inf is None:
+        return
+    # Schema order: … dest / retirada / entrega / autXML* / det …
+    anchor = _child(inf, "entrega")
+    if anchor is None:
+        anchor = _child(inf, "retirada")
+    if anchor is None:
+        anchor = _child(inf, "dest")
+    if anchor is None:
+        anchor = _child(inf, "emit")
+    aut = _append_nfe_child(inf, "autXML", after=anchor)
+    if aut is None:
+        return
+    etree.SubElement(aut, _nfe_qname(aut, "CNPJ")).text = SEFAZ_BA_AUTXML_CNPJ
+
+
+def patch_ibscbs_tot(xml: etree._Element, sap: dict[str, Any] | None = None) -> None:
+    """Rebuild IBSCBSTot as the sum of the item IBSCBS groups (SEFAZ cStat 1080+).
+
+    Kept for callers/tests; the pipeline uses ``apply_ibscbs_nfe``, which
+    builds the items and calls the same totalizer. SAP header totals are
+    ignored: totals must equal the serialized items.
+    """
+    del sap
+    rebuild_ibscbs_tot(xml)
+
+
+def _dec(text: str | None) -> Decimal:
+    try:
+        return Decimal(str(text or "0").strip() or "0")
+    except Exception:
+        return Decimal("0")
+
+
+def _set_child_text(parent: etree._Element, local: str, value: str) -> None:
+    child = _child(parent, local)
+    if child is None:
+        child = etree.SubElement(parent, _ns_tag(local))
+    child.text = value
+
+
+def _reorder_children(parent: etree._Element, preferred: tuple[str, ...]) -> None:
+    """Move known children into schema order; leave unknown siblings after them."""
+    by_name: dict[str, etree._Element] = {}
+    others: list[etree._Element] = []
+    for child in list(parent):
+        local = _local(child)
+        if local in preferred and local not in by_name:
+            by_name[local] = child
+        else:
+            others.append(child)
+    for child in list(parent):
+        parent.remove(child)
+    for name in preferred:
+        if name in by_name:
+            parent.append(by_name[name])
+    for child in others:
+        parent.append(child)
+
+
+def _ensure_ibs_tot_group(
+    parent: etree._Element,
+    group_local: str,
+    fields: tuple[tuple[str, str], ...],
+    *,
+    overwrite: bool = False,
+) -> etree._Element:
+    group = _child(parent, group_local)
+    if group is None:
+        group = etree.SubElement(parent, _ns_tag(group_local))
+    for tag, val in fields:
+        existing = _child(group, tag)
+        if existing is None:
+            etree.SubElement(group, _ns_tag(tag)).text = val
+        elif overwrite:
+            existing.text = val
+    return group
 
 
 def ensure_empty_payment(xml: etree._Element, sap: dict[str, Any]) -> None:
-    """finNFe 3/4 (and empty pag) need detPag with tPag=90."""
+    """Ensure pag/detPag exists and satisfies SEFAZ payment rules (cStat 441).
+
+    An empty ``<pag/>`` is later stripped and SEFAZ then reports a schema
+    failure naming the next sibling (often infAdic). ``tPag=99`` also requires
+    ``xPag`` even when SAP sends an empty ``descricao_pagamento``.
+    """
     fin = str(sap.get("finalidade_emissao") or "1")
+    inf = _find(xml, "infNFe")
+    pag = _child(inf, "pag") if inf is not None else _find(xml, "pag")
+    if pag is None and inf is not None:
+        anchor = _child(inf, "cobr")
+        if anchor is None:
+            anchor = _child(inf, "transp")
+        if anchor is None:
+            anchor = _child(inf, "total")
+        pag = _append_nfe_child(inf, "pag", after=anchor)
+    if pag is None:
+        return
+    if _child(pag, "detPag") is None:
+        formas = [item for item in (sap.get("formas_pagamento") or []) if isinstance(item, dict)]
+        if fin in ("3", "4") or not formas:
+            _append_sem_pagamento(pag)
+        else:
+            for item in formas:
+                _append_det_pag(pag, item)
+            if _child(pag, "detPag") is None:
+                _append_sem_pagamento(pag)
+    _ensure_det_pag_xpag(pag, sap)
+
+
+def _ensure_det_pag_xpag(pag: etree._Element, sap: dict[str, Any]) -> None:
+    """cStat 441: tPag=99 (Outros) requires xPag."""
+    default_desc = _default_xpag(sap)
+    for det in list(pag):
+        if _local(det) != "detPag":
+            continue
+        if _child_text(det, "tPag") != "99":
+            continue
+        existing = _child(det, "xPag")
+        if existing is not None and (existing.text or "").strip():
+            continue
+        desc = default_desc
+        if existing is None:
+            _insert_after(det, "tPag", "xPag", desc)
+        else:
+            existing.text = desc
+
+
+def _default_xpag(sap: dict[str, Any]) -> str:
+    for item in sap.get("formas_pagamento") or []:
+        if not isinstance(item, dict):
+            continue
+        if _tpag(item.get("forma_pagamento")) != "99":
+            continue
+        desc = str(item.get("descricao_pagamento") or "").strip()
+        if desc:
+            return desc[:60]
+    return "Outros"
+
+
+def _append_sem_pagamento(pag: etree._Element) -> None:
+    det = _sub_nfe(pag, "detPag")
+    _sub_nfe(det, "tPag", "90")
+    _sub_nfe(det, "vPag", "0.00")
+
+
+def _append_det_pag(pag: etree._Element, item: dict[str, Any]) -> None:
+    det = _sub_nfe(pag, "detPag")
+    ind = item.get("indicador_pagamento")
+    if ind is not None and str(ind).strip() != "":
+        _sub_nfe(det, "indPag", str(ind).strip()[:1])
+    tpag = _tpag(item.get("forma_pagamento"))
+    _sub_nfe(det, "tPag", tpag)
+    if tpag == "99":
+        desc = str(item.get("descricao_pagamento") or "").strip() or "Outros"
+        _sub_nfe(det, "xPag", desc[:60])
+    _sub_nfe(det, "vPag", _fmt2(item.get("valor_pagamento")))
+
+
+def ensure_payment_troco(xml: etree._Element, sap: dict[str, Any]) -> None:
+    """cStat 866: when sum(vPag) > vNF, ``pag/vTroco`` is mandatory.
+
+    SAP often sends ``valor_troco`` (or leaves it 0) while ``formas_pagamento``
+    still exceed the NF total — PyNFe never writes ``vTroco``.
+    """
     pag = _find(xml, "pag")
     if pag is None:
-        inf = _find(xml, "infNFe")
-        if inf is None:
-            return
-        total = _child(inf, "total")
-        pag = _append_nfe_child(inf if total is None else None, "pag", after=total)
-        if pag is None:
-            return
-    det = _child(pag, "detPag")
-    if det is None and (fin in ("3", "4") or not (sap.get("formas_pagamento") or [])):
-        det = _sub_nfe(pag, "detPag")
-        _sub_nfe(det, "tPag", "90")
-        _sub_nfe(det, "vPag", "0.00")
+        return
+
+    total_pag = Decimal("0")
+    for det in list(pag):
+        if _local(det) != "detPag":
+            continue
+        total_pag += _dec(_child_text(det, "vPag"))
+
+    icms_tot = _find(xml, "ICMSTot")
+    vnf = _dec(_child_text(icms_tot, "vNF") if icms_tot is not None else "")
+    if vnf <= 0:
+        vnf = _dec(str(sap.get("valor_total") or "0"))
+
+    troco_sap = _dec(str(sap.get("valor_troco") or "0"))
+    existing = _child(pag, "vTroco")
+
+    if total_pag > vnf:
+        troco = troco_sap if troco_sap > 0 else (total_pag - vnf)
+        text = _fmt2(troco)
+        if existing is None:
+            _sub_nfe(pag, "vTroco", text)
+        else:
+            existing.text = text
+        return
+
+    if troco_sap > 0:
+        text = _fmt2(troco_sap)
+        if existing is None:
+            _sub_nfe(pag, "vTroco", text)
+        else:
+            existing.text = text
+        return
+
+    if existing is not None:
+        pag.remove(existing)
+
+
+def _tpag(value: Any) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if not digits:
+        return "99"
+    return digits.zfill(2)[-2:]
+
+
+# Sul/Sudeste except ES. Interstate rate to N/NE/CO/ES from these UFs is 7%.
+_SUL_SUDESTE = frozenset({"SP", "RJ", "MG", "PR", "RS", "SC"})
+_DESTINO_SETE = frozenset(
+    {
+        "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
+        "PA", "PB", "PE", "PI", "RN", "RO", "RR", "SE", "TO",
+    }
+)
+_ORIGEM_ALIQUOTA_4 = frozenset({"1", "2", "3", "8"})
+
+
+def patch_icms_uf_dest(xml: etree._Element, sap: dict[str, Any]) -> None:
+    """cStat 694: interstate sale to a non-taxpayer final consumer needs ICMSUFDest.
+
+    PyNFe never writes the group. GRC sends it (zeros on CST 60) plus the three
+    ICMSTot share fields, which PyNFe also skips when the amount is zero.
+    """
+    ide = _find(xml, "ide")
+    dest = _find(xml, "dest")
+    emit = _find(xml, "emit")
+    if ide is None or dest is None:
+        return
+    if (_child_text(ide, "idDest") != "2") or (_child_text(ide, "indFinal") != "1"):
+        return
+    if _child_text(dest, "indIEDest") != "9":
+        return
+    uf_emit = _child_text(_find(emit, "enderEmit") if emit is not None else None, "UF")
+    uf_dest = _child_text(_find(dest, "enderDest"), "UF")
+    items = [item for item in (sap.get("items") or []) if isinstance(item, dict)]
+    inf = _find(xml, "infNFe")
+    if inf is None:
+        return
+    for idx, det in enumerate(child for child in inf if _local(child) == "det"):
+        imposto = _child(det, "imposto")
+        if imposto is None or _child(imposto, "ICMS") is None or _child(imposto, "ICMSUFDest") is not None:
+            continue
+        item = items[idx] if idx < len(items) else {}
+        orig = _orig(imposto)
+        group = etree.Element(_nfe_qname(imposto, "ICMSUFDest"))
+        _sub_nfe(group, "vBCUFDest", _fmt2(item.get("icms_uf_dest_base")))
+        _sub_nfe(group, "pFCPUFDest", _fmt4(item.get("fcp_uf_dest_aliquota")))
+        _sub_nfe(group, "pICMSUFDest", _fmt4(item.get("icms_uf_dest_aliquota")))
+        _sub_nfe(group, "pICMSInter", _p_icms_inter(uf_emit, uf_dest, orig, item))
+        _sub_nfe(group, "pICMSInterPart", _fmt4(item.get("icms_inter_partilha") or 100))
+        _sub_nfe(group, "vFCPUFDest", _fmt2(item.get("fcp_uf_dest_valor")))
+        _sub_nfe(group, "vICMSUFDest", _fmt2(item.get("icms_uf_dest_valor")))
+        _sub_nfe(group, "vICMSUFRemet", _fmt2(item.get("icms_uf_remet_valor")))
+        ibs = _child(imposto, "IBSCBS")
+        if ibs is not None:
+            ibs.addprevious(group)
+        else:
+            imposto.append(group)
+    _sync_icms_uf_dest_totals(xml)
+
+
+def _orig(imposto: etree._Element) -> str:
+    icms = _child(imposto, "ICMS")
+    if icms is None:
+        return "0"
+    for node in icms.iter():
+        if _local(node) == "orig" and (node.text or "").strip():
+            return node.text.strip()
+    return "0"
+
+
+def _p_icms_inter(uf_emit: str, uf_dest: str, orig: str, item: dict[str, Any]) -> str:
+    informed = item.get("icms_inter_aliquota")
+    if informed is not None and str(informed).strip() != "":
+        rate = Decimal(str(informed))
+        if rate in (Decimal("4"), Decimal("7"), Decimal("12")):
+            return f"{rate:.2f}"
+    if orig in _ORIGEM_ALIQUOTA_4:
+        return "4.00"
+    if uf_emit in _SUL_SUDESTE and uf_dest in _DESTINO_SETE:
+        return "7.00"
+    return "12.00"
+
+
+def _sync_icms_uf_dest_totals(xml: etree._Element) -> None:
+    groups = _find_all(xml, "ICMSUFDest")
+    if not groups:
+        return
+    sums = {"vFCPUFDest": Decimal("0"), "vICMSUFDest": Decimal("0"), "vICMSUFRemet": Decimal("0")}
+    for group in groups:
+        for tag in sums:
+            child = _child(group, tag)
+            if child is not None and (child.text or "").strip():
+                sums[tag] += Decimal(child.text)
+    icms_tot = _find(xml, "ICMSTot")
+    if icms_tot is None:
+        return
+    previous = "vICMSDeson"
+    for tag in ("vFCPUFDest", "vICMSUFDest", "vICMSUFRemet"):
+        text = f"{sums[tag]:.2f}"
+        existing = _child(icms_tot, tag)
+        if existing is None:
+            _insert_after(icms_tot, previous, tag, text)
+        else:
+            existing.text = text
+        previous = tag
+
+
+def _child_text(parent: etree._Element | None, local_name: str) -> str:
+    if parent is None:
+        return ""
+    child = _child(parent, local_name)
+    return (child.text or "").strip() if child is not None else ""
 
 
 def _nfe_qname(parent: etree._Element, local: str) -> str:

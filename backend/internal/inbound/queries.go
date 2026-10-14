@@ -17,6 +17,7 @@ import (
 type ListInboundDocumentsInput struct {
 	OrganizationID uuid.UUID
 	Status         string
+	StatusGroup    string // all | action_needed | in_progress | completed | problem
 	DocumentType   string
 	Direction      string // "inbound" (default) or "outbound"
 	Query          string
@@ -24,7 +25,28 @@ type ListInboundDocumentsInput struct {
 	Number         string
 	Partner        string
 	AccessKey      string
+	NumberFrom     *int64 // SAP number interval, inclusive (RPS or NF-e number)
+	NumberTo       *int64
 	Limit          int
+	Offset         int
+}
+
+// DocumentListCounts are the KPI buckets for the current search and number
+// interval, before the status-group page filter.
+type DocumentListCounts struct {
+	All          int `json:"all"`
+	ActionNeeded int `json:"action_needed"`
+	InProgress   int `json:"in_progress"`
+	Completed    int `json:"completed"`
+	Problem      int `json:"problem"`
+}
+
+// DocumentListResult is one page of the fiscal document list plus the totals
+// needed to walk every note and to draw the status cards.
+type DocumentListResult struct {
+	Items  []InboundDocumentListItem
+	Total  int
+	Counts DocumentListCounts
 }
 
 // InboundDocumentListItem is a listing row plus the NF-e/NFS-e header fields
@@ -35,18 +57,20 @@ type ListInboundDocumentsInput struct {
 // fiscal.Document itself, which stays document-type agnostic.
 type InboundDocumentListItem struct {
 	fiscal.Document
-	AccessKey            *string              `json:"access_key,omitempty"`
-	Series               *string              `json:"series,omitempty"`
-	Number               *string              `json:"number,omitempty"`
-	IssuerCNPJ           *string              `json:"issuer_cnpj,omitempty"`
-	RecipientDocument    *string              `json:"recipient_document,omitempty"`
-	IssuedAt             *time.Time           `json:"issued_at,omitempty"`
-	IssuerName           *string              `json:"issuer_name,omitempty"`
-	AuthorizationCode    *string              `json:"authorization_code,omitempty"`
-	AuthorizationMessage *string              `json:"authorization_message,omitempty"`
-	NFe                  *NFeDetails          `json:"nfe,omitempty"`
-	NFSe                 *NFSeDetails         `json:"nfse,omitempty"`
-	Payloads             []DocumentPayloadRef `json:"payloads,omitempty"`
+	AccessKey             *string              `json:"access_key,omitempty"`
+	Series                *string              `json:"series,omitempty"`
+	Number                *string              `json:"number,omitempty"`
+	IssuerCNPJ            *string              `json:"issuer_cnpj,omitempty"`
+	RecipientDocument     *string              `json:"recipient_document,omitempty"`
+	IssuedAt              *time.Time           `json:"issued_at,omitempty"`
+	AuthorizedAt          *time.Time           `json:"authorized_at,omitempty"`
+	AuthorizationProtocol *string              `json:"authorization_protocol,omitempty"`
+	IssuerName            *string              `json:"issuer_name,omitempty"`
+	AuthorizationCode     *string              `json:"authorization_code,omitempty"`
+	AuthorizationMessage  *string              `json:"authorization_message,omitempty"`
+	NFe                   *NFeDetails          `json:"nfe,omitempty"`
+	NFSe                  *NFSeDetails         `json:"nfse,omitempty"`
+	Payloads              []DocumentPayloadRef `json:"payloads,omitempty"`
 }
 
 // DocumentPayloadRef is a stored XML/JSON blob the detail screen can preview
@@ -58,30 +82,22 @@ type DocumentPayloadRef struct {
 
 // ListInboundDocuments lists organization_documents filtered by direction
 // (default inbound). Outbound NF-e saída reuses the same list endpoint with
-// direction=outbound.
-func (s *Service) ListInboundDocuments(ctx context.Context, in ListInboundDocumentsInput) ([]InboundDocumentListItem, error) {
+// direction=outbound. Results are one page; Total and Counts cover the whole
+// match so the screen can walk every note.
+func (s *Service) ListInboundDocuments(ctx context.Context, in ListInboundDocumentsInput) (DocumentListResult, error) {
 	limit := in.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	offset := in.Offset
+	if offset < 0 {
+		offset = 0
 	}
 	direction := strings.ToLower(strings.TrimSpace(in.Direction))
 	if direction == "" {
 		direction = "inbound"
 	}
-	query := `
-		select d.id, d.organization_id, d.organization_company_id, d.document_type, d.direction, d.environment,
-		       d.external_id, d.source_system, d.source_document_id, d.idempotency_key, d.document_key,
-		       d.status, d.processing_status, d.current_version, d.correlation_id, d.trace_id,
-		       d.received_at, d.completed_at, d.created_at, d.updated_at,
-		       coalesce(n.access_key, s.access_key),
-		       coalesce(n.series, s.rps_series),
-		       coalesce(n.number, s.nfse_number, s.rps_number),
-		       coalesce(n.issuer_cnpj, s.provider_cnpj),
-		       coalesce(n.recipient_document, s.taker_cnpj, s.taker_cpf),
-		       coalesce(n.issued_at, s.emission_date, s.issued_at),
-		       coalesce(nullif(n.issuer_legal_name, ''), n.metadata_json #>> '{issuer,legal_name}', c.legal_name),
-		       coalesce(n.authorization_cstat, s.authorization_code),
-		       coalesce(n.authorization_xmotivo, s.authorization_message)
+	from := `
 		from organization_documents d
 		left join organization_nfe n on n.organization_document_id = d.id
 		left join organization_nfse s on s.organization_document_id = d.id
@@ -97,23 +113,63 @@ func (s *Service) ListInboundDocuments(ctx context.Context, in ListInboundDocume
 			status = strings.ToLower(status)
 		}
 		args = append(args, status)
-		query += " and d.status = $" + strconv.Itoa(len(args))
+		from += " and d.status = $" + strconv.Itoa(len(args))
 	}
 	if in.DocumentType != "" {
 		args = append(args, in.DocumentType)
-		query += " and d.document_type = $" + strconv.Itoa(len(args))
+		from += " and d.document_type = $" + strconv.Itoa(len(args))
 	}
-	query, args = applyListSearch(query, args, in)
-	args = append(args, limit)
-	query += " order by d.received_at desc limit $" + strconv.Itoa(len(args))
+	from, args = applyListSearch(from, args, in)
+	from, args = applyNumberRange(from, args, in.NumberFrom, in.NumberTo)
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	var counts DocumentListCounts
+	var actionNeeded, completed, problem int
+	err := s.pool.QueryRow(ctx, `
+		select count(*),
+		       count(*) filter (where lower(d.status) = 'action_required'),
+		       count(*) filter (where lower(d.status) in ('completed', 'authorized', 'cancelled')),
+		       count(*) filter (where lower(d.status) in ('blocked', 'rejected', 'failed'))
+	`+from, args...).Scan(&counts.All, &actionNeeded, &completed, &problem)
 	if err != nil {
-		return nil, err
+		return DocumentListResult{}, err
+	}
+	counts.ActionNeeded = actionNeeded
+	counts.Completed = completed
+	counts.Problem = problem
+	counts.InProgress = counts.All - actionNeeded - completed - problem
+	if counts.InProgress < 0 {
+		counts.InProgress = 0
+	}
+
+	pageFrom := from
+	pageArgs := append([]any{}, args...)
+	if clause := statusGroupClause(in.StatusGroup); clause != "" {
+		pageFrom += " and " + clause
+	}
+	pageArgs = append(pageArgs, limit, offset)
+	query := `
+		select d.id, d.organization_id, d.organization_company_id, d.document_type, d.direction, d.environment,
+		       d.external_id, d.source_system, d.source_document_id, d.idempotency_key, d.document_key,
+		       d.status, d.processing_status, d.current_version, d.correlation_id, d.trace_id,
+		       d.received_at, d.completed_at, d.created_at, d.updated_at,
+		       coalesce(n.access_key, s.access_key),
+		       coalesce(n.series, s.rps_series),
+		       coalesce(n.number, s.nfse_number, s.rps_number),
+		       coalesce(n.issuer_cnpj, s.provider_cnpj),
+		       coalesce(n.recipient_document, s.taker_cnpj, s.taker_cpf),
+		       coalesce(n.issued_at, n.emission_date::timestamptz, s.emission_date, s.issued_at),
+		       coalesce(nullif(n.issuer_legal_name, ''), n.metadata_json #>> '{issuer,legal_name}', c.legal_name),
+		       coalesce(n.authorization_cstat, s.authorization_code),
+		       coalesce(n.authorization_xmotivo, s.authorization_message)
+	` + pageFrom + " order by d.received_at desc, d.id desc limit $" + strconv.Itoa(len(pageArgs)-1) + " offset $" + strconv.Itoa(len(pageArgs))
+
+	rows, err := s.pool.Query(ctx, query, pageArgs...)
+	if err != nil {
+		return DocumentListResult{}, err
 	}
 	defer rows.Close()
 
-	var docs []InboundDocumentListItem
+	docs := []InboundDocumentListItem{}
 	for rows.Next() {
 		var d InboundDocumentListItem
 		if err := rows.Scan(
@@ -124,12 +180,87 @@ func (s *Service) ListInboundDocuments(ctx context.Context, in ListInboundDocume
 			&d.AccessKey, &d.Series, &d.Number, &d.IssuerCNPJ, &d.RecipientDocument,
 			&d.IssuedAt, &d.IssuerName, &d.AuthorizationCode, &d.AuthorizationMessage,
 		); err != nil {
-			return nil, err
+			return DocumentListResult{}, err
 		}
 		docs = append(docs, d)
 	}
-	return docs, nil
+	if err := rows.Err(); err != nil {
+		return DocumentListResult{}, err
+	}
+	return DocumentListResult{Items: docs, Total: statusGroupTotal(in.StatusGroup, counts), Counts: counts}, nil
 }
+
+// documentNumberSQL is the number SAP assigned: NF-e number, or the RPS on an
+// NFS-e. Leading zeros are ignored so an interval of 12–15 matches "00012".
+const documentNumberSQL = `case when regexp_replace(coalesce(n.number, s.rps_number, s.nfse_number, ''), '[^0-9]', '', 'g') ~ '^[0-9]+$' then nullif(ltrim(regexp_replace(coalesce(n.number, s.rps_number, s.nfse_number, ''), '[^0-9]', '', 'g'), '0'), '')::bigint end`
+
+func applyNumberRange(query string, args []any, from, to *int64) (string, []any) {
+	if from != nil {
+		args = append(args, *from)
+		query += " and " + documentNumberSQL + " >= $" + strconv.Itoa(len(args))
+	}
+	if to != nil {
+		args = append(args, *to)
+		query += " and " + documentNumberSQL + " <= $" + strconv.Itoa(len(args))
+	}
+	return query, args
+}
+
+func statusGroupClause(group string) string {
+	switch strings.ToLower(strings.TrimSpace(group)) {
+	case "action_needed":
+		return "lower(d.status) = 'action_required'"
+	case "completed":
+		return "lower(d.status) in ('completed', 'authorized', 'cancelled')"
+	case "problem":
+		return "lower(d.status) in ('blocked', 'rejected', 'failed')"
+	case "in_progress":
+		return "lower(d.status) not in ('action_required', 'completed', 'authorized', 'cancelled', 'blocked', 'rejected', 'failed')"
+	default:
+		return ""
+	}
+}
+
+func statusGroupTotal(group string, counts DocumentListCounts) int {
+	switch strings.ToLower(strings.TrimSpace(group)) {
+	case "action_needed":
+		return counts.ActionNeeded
+	case "completed":
+		return counts.Completed
+	case "problem":
+		return counts.Problem
+	case "in_progress":
+		return counts.InProgress
+	default:
+		return counts.All
+	}
+}
+
+// ParseDocumentNumberBound reads one end of a SAP number interval.
+// Empty means that end is open. Digits may include leading zeros.
+func ParseDocumentNumberBound(raw string) (*int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return nil, errInvalidDocumentNumber
+		}
+	}
+	trimmed := strings.TrimLeft(raw, "0")
+	if trimmed == "" {
+		zero := int64(0)
+		return &zero, nil
+	}
+	n, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return nil, errInvalidDocumentNumber
+	}
+	return &n, nil
+}
+
+var errInvalidDocumentNumber = errors.New("invalid document number")
 
 func applyListSearch(query string, args []any, in ListInboundDocumentsInput) (string, []any) {
 	if q := clipFilter(in.Query); q != "" {
@@ -281,7 +412,7 @@ func (s *Service) GetInboundDocument(ctx context.Context, organizationID, docume
 		       d.status, d.processing_status, d.current_version, d.correlation_id, d.trace_id,
 		       d.received_at, d.completed_at, d.created_at, d.updated_at,
 		       n.access_key, n.series, n.number, n.issuer_cnpj, n.recipient_document,
-		       n.issued_at,
+		       coalesce(n.issued_at, n.emission_date::timestamptz),
 		       coalesce(nullif(n.issuer_legal_name, ''), n.metadata_json #>> '{issuer,legal_name}'),
 		       n.metadata_json,
 		       n.issuer_legal_name, n.issuer_trade_name, n.issuer_ie, n.issuer_im, n.issuer_crt,
@@ -348,18 +479,21 @@ func (s *Service) attachAuthorizationAndPayloads(ctx context.Context, organizati
 			return err
 		}
 	} else {
-		var authCode, authMsg *string
+		var authCode, authMsg, authProtocol *string
+		var authorizedAt *time.Time
 		err := s.pool.QueryRow(ctx, `
-			select authorization_cstat, authorization_xmotivo
+			select authorization_cstat, authorization_xmotivo, authorization_protocol, authorized_at
 			from organization_nfe
 			where organization_id = $1 and organization_document_id = $2
-		`, organizationID, documentID).Scan(&authCode, &authMsg)
+		`, organizationID, documentID).Scan(&authCode, &authMsg, &authProtocol, &authorizedAt)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		if err == nil {
 			d.AuthorizationCode = authCode
 			d.AuthorizationMessage = authMsg
+			d.AuthorizationProtocol = authProtocol
+			d.AuthorizedAt = authorizedAt
 		}
 	}
 
@@ -385,7 +519,7 @@ func (s *Service) attachAuthorizationAndPayloads(ctx context.Context, organizati
 
 func (s *Service) attachNFSeDetails(ctx context.Context, organizationID, documentID uuid.UUID, d *InboundDocumentListItem) error {
 	var accessKey, series, number, issuer, recipient, authCode, authMsg *string
-	var issuedAt *time.Time
+	var issuedAt, authorizedAt *time.Time
 	var providerIM, providerMun *string
 	var companyName, companyTrade, companyIM, companyUF, companyCityCode *string
 	var takerCPF, takerCNPJ, takerLegal, takerIM, takerPhone, takerEmail *string
@@ -397,7 +531,7 @@ func (s *Service) attachNFSeDetails(ctx context.Context, organizationID, documen
 	err := s.pool.QueryRow(ctx, `
 		select s.access_key, s.rps_series, coalesce(nullif(s.nfse_number, ''), s.rps_number),
 		       s.provider_cnpj, coalesce(s.taker_cnpj, s.taker_cpf), coalesce(s.emission_date, s.issued_at),
-		       s.authorization_code, s.authorization_message,
+		       s.authorization_code, s.authorization_message, s.authorized_at,
 		       s.provider_im, s.provider_municipality_code,
 		       c.legal_name, c.trade_name, c.municipal_registration, c.uf, c.ibge_municipality_code,
 		       s.taker_cpf, s.taker_cnpj, s.taker_legal_name, s.taker_im, s.taker_phone, s.taker_email,
@@ -413,7 +547,7 @@ func (s *Service) attachNFSeDetails(ctx context.Context, organizationID, documen
 		  on c.id = $3 and c.organization_id = s.organization_id
 		where s.organization_id = $1 and s.organization_document_id = $2
 	`, organizationID, documentID, d.OrganizationCompanyID).Scan(
-		&accessKey, &series, &number, &issuer, &recipient, &issuedAt, &authCode, &authMsg,
+		&accessKey, &series, &number, &issuer, &recipient, &issuedAt, &authCode, &authMsg, &authorizedAt,
 		&providerIM, &providerMun,
 		&companyName, &companyTrade, &companyIM, &companyUF, &companyCityCode,
 		&takerCPF, &takerCNPJ, &takerLegal, &takerIM, &takerPhone, &takerEmail,
@@ -448,6 +582,7 @@ func (s *Service) attachNFSeDetails(ctx context.Context, organizationID, documen
 	}
 	d.AuthorizationCode = authCode
 	d.AuthorizationMessage = authMsg
+	d.AuthorizedAt = authorizedAt
 	if d.IssuerName == nil || strings.TrimSpace(*d.IssuerName) == "" {
 		if name := ptrText(companyName); name != "" {
 			d.IssuerName = &name

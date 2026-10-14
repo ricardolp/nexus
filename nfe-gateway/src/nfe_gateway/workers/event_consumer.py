@@ -19,9 +19,6 @@ from nfe_gateway.backend_client import BackendClient
 from nfe_gateway.broker import Broker
 from nfe_gateway.config import encryption_key_bytes, load_settings
 from nfe_gateway.credentials import CredentialsStore
-from nfe_gateway.nfse.events import build_cancel_ped_reg_evento
-from nfe_gateway.nfse.sefin import post_evento
-from nfe_gateway.nfse.sign import sign_ped_reg_evento_xml
 from nfe_gateway.oauth import TokenCache
 from nfe_gateway.sefaz.client import ephemeral_pfx_path
 from nfe_gateway.sefaz.environment import resolve_homologacao
@@ -63,22 +60,39 @@ async def _persist_event_xmls(
     store: ObjectStore,
     *,
     base_key: str,
+    event_kind: str,
     signed_xml: Any,
     response_xml: Any,
+    n_seq_evento: int = 1,
 ) -> dict[str, str]:
-    """Store cancel/CC-e request+response XML; return object keys for Go."""
+    """Store cancel/CC-e request+response XML; return object keys for Go.
+
+    CC-e sequences > 1 get their own keys (``.cce_{n}_response.xml``) so a new
+    correction does not overwrite the previous one; sequence 1 keeps the
+    legacy ``.cce_response.xml`` name the backend already falls back to.
+    """
     keys: dict[str, str] = {}
     request_bytes = _xml_bytes(signed_xml)
     response_bytes = _xml_bytes(response_xml)
+    suffix = "cce" if event_kind == "cce" else "inutilization" if event_kind == "inutilization" else "cancel"
+    if event_kind == "cce" and n_seq_evento > 1:
+        suffix = f"cce_{n_seq_evento}"
     if request_bytes:
-        request_key = f"{base_key}.cancel_request.xml"
+        request_key = f"{base_key}.{suffix}_request.xml"
         await store.put(request_key, "application/xml", request_bytes)
         keys["request_object_key"] = request_key
     if response_bytes:
-        response_key = f"{base_key}.cancel_response.xml"
+        response_key = f"{base_key}.{suffix}_response.xml"
         await store.put(response_key, "application/xml", response_bytes)
         keys["response_object_key"] = response_key
     return keys
+
+
+def _int_or(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _storage_base_key(data: dict[str, Any], document_id: str | None) -> str:
@@ -106,31 +120,35 @@ async def handle_event(
     environment = data["environment"]
     homologacao = resolve_homologacao(environment, force_homologacao)
 
-    material = await backend.get_signing_material(
-        organization_id=organization_id, organization_company_id=organization_company_id
-    )
+    nfse_event = _is_nfse(data) and event_type.endswith(("cancel_requested.v1", "cce_requested.v1"))
+    material = None
+    if not nfse_event:
+        material = await backend.get_signing_material(
+            organization_id=organization_id, organization_company_id=organization_company_id
+        )
     try:
-        if event_type.endswith("cancel_requested.v1"):
-            if _is_nfse(data):
-                result = await _do_nfse_cancel(data, material.pfx, homologacao)
-            else:
-                uf = data["uf"]
-                result = await _do_cancel(data, material.pfx, uf, homologacao)
-        elif event_type.endswith("cce_requested.v1"):
-            if _is_nfse(data):
-                result = {
-                    "outcome": "rejected",
-                    "event_kind": "cce",
-                    "error_message": "carta de correção is not supported for NFS-e Nacional",
-                }
-            else:
-                uf = data["uf"]
-                result = await _do_cce(data, material.pfx, uf, homologacao)
-        elif event_type.endswith("inutilization_requested.v1"):
-            uf = data["uf"]
-            result = await _do_inutilizacao(data, material.pfx, uf, homologacao)
+        if nfse_event:
+            result = await _dispatch_nfse_event(
+                event_type,
+                data,
+                organization_id=organization_id,
+                organization_company_id=organization_company_id,
+                backend=backend,
+                homologacao=homologacao,
+            )
         else:
-            result = {"outcome": "rejected", "error_message": f"unknown event type {event_type}"}
+            result = await _dispatch_event(event_type, data, material.pfx, homologacao)
+    except Exception as exc:  # noqa: BLE001
+        # Publish a result instead of dead-lettering so the document does not
+        # stay in waiting_external forever.
+        logger.exception("event handling failed", extra={"document_id": document_id})
+        message = f"{type(exc).__name__}: {exc}"[:500]
+        result = {
+            "outcome": "error",
+            "event_kind": _event_kind(event_type),
+            "error_message": message,
+            "x_motivo": message,
+        }
     finally:
         del material
 
@@ -141,8 +159,10 @@ async def handle_event(
             keys = await _persist_event_xmls(
                 store,
                 base_key=base_key,
+                event_kind=str(result.get("event_kind") or ""),
                 signed_xml=result.get("signed_xml"),
                 response_xml=result.get("response_xml"),
+                n_seq_evento=_int_or(data.get("n_seq_evento"), 1),
             )
             result.update(keys)
         except Exception as exc:  # noqa: BLE001
@@ -157,36 +177,92 @@ async def handle_event(
     )
 
 
-async def _do_nfse_cancel(data: dict, pfx: bytes, homologacao: bool) -> dict:
-    c_motivo = str(data.get("c_motivo") or data.get("motivo") or "1").strip()
-    x_motivo = str(data.get("justificativa") or data.get("x_motivo") or "").strip()
-    unsigned = build_cancel_ped_reg_evento(
-        chave=data["access_key"],
-        cnpj=data["cnpj"],
-        c_motivo=c_motivo,
-        x_motivo=x_motivo,
+def _event_kind(event_type: str) -> str:
+    if event_type.endswith("cancel_requested.v1"):
+        return "cancel"
+    if event_type.endswith("cce_requested.v1"):
+        return "cce"
+    if event_type.endswith("inutilization_requested.v1"):
+        return "inutilization"
+    return ""
+
+
+async def _dispatch_nfse_event(
+    event_type: str,
+    data: dict[str, Any],
+    *,
+    organization_id: UUID,
+    organization_company_id: UUID,
+    backend: BackendClient,
+    homologacao: bool,
+) -> dict:
+    """NFS-e: cancelamento pelo provedor municipal congelado na nota."""
+    if event_type.endswith("cce_requested.v1"):
+        return {
+            "outcome": "rejected",
+            "event_kind": "cce",
+            "error_message": "carta de correção não existe para NFS-e",
+        }
+
+    from nfe_gateway.nfse.providers.base import CancelRequest
+    from nfe_gateway.nfse.providers.registry import get_provider
+
+    provider = get_provider(data.get("nfse_provider"))
+    config = data.get("nfse_provider_config") or {}
+    if not isinstance(config, dict):
+        config = {}
+    caps = provider.capabilities(config)
+    pfx = None
+    if caps.needs_certificate:
+        material = await backend.get_signing_material(
+            organization_id=organization_id, organization_company_id=organization_company_id
+        )
+        pfx = material.pfx
+        del material
+    credentials = None
+    if caps.credentials != "none":
+        credentials = await backend.get_nfse_credentials(
+            organization_id=organization_id,
+            organization_company_id=organization_company_id,
+            provider_code=provider.code,
+        )
+    req = CancelRequest(
         homologacao=homologacao,
-    )
-    signed = await asyncio.to_thread(sign_ped_reg_evento_xml, unsigned, pfx=pfx)
-    result = await asyncio.to_thread(
-        post_evento,
-        chave=data["access_key"],
-        signed_xml=signed,
+        document_id=str(data.get("document_id") or ""),
+        config=config,
+        cnpj=str(data.get("cnpj") or ""),
+        municipality_code=str(data.get("municipality_code") or ""),
+        access_key=str(data.get("access_key") or ""),
+        nfse_number=str(data.get("nfse_number") or ""),
+        nfse_series=str(data.get("nfse_series") or ""),
+        c_motivo=str(data.get("c_motivo") or data.get("motivo") or "1").strip(),
+        justificativa=str(data.get("justificativa") or data.get("x_motivo") or "").strip(),
         pfx=pfx,
-        homologacao=homologacao,
+        credentials=credentials,
     )
-    # Map transport "error" to rejected so Go HandleEventResult can apply status.
-    if result.get("outcome") == "error":
-        result = {**result, "outcome": "rejected"}
+    try:
+        result = await asyncio.to_thread(provider.cancel, req)
+    finally:
+        req.pfx = None
+        req.credentials = None
     result["event_kind"] = "cancel"
-    result["signed_xml"] = signed
     return result
+
+
+async def _dispatch_event(event_type: str, data: dict[str, Any], pfx: bytes, homologacao: bool) -> dict:
+    if event_type.endswith("cancel_requested.v1"):
+        return await _do_cancel(data, pfx, data["uf"], homologacao)
+    if event_type.endswith("cce_requested.v1"):
+        return await _do_cce(data, pfx, data["uf"], homologacao)
+    if event_type.endswith("inutilization_requested.v1"):
+        return await _do_inutilizacao(data, pfx, data["uf"], homologacao)
+    return {"outcome": "rejected", "error_message": f"unknown event type {event_type}"}
 
 
 async def _do_cancel(data: dict, pfx: bytes, uf: str, homologacao: bool) -> dict:
     unsigned = build_cancel_evento(
         chave=data["access_key"],
-        protocolo=data["protocol"],
+        protocolo=data.get("protocolo") or data["protocol"],
         cnpj=data["cnpj"],
         justificativa=data["justificativa"],
         homologacao=homologacao,
@@ -195,7 +271,7 @@ async def _do_cancel(data: dict, pfx: bytes, uf: str, homologacao: bool) -> dict
     with ephemeral_pfx_path(pfx) as cert_path:
         signed = AssinaturaA1(cert_path, "").assinar(unsigned)
         comunicacao = ComunicacaoSefazVerified(uf, cert_path, "", homologacao=homologacao)
-        response = await asyncio.to_thread(comunicacao.evento, "55", signed, 1)
+        response = await asyncio.to_thread(comunicacao.evento, "nfe", signed, 1)
     parsed = parse_evento_cstat(response.content)
     parsed["event_kind"] = "cancel"
     parsed["response_xml"] = response.content
@@ -214,7 +290,7 @@ async def _do_cce(data: dict, pfx: bytes, uf: str, homologacao: bool) -> dict:
     with ephemeral_pfx_path(pfx) as cert_path:
         signed = AssinaturaA1(cert_path, "").assinar(unsigned)
         comunicacao = ComunicacaoSefazVerified(uf, cert_path, "", homologacao=homologacao)
-        response = await asyncio.to_thread(comunicacao.evento, "55", signed, 1)
+        response = await asyncio.to_thread(comunicacao.evento, "nfe", signed, 1)
     parsed = parse_evento_cstat(response.content)
     parsed["event_kind"] = "cce"
     parsed["response_xml"] = response.content

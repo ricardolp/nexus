@@ -31,6 +31,7 @@ async def test_persist_event_xmls_writes_request_and_response():
     keys = await _persist_event_xmls(
         store,
         base_key="fiscal/docs/abc",
+        event_kind="cancel",
         signed_xml=b"<pedido/>",
         response_xml="<evento/>",
     )
@@ -40,6 +41,44 @@ async def test_persist_event_xmls_writes_request_and_response():
     assert store.puts[0][1] == "application/xml"
     assert store.puts[0][2] == b"<pedido/>"
     assert store.puts[1][2] == b"<evento/>"
+
+
+@pytest.mark.asyncio
+async def test_persist_inutilization_uses_suffix():
+    store = MemoryStore()
+    keys = await _persist_event_xmls(
+        store,
+        base_key="fiscal/docs/xyz",
+        event_kind="inutilization",
+        signed_xml=b"<inut/>",
+        response_xml=b"<retInut/>",
+    )
+    assert keys["request_object_key"] == "fiscal/docs/xyz.inutilization_request.xml"
+    assert keys["response_object_key"] == "fiscal/docs/xyz.inutilization_response.xml"
+
+
+@pytest.mark.asyncio
+async def test_persist_cce_sequence_keys():
+    store = MemoryStore()
+    first = await _persist_event_xmls(
+        store,
+        base_key="fiscal/docs/k",
+        event_kind="cce",
+        signed_xml=b"<cce1/>",
+        response_xml=b"<ret1/>",
+        n_seq_evento=1,
+    )
+    second = await _persist_event_xmls(
+        store,
+        base_key="fiscal/docs/k",
+        event_kind="cce",
+        signed_xml=b"<cce2/>",
+        response_xml=b"<ret2/>",
+        n_seq_evento=2,
+    )
+    assert first["response_object_key"] == "fiscal/docs/k.cce_response.xml"
+    assert second["request_object_key"] == "fiscal/docs/k.cce_2_request.xml"
+    assert second["response_object_key"] == "fiscal/docs/k.cce_2_response.xml"
 
 
 def test_storage_base_key_prefers_payload_object_key():

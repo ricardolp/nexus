@@ -18,7 +18,8 @@ O módulo `sefaz/sap_nfe.py` converte o JSON flat português do SAP (vide `backe
 - `tipo_emissao` / chave pré-computada (dígito 35 → tpEmis) para contingência SVC-AN/RS
 - Emitente e destinatário com endereços completos, `id_estrangeiro`, SUFRAMA/ISUF
 - Itens com NCM, CFOP, quantidades, ICMS (incl. CST 51 diferimento), IPI, PIS, COFINS
-- IBS/CBS (reforma tributária NT 2025.002) com cClassTrib, alíquotas UF/Mun, monofásico 620
+- IBS/CBS (reforma tributária, NT 2025.002-RTC v1.50) montado pelo gateway em `sefaz/ibscbs_nfe.py`, guiado por `sefaz/data/cst_ibscbs.json` (CST/cClassTrib → gIBSCBS, gRed, gDif, gDevTrib, gTribRegular, gTribCompraGov, gIBSCBSMono Ad Rem/Ad Valorem por ano, gTransfCred, gAjusteCompet, gCredPresIBSZFM, gEstornoCred, gCredPresOper) e `IBSCBSTot` com gMono/gEstornoCred; confere vBC × alíquota = valor antes de transmitir
+- Documentos referenciados (`sefaz/referencias_nfe.py`): `NFref` (refNFe/refCTe/refNF), `DFeReferenciado` por item (devolução VC02-14, corte configurável), `gCompraGov` e `gPagAntecipado`
 - finNFe 5/6 (débito/crédito) + pós-processamento XML (`sefaz/xml_patches.py`)
 - Injeção automática do disclaimer de homologação quando `homologacao=True`
 
@@ -39,6 +40,7 @@ Does **not** use PyNFe's `verify=False`, and does **not** rely on Mozilla-only c
 | query | `python -m nfe_gateway.workers.query_worker` | consulta on-demand |
 | manifestation | `python -m nfe_gateway.workers.manifestation_worker` | ciência |
 | events | `python -m nfe_gateway.workers.event_consumer` | cancel / CC-e / inutilização |
+| protocol | `python -m nfe_gateway.workers.protocol_consumer` | ConsultaProtocolo sob demanda |
 | status | `python -m nfe_gateway.workers.status_monitor` | statusServico → `sefaz.status.changed.v1` |
 
 ## XSD Validation
@@ -58,7 +60,31 @@ O módulo `sefaz/xsd_validate.py` faz validação estrutural básica (elementos 
 
 Distribuição inbound: **`sefaz/client.py`** — `consult_distribution()` está wired; validar com certificado de homologação real.
 
-EPEC, DANFE PDF e NFS-e ficam fora desta onda (não estavam em produção no legado).
+EPEC e DANFE PDF ficam fora desta onda (não estavam em produção no legado).
+
+## Reforma Tributária — NFS-e
+
+- `nfse/dps.py` emite `IBSCBS` (finNFSe, indFinal, cIndOp, indDest, CST e cClassTrib em `trib/gIBSCBS`) quando o SAP ou o catálogo informa a classificação. A SefinNacional 1.6.0 ainda não aceita `indDest` depois do tomador. Competência a partir de 01/10/2026 sem o grupo é E0855.
+- `indicador_destinatario=1` exige o objeto `destinatario` (grupo `dest`).
+- `nfse/retorno.py` lê o IBS/CBS calculado pela SEFIN (`infNFSe/IBSCBS`) e o resultado da transmissão leva `ibscbs`; o backend persiste em `organization_nfse` e devolve no webhook (`ibs_cbs`).
+
+Detalhes, contrato SAP e datas: `backend/docs/architecture/24_reforma_tributaria.md`.
+
+## NFS-e — provedores municipais
+
+NFS-e não vai mais só para a SEFIN Nacional: o Go escolhe o provedor pelo município do prestador (`nfse_municipal_providers` + settings da empresa) e manda `nfse_provider` / `nfse_provider_config` no `transmission_requested` e no `cancel_requested`. O gateway só despacha:
+
+| Código | Pacote | Município(s) | Transporte |
+|---|---|---|---|
+| `sefin_nacional` (default) | `nfse/providers/sefin_nacional.py` | conveniados ao Sistema Nacional | DPS assinada + mTLS A1 |
+| `ipm` | `nfse/providers/ipm/` | Garuva/SC e demais Atende.Net | XML IPM, multipart + Basic Auth (usuário/senha via `internal_api`), assinatura opcional |
+
+- Todo provedor lê o **mesmo JSON canônico** (contrato Focus/SAP) e devolve o **mesmo resultado canônico** (`nfse/providers/base.py`).
+- IPM não tem homologação: em `homologation` o XML vai com `<nfse_teste>1` e o resultado é `rejected` / `homologacao_validada` quando a prefeitura valida — nunca `authorized`.
+- PDF oficial do provedor (`link_nfse`) é baixado e gravado em `{payload}.provider_pdf.pdf`; o download de DANFSe do backend usa esse PDF.
+- Código TOM (IPM) a partir do IBGE: `nfse/providers/data/ibge_tom.json`.
+
+Plugar um sistema novo: `nfse/providers/<codigo>/` (mapper, client, retorno, classe com `capabilities`/`emit`/`cancel`) + `registry.py` + descritor em `backend/internal/nfseprovider/descriptors.go` + linha no catálogo. Desenho completo: `backend/docs/architecture/25_nfse_provedores_municipais.md`.
 
 ## Provisionamento (por organização, uma vez)
 
@@ -93,5 +119,6 @@ pip install -e ".[dev]"
 python -m nfe_gateway.workers.distribution_poller
 python -m nfe_gateway.workers.outbound_consumer
 python -m nfe_gateway.workers.event_consumer
+python -m nfe_gateway.workers.protocol_consumer
 python -m nfe_gateway.workers.status_monitor
 ```

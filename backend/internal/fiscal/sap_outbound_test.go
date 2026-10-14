@@ -162,7 +162,47 @@ func TestNormalizeSAPNFeJSON_CEPDigits(t *testing.T) {
 	}
 }
 
+func TestNormalizeSAPNFeJSON_CNPJPadsLeadingZeros(t *testing.T) {
+	// JSON number drops leading zeros → pad back to 14 (SEFAZ TCnpj / cStat 215).
+	raw := `{"cnpj_destinatario":3315000193,"pessoas_autorizadas":[{"cnpj":3315000193}],"serie":"1","numero":"1"}`
+	out, err := NormalizeSAPNFeJSON([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["cnpj_destinatario"] != "00003315000193" {
+		t.Fatalf("cnpj_destinatario=%v", m["cnpj_destinatario"])
+	}
+	arr, _ := m["pessoas_autorizadas"].([]any)
+	if len(arr) != 1 {
+		t.Fatalf("pessoas_autorizadas=%v", m["pessoas_autorizadas"])
+	}
+	person, _ := arr[0].(map[string]any)
+	if person["cnpj"] != "00003315000193" {
+		t.Fatalf("pessoas_autorizadas.cnpj=%v", person["cnpj"])
+	}
+}
+
+func TestNormalizeSAPNFeJSON_CNPJAlphanumeric(t *testing.T) {
+	raw := `{"cnpj_destinatario":"33a15b00cd0193","serie":"1","numero":"1"}`
+	out, err := NormalizeSAPNFeJSON([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["cnpj_destinatario"] != "33A15B00CD0193" {
+		t.Fatalf("cnpj_destinatario=%v (letters must be preserved)", m["cnpj_destinatario"])
+	}
+}
+
 func TestValidateSAPNFeOutbound(t *testing.T) {
+	taxItem := SAPItem{PisCst: strPtr("01"), CofinsCst: strPtr("01")}
 	tests := []struct {
 		name    string
 		payload *SAPNFePayload
@@ -175,7 +215,7 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 				Numero:            strPtr("12345"),
 				CnpjEmitente:      strPtr("12345678000195"),
 				CnpjDestinatario:  strPtr("98765432000188"),
-				Items:             []SAPItem{{}},
+				Items:             []SAPItem{taxItem},
 			},
 			wantErr: "",
 		},
@@ -185,7 +225,7 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 				Serie:            strPtr("1"),
 				Numero:           strPtr("12345"),
 				CnpjDestinatario: strPtr("98765432000188"),
-				Items:            []SAPItem{{}},
+				Items:            []SAPItem{taxItem},
 			},
 			wantErr: "missing_issuer",
 		},
@@ -195,7 +235,7 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 				Numero:           strPtr("12345"),
 				CnpjEmitente:     strPtr("12345678000195"),
 				CnpjDestinatario: strPtr("98765432000188"),
-				Items:            []SAPItem{{}},
+				Items:            []SAPItem{taxItem},
 			},
 			wantErr: "missing_series",
 		},
@@ -205,9 +245,31 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 				Serie:            strPtr("1"),
 				CnpjEmitente:     strPtr("12345678000195"),
 				CnpjDestinatario: strPtr("98765432000188"),
-				Items:            []SAPItem{{}},
+				Items:            []SAPItem{taxItem},
 			},
 			wantErr: "missing_number",
+		},
+		{
+			name: "zero number padded",
+			payload: &SAPNFePayload{
+				Serie:            strPtr("000"),
+				Numero:           strPtr("000000000"),
+				CnpjEmitente:     strPtr("12345678000195"),
+				CnpjDestinatario: strPtr("98765432000188"),
+				Items:            []SAPItem{taxItem},
+			},
+			wantErr: "invalid_number",
+		},
+		{
+			name: "zero number",
+			payload: &SAPNFePayload{
+				Serie:            strPtr("1"),
+				Numero:           strPtr("0"),
+				CnpjEmitente:     strPtr("12345678000195"),
+				CnpjDestinatario: strPtr("98765432000188"),
+				Items:            []SAPItem{taxItem},
+			},
+			wantErr: "invalid_number",
 		},
 		{
 			name: "missing items",
@@ -226,7 +288,7 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 				Serie:        strPtr("1"),
 				Numero:       strPtr("12345"),
 				CnpjEmitente: strPtr("12345678000195"),
-				Items:        []SAPItem{{}},
+				Items:        []SAPItem{taxItem},
 			},
 			wantErr: "missing_recipient",
 		},
@@ -237,9 +299,20 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 				Numero:          strPtr("12345"),
 				CnpjEmitente:    strPtr("12345678000195"),
 				CpfDestinatario: strPtr("12345678901"),
-				Items:           []SAPItem{{}},
+				Items:           []SAPItem{taxItem},
 			},
 			wantErr: "",
+		},
+		{
+			name: "missing pis cst",
+			payload: &SAPNFePayload{
+				Serie:            strPtr("1"),
+				Numero:           strPtr("12345"),
+				CnpjEmitente:     strPtr("12345678000195"),
+				CnpjDestinatario: strPtr("98765432000188"),
+				Items:            []SAPItem{{CofinsCst: strPtr("01")}},
+			},
+			wantErr: "missing_pis_cst",
 		},
 	}
 

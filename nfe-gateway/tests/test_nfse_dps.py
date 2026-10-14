@@ -15,8 +15,9 @@ from nfe_gateway.nfse.dps import (
     build_unsigned_dps,
     dps_xml_bytes,
     generate_dps_id,
+    resolve_c_ind_op,
 )
-from nfe_gateway.nfse.sefin import gzip_b64, gunzip_b64, post_dps, sefin_base_url
+from nfe_gateway.nfse.sefin import gzip_b64, gunzip_b64, is_calculator_unavailable, post_dps, sefin_base_url
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sap_nfse_outbound.json"
@@ -52,7 +53,6 @@ def test_build_unsigned_dps_success(sap_fixture):
     assert "<regApTribSN>1</regApTribSN>" in xml
     assert "cCNAE" not in xml
     assert "cTribMun" not in xml  # fixture municipal code is 4 digits; XSD wants 3
-    # Fixture provides explicit IBS CST/cClassTrib → group is emitted.
     assert "<IBSCBS>" in xml
     assert "<CST>000</CST>" in xml
     assert "<cClassTrib>000001</cClassTrib>" in xml
@@ -84,6 +84,10 @@ def test_build_unsigned_dps_success(sap_fixture):
         "indDest",
         "valores",
     ]
+    trib = ibs.find(f"{{{NS}}}valores/{{{NS}}}trib")
+    assert [etree.QName(child).localname for child in trib] == ["gIBSCBS"]
+    grupo = trib.find(f"{{{NS}}}gIBSCBS")
+    assert [etree.QName(child).localname for child in grupo] == ["CST", "cClassTrib"]
 
 
 def test_build_unsigned_dps_omits_ibscbs_without_classification():
@@ -227,11 +231,9 @@ def test_build_unsigned_dps_ibscbs_when_classification_provided():
     root = build_unsigned_dps(payload, homologacao=True)
     xml = dps_xml_bytes(root).decode("utf-8")
     assert "<IBSCBS>" in xml
-    assert "<CST>000</CST>" in xml
     assert "<cClassTrib>000001</cClassTrib>" in xml
     assert "<cIndOp>010101</cIndOp>" in xml
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
-    assert ibs is not None
     assert [etree.QName(child).localname for child in ibs] == [
         "finNFSe",
         "indFinal",
@@ -239,6 +241,217 @@ def test_build_unsigned_dps_ibscbs_when_classification_provided():
         "indDest",
         "valores",
     ]
+
+
+def test_build_unsigned_dps_item_1401_cst_000_infers_cindop_at_supplier():
+    """Alinhamento (14.01) with CST 000 and no cIndOp: service on movable property at the shop."""
+    payload = {
+        "data_emissao": "2026-10-06T00:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "001",
+        "numero_rps": "1002",
+        "op_simp_nac": "1",
+        "finalidade_emissao": "0",
+        "consumidor_final": "1",
+        "indicador_destinatario": "0",
+        "prestador": {"cnpj": "05523987000223", "codigo_municipio": "2919553"},
+        "tomador": {"cpf": "23039146807", "razao_social": "TOMADOR"},
+        "servico": {
+            "valor_servicos": 80,
+            "iss_retido": False,
+            "item_lista_servico": "14.01",
+            "discriminacao": "ALINHAMENTO BI-DIRECIONAL",
+            "codigo_municipio": "2919553",
+            "situacao_tributaria_pis_cofins": "01",
+            "tipo_retencao_pis_cofins": "0",
+            "total_tributos": {"federal": 0, "estadual": 0, "municipal": 0},
+            "ibs_cbs_situacao_tributaria": "000",
+            "ibs_cbs_classificacao_tributaria": "000001",
+        },
+    }
+    xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True)).decode("utf-8")
+    assert resolve_c_ind_op(payload, payload["servico"]) == ("050101", "regra")
+    assert "<IBSCBS>" in xml
+    assert "<cClassTrib>000001</cClassTrib>" in xml
+    assert "<cIndOp>050101</cIndOp>" in xml
+
+
+def test_build_unsigned_dps_item_1401_offsite_infers_050102():
+    payload = {
+        "data_emissao": "2026-10-06T00:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "001",
+        "numero_rps": "1002",
+        "op_simp_nac": "1",
+        "prestador": {"cnpj": "05523987000223", "codigo_municipio": "2919553"},
+        "tomador": {"cpf": "23039146807", "razao_social": "TOMADOR"},
+        "servico": {
+            "valor_servicos": 80,
+            "iss_retido": False,
+            "item_lista_servico": "14.01",
+            "discriminacao": "ALINHAMENTO",
+            "codigo_municipio": "2927408",
+            "situacao_tributaria_pis_cofins": "01",
+            "tipo_retencao_pis_cofins": "0",
+            "total_tributos": {"federal": 0, "estadual": 0, "municipal": 0},
+            "ibs_cbs_situacao_tributaria": "000",
+            "ibs_cbs_classificacao_tributaria": "000001",
+        },
+    }
+    xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True)).decode("utf-8")
+    assert resolve_c_ind_op(payload, payload["servico"]) == ("050102", "regra")
+    assert "<cIndOp>050102</cIndOp>" in xml
+
+
+def test_build_unsigned_dps_requires_cindop_when_classified():
+    payload = {
+        "data_emissao": "2026-09-27T00:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "001",
+        "numero_rps": "1",
+        "op_simp_nac": "1",
+        "prestador": {"cnpj": "13677964000200", "codigo_municipio": "4205803"},
+        "tomador": {"cnpj": "35934186000130", "razao_social": "NOVA CONSULTORIA"},
+        "servico": {
+            "valor_servicos": 200,
+            "iss_retido": False,
+            "item_lista_servico": "01.06",
+            "discriminacao": "Manutencao",
+            "codigo_municipio": "4205803",
+            "situacao_tributaria_pis_cofins": "00",
+            "tipo_retencao_pis_cofins": "0",
+            "total_tributos": {"federal": 0, "estadual": 0, "municipal": 0},
+            "ibs_cbs_situacao_tributaria": "000",
+            "ibs_cbs_classificacao_tributaria": "000001",
+        },
+    }
+    with pytest.raises(SapNfseMapperError, match="cIndOp ausente"):
+        build_unsigned_dps(payload, homologacao=True)
+
+
+def _ibscbs_payload(**servico_extra):
+    payload = {
+        "data_emissao": "2026-10-07T10:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "1",
+        "numero_rps": "10",
+        "op_simp_nac": "1",
+        "prestador": {"cnpj": "13677964000200", "codigo_municipio": "4205803"},
+        "tomador": {"cnpj": "35934186000130", "razao_social": "NOVA CONSULTORIA"},
+        "servico": {
+            "valor_servicos": 200,
+            "iss_retido": False,
+            "item_lista_servico": "17.01",
+            "discriminacao": "Consultoria",
+            "codigo_municipio": "4205803",
+            "situacao_tributaria_pis_cofins": "00",
+            "tipo_retencao_pis_cofins": "0",
+            "total_tributos": {"federal": 0, "estadual": 0, "municipal": 0},
+            "ibs_cbs_situacao_tributaria": "000",
+            "ibs_cbs_classificacao_tributaria": "000001",
+        },
+    }
+    payload["servico"].update(servico_extra)
+    return payload
+
+
+def test_ibscbs_explicit_cindop_must_have_six_digits():
+    with pytest.raises(SapNfseMapperError, match="6 dígitos"):
+        build_unsigned_dps(_ibscbs_payload(codigo_indicador_operacao="1003"), homologacao=True)
+    # JSON number loses the leading zero (050101 → 50101): restored.
+    payload = _ibscbs_payload(codigo_indicador_operacao=50101)
+    xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True))
+    assert resolve_c_ind_op(payload, payload["servico"]) == ("050101", "payload")
+    assert b"<cIndOp>050101</cIndOp>" in xml
+
+
+def test_ibscbs_partial_classification_is_rejected():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["servico"].pop("ibs_cbs_classificacao_tributaria")
+    with pytest.raises(SapNfseMapperError, match="incompleto"):
+        build_unsigned_dps(payload, homologacao=True)
+
+
+def test_ibscbs_cclasstrib_must_match_cst():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301", ibs_cbs_classificacao_tributaria="200001")
+    with pytest.raises(SapNfseMapperError, match="não pertence ao CST"):
+        build_unsigned_dps(payload, homologacao=True)
+
+
+def test_ibscbs_ind_dest_1_requires_destinatario():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["indicador_destinatario"] = "1"
+    with pytest.raises(SapNfseMapperError, match="destinatario"):
+        build_unsigned_dps(payload, homologacao=True)
+
+
+def test_ibscbs_ind_dest_1_emits_dest_group():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["indicador_destinatario"] = "1"
+    payload["destinatario"] = {"cpf": "12345678909", "razao_social": "FULANO DE TAL"}
+    root = build_unsigned_dps(payload, homologacao=True)
+    ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
+    assert [etree.QName(c).localname for c in ibs] == [
+        "finNFSe", "indFinal", "cIndOp", "indDest", "dest", "valores",
+    ]
+    dest = ibs.find(f"{{{NS}}}dest")
+    assert dest.findtext(f"{{{NS}}}CPF") == "12345678909"
+    assert dest.findtext(f"{{{NS}}}xNome") == "FULANO DE TAL"
+    trib = ibs.find(f"{{{NS}}}valores/{{{NS}}}trib")
+    assert [etree.QName(child).localname for child in trib] == ["gIBSCBS"]
+    grupo = trib.find(f"{{{NS}}}gIBSCBS")
+    assert [etree.QName(child).localname for child in grupo] == ["CST", "cClassTrib"]
+
+
+def test_desconto_incondicionado_goes_between_vserv_and_trib():
+    """SAP desconto_incondicionado must become vDescIncond so SEFIN and DANFSE see it."""
+    root = build_unsigned_dps(
+        _ibscbs_payload(codigo_indicador_operacao="100301", desconto_incondicionado=15, desconto_condicionado=0),
+        homologacao=True,
+    )
+    valores = root.find(f"{{{NS}}}infDPS/{{{NS}}}valores")
+    assert [etree.QName(c).localname for c in valores] == ["vServPrest", "vDescCondIncond", "trib"]
+    desc = valores.find(f"{{{NS}}}vDescCondIncond")
+    assert [etree.QName(c).localname for c in desc] == ["vDescIncond"]
+    assert desc.findtext(f"{{{NS}}}vDescIncond") == "15.00"
+
+
+def test_desconto_condicionado_and_incondicionado():
+    root = build_unsigned_dps(
+        _ibscbs_payload(
+            codigo_indicador_operacao="100301",
+            desconto_incondicionado="15.00",
+            desconto_condicionado=5,
+        ),
+        homologacao=True,
+    )
+    desc = root.find(f"{{{NS}}}infDPS/{{{NS}}}valores/{{{NS}}}vDescCondIncond")
+    assert desc.findtext(f"{{{NS}}}vDescIncond") == "15.00"
+    assert desc.findtext(f"{{{NS}}}vDescCond") == "5.00"
+
+
+def test_desconto_zero_is_omitted():
+    xml = dps_xml_bytes(
+        build_unsigned_dps(_ibscbs_payload(codigo_indicador_operacao="100301"), homologacao=True)
+    )
+    assert b"vDescCondIncond" not in xml
+    assert b"vDescIncond" not in xml
+
+
+def test_desconto_cannot_exceed_service_amount():
+    with pytest.raises(SapNfseMapperError, match="valor_servicos"):
+        build_unsigned_dps(
+            _ibscbs_payload(codigo_indicador_operacao="100301", desconto_incondicionado=201),
+            homologacao=True,
+        )
+
+
+def test_cindop_rule_table_is_loaded():
+    from nfe_gateway.nfse.dps import _cindop_rules
+
+    rules = _cindop_rules()
+    assert rules["140101"]["estabelecimento_fornecedor"] == "050101"
+    assert rules["140101"]["outro_local"] == "050102"
 
 
 def test_build_unsigned_dps_nao_optante_reg_trib():
@@ -276,11 +489,13 @@ def test_build_unsigned_dps_nao_optante_reg_trib():
             "codigo_nbs": "1.2002.90.00",
             "situacao_tributaria_pis_cofins": "00",
             "tipo_retencao_pis_cofins": "0",
+            "aliquota": 0.05,
             "total_tributos": {"federal": 10, "estadual": 0, "municipal": 5},
         },
     }
     xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True)).decode("utf-8")
     assert "<opSimpNac>1</opSimpNac>" in xml
+    assert "<pAliq>" not in xml
     assert "<regEspTrib>0</regEspTrib>" in xml
     assert "regApTribSN" not in xml
     assert "<tpRetISSQN>1</tpRetISSQN>" in xml
@@ -293,6 +508,99 @@ def test_build_unsigned_dps_nao_optante_reg_trib():
     assert "<pTotTribSN>" not in xml
     assert "<IBSCBS>" not in xml
     assert "<cClassTrib>" not in xml
+
+
+def test_build_unsigned_dps_nao_optante_from_sap_percentages():
+    """SAP sends percentual_total_tributos_fed/est/mun; DPS wants money."""
+    payload = {
+        "data_emissao": "2026-09-27T00:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "001",
+        "numero_rps": "1",
+        "optante_simples_nacional": False,
+        "percentual_total_tributos_fed": 13.45,
+        "percentual_total_tributos_est": 0,
+        "percentual_total_tributos_mun": 0.05,
+        "prestador": {"cnpj": "13677964000200", "codigo_municipio": "4205803"},
+        "tomador": {"cnpj": "35934186000130", "razao_social": "NOVA CONSULTORIA"},
+        "servico": {
+            "valor_servicos": 200,
+            "iss_retido": False,
+            "item_lista_servico": "14.01",
+            "discriminacao": "Manutencao",
+            "codigo_municipio": "4205803",
+            "situacao_tributaria_pis_cofins": "00",
+            "tipo_retencao_pis_cofins": "0",
+        },
+    }
+    xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True)).decode("utf-8")
+    assert "<opSimpNac>1</opSimpNac>" in xml
+    assert "<vTotTribFed>26.90</vTotTribFed>" in xml
+    assert "<vTotTribEst>0.00</vTotTribEst>" in xml
+    assert "<vTotTribMun>10.00</vTotTribMun>" in xml
+
+
+def test_build_unsigned_dps_nao_optante_percent_split_uses_invoice_taxes():
+    """78.72 + 21.28 = 100 is the share of PIS/COFINS vs ISS, not a rate on the price."""
+    payload = {
+        "data_emissao": "2026-10-13T00:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "001",
+        "numero_rps": "1031",
+        "optante_simples_nacional": "2",
+        "percentual_total_tributos_fed": 78.72,
+        "percentual_total_tributos_mun": 21.28,
+        "prestador": {"cnpj": "13677964000200", "codigo_municipio": "2919553"},
+        "tomador": {"cnpj": "35934186000130", "razao_social": "CLIENTE"},
+        "servico": {
+            "valor_servicos": 280,
+            "desconto_incondicionado": 15,
+            "iss_retido": False,
+            "item_lista_servico": "14.01",
+            "discriminacao": "Manutencao",
+            "codigo_municipio": "2919553",
+            "aliquota": 2.5,
+            "aliquota_pis": 1.65,
+            "aliquota_cofins": 7.6,
+            "valor_pis": 4.38,
+            "valor_cofins": 20.14,
+            "valor_iss": 6.63,
+            "situacao_tributaria_pis_cofins": "01",
+            "tipo_retencao_pis_cofins": "0",
+        },
+    }
+    xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True)).decode("utf-8")
+    assert "<vTotTribFed>24.52</vTotTribFed>" in xml
+    assert "<vTotTribEst>0.00</vTotTribEst>" in xml
+    assert "<vTotTribMun>6.63</vTotTribMun>" in xml
+    assert "<vTotTribFed>220.42</vTotTribFed>" not in xml
+    assert "<vTotTribMun>59.58</vTotTribMun>" not in xml
+
+
+def test_build_unsigned_dps_nao_optante_partial_percent_fills_zero():
+    payload = {
+        "data_emissao": "2026-09-27T00:00:00-03:00",
+        "natureza_operacao": "1",
+        "serie_rps": "1",
+        "numero_rps": "1",
+        "op_simp_nac": "1",
+        "prestador": {"cnpj": "13677964000200", "codigo_municipio": "4205803"},
+        "tomador": {"cnpj": "35934186000130", "razao_social": "NOVA"},
+        "servico": {
+            "valor_servicos": 1000,
+            "iss_retido": False,
+            "item_lista_servico": "14.01",
+            "discriminacao": "Manutencao",
+            "codigo_municipio": "4205803",
+            "situacao_tributaria_pis_cofins": "00",
+            "tipo_retencao_pis_cofins": "0",
+            "percentual_total_tributos_fed": 10,
+        },
+    }
+    xml = dps_xml_bytes(build_unsigned_dps(payload, homologacao=True)).decode("utf-8")
+    assert "<vTotTribFed>100.00</vTotTribFed>" in xml
+    assert "<vTotTribEst>0.00</vTotTribEst>" in xml
+    assert "<vTotTribMun>0.00</vTotTribMun>" in xml
 
 
 def test_build_unsigned_dps_nao_optante_requires_total_tributos():
@@ -489,3 +797,50 @@ def test_post_dps_rejected_lowercase_descricao(monkeypatch):
     assert result["outcome"] == "rejected"
     assert result["cstat"] == "E016"
     assert result["x_motivo"] == "XML fora do schema (infDPS)"
+
+
+def _stub_mtls(monkeypatch):
+    from nfe_gateway.nfse import sefin as sefin_mod
+
+    monkeypatch.setattr(sefin_mod, "_materialize_mtls_files", lambda pfx: (Path("k.pem"), Path("c.pem")))
+    monkeypatch.setattr(sefin_mod, "_shred", lambda path: None)
+
+
+@pytest.mark.parametrize(
+    "descricao",
+    [
+        'A calculadora integrada ao sistema NFS-e retornou o seguinte erro: "The operation has timed out".',
+        'A calculadora integrada ao sistema NFS-e retornou o seguinte erro: "A task was canceled."',
+    ],
+)
+def test_post_dps_calculator_timeout_is_retried(monkeypatch, descricao):
+    class FakeResp:
+        status_code = 500
+        content = b"{}"
+        reason = "Internal Server Error"
+
+        def json(self):
+            return {"erros": [{"codigo": "E1000", "descricao": descricao}]}
+
+    session = MagicMock()
+    session.post.return_value = FakeResp()
+    _stub_mtls(monkeypatch)
+
+    result = post_dps(signed_xml=b"<DPS/>", pfx=b"fake", homologacao=True, session=session)
+    assert is_calculator_unavailable(descricao)
+    assert result["outcome"] == "retry"
+    assert result["error_code"] == "E1000"
+    assert "calculadora" in result["error_message"]
+
+
+def test_post_dps_connection_timeout_is_retried(monkeypatch):
+    import requests
+
+    session = MagicMock()
+    session.post.side_effect = requests.Timeout("read timed out")
+    _stub_mtls(monkeypatch)
+
+    result = post_dps(signed_xml=b"<DPS/>", pfx=b"fake", homologacao=True, session=session)
+    assert result["outcome"] == "retry"
+    assert result["error_code"] == "calculator_timeout"
+    assert result["signed_xml"] == b"<DPS/>"

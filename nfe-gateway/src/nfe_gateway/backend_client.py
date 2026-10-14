@@ -21,6 +21,7 @@ from uuid import UUID
 
 import httpx
 
+from nfe_gateway.nfse.providers.base import ProviderCredentials
 from nfe_gateway.oauth import TokenCache
 
 
@@ -117,6 +118,73 @@ class BackendClient:
         import base64
 
         return SigningMaterial(pfx=base64.b64decode(data["pfx_base64"]), thumbprint=data["thumbprint"])
+
+    async def get_nfse_credentials(
+        self, *, organization_id: UUID, organization_company_id: UUID, provider_code: str
+    ) -> ProviderCredentials:
+        """Usuário/senha do webservice municipal de NFS-e (ex.: IPM).
+
+        Mesmo canal e token do signing-material; a senha fica só em memória
+        durante a chamada ao provedor. 404 → empresa sem credencial cadastrada.
+        """
+        headers = {"Authorization": f"Bearer {self._service_token}"}
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(
+                f"{self._internal_url}/internal/v1/companies/{organization_company_id}/nfse-provider-credentials",
+                headers=headers,
+                json={"organization_id": str(organization_id), "provider_code": provider_code},
+            )
+        if resp.status_code >= 300:
+            raise BackendError(resp.status_code, resp.text)
+        data = resp.json()
+        return ProviderCredentials(username=str(data.get("username") or ""), password=str(data.get("password") or ""))
+
+    async def attach_outbound_dist_event(
+        self,
+        *,
+        organization_id: UUID,
+        document_id: UUID,
+        event_kind: str,
+        tp_evento: str | None,
+        manifestation_type: str | None,
+        protocol: str | None,
+        n_seq_evento: str | None,
+        justification: str | None,
+        dh_evento: str | None,
+        schema: str,
+        nsu: int | None,
+        xml_object_key: str,
+        xml_bytes: bytes | None = None,
+    ) -> None:
+        """POST /internal/v1/fiscal/outbound_events — attach a DistDFe event
+        to an outbound NF-e (timeline + optional payload)."""
+        import base64
+
+        headers = {"Authorization": f"Bearer {self._service_token}"}
+        body: dict = {
+            "organization_id": str(organization_id),
+            "document_id": str(document_id),
+            "event_kind": event_kind,
+            "tp_evento": tp_evento or "",
+            "manifestation_type": manifestation_type or "",
+            "protocol": protocol or "",
+            "n_seq_evento": n_seq_evento or "",
+            "justification": justification or "",
+            "dh_evento": dh_evento or "",
+            "schema": schema,
+            "nsu": nsu,
+            "xml_object_key": xml_object_key,
+        }
+        if xml_bytes:
+            body["xml_base64"] = base64.b64encode(xml_bytes).decode("ascii")
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(
+                f"{self._internal_url}/internal/v1/fiscal/outbound_events",
+                headers=headers,
+                json=body,
+            )
+        if resp.status_code >= 300:
+            raise BackendError(resp.status_code, resp.text)
 
     async def record_integration_log(
         self,

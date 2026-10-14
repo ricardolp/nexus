@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -303,9 +304,39 @@ func (a *ControlPlane) listInboundDocuments(w http.ResponseWriter, r *http.Reque
 	if limit == 0 {
 		limit = 50
 	}
-	docs, err := a.Inbound.ListInboundDocuments(r.Context(), inbound.ListInboundDocumentsInput{
+	offset, err := parseLimitParam(r.URL.Query().Get("offset"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_offset", "offset must be a non-negative integer"))
+		return
+	}
+	numberFrom, err := inbound.ParseDocumentNumberBound(r.URL.Query().Get("number_from"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_number_from", "number_from must be a non-negative integer"))
+		return
+	}
+	numberTo, err := inbound.ParseDocumentNumberBound(r.URL.Query().Get("number_to"))
+	if err != nil {
+		writeErr(w, r, domainerr.Validation("invalid_number_to", "number_to must be a non-negative integer"))
+		return
+	}
+	if numberFrom != nil && numberTo != nil && *numberFrom > *numberTo {
+		writeErr(w, r, domainerr.Validation("invalid_number_range", "number_from must be less than or equal to number_to"))
+		return
+	}
+	statusGroup := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status_group")))
+	switch statusGroup {
+	case "", "all", "action_needed", "in_progress", "completed", "problem":
+	default:
+		writeErr(w, r, domainerr.Validation("invalid_status_group", "status_group is invalid"))
+		return
+	}
+	if statusGroup == "all" {
+		statusGroup = ""
+	}
+	page, err := a.Inbound.ListInboundDocuments(r.Context(), inbound.ListInboundDocumentsInput{
 		OrganizationID: orgID,
 		Status:         r.URL.Query().Get("status"),
+		StatusGroup:    statusGroup,
 		DocumentType:   r.URL.Query().Get("document_type"),
 		Direction:      r.URL.Query().Get("direction"),
 		Query:          r.URL.Query().Get("q"),
@@ -313,13 +344,20 @@ func (a *ControlPlane) listInboundDocuments(w http.ResponseWriter, r *http.Reque
 		Number:         r.URL.Query().Get("number"),
 		Partner:        r.URL.Query().Get("partner"),
 		AccessKey:      r.URL.Query().Get("access_key"),
+		NumberFrom:     numberFrom,
+		NumberTo:       numberTo,
 		Limit:          limit,
+		Offset:         offset,
 	})
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": docs})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"items":  page.Items,
+		"total":  page.Total,
+		"counts": page.Counts,
+	})
 }
 
 // getInboundDocument is the single-document counterpart of

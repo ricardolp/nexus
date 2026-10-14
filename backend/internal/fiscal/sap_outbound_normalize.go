@@ -2,6 +2,8 @@ package fiscal
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -22,10 +24,28 @@ var sapRootFieldAliases = map[string]string{
 }
 
 var sapCEPFields = map[string]struct{}{
-	"cep_emitente":      {},
-	"cep_destinatario":  {},
-	"cep_retirada":      {},
-	"cep_entrega":       {},
+	"cep_emitente":     {},
+	"cep_destinatario": {},
+	"cep_retirada":     {},
+	"cep_entrega":      {},
+}
+
+// CNPJ fields often arrive as JSON numbers and lose leading zeros (SEFAZ cStat 215 / TCnpj).
+var sapCNPJFields = map[string]struct{}{
+	"cnpj_emitente":       {},
+	"cnpj_destinatario":   {},
+	"cnpj_intermediario":  {},
+	"cnpj_transportador":  {},
+	"cnpj":                {}, // pessoas_autorizadas[] / nested
+	"cnpj_exportador":     {},
+	"cnpj_fabricante":     {},
+}
+
+var sapCPFFields = map[string]struct{}{
+	"cpf_emitente":      {},
+	"cpf_destinatario":  {},
+	"cpf":               {},
+	"cpf_transportador": {},
 }
 
 var sapItemFieldAliases = map[string]string{
@@ -149,6 +169,12 @@ func normalizeSAPValue(v any, aliases map[string]string) any {
 			if _, isCEP := sapCEPFields[key]; isCEP {
 				normalizedChild = digitsOnlyAny(normalizedChild)
 			}
+			if _, isCNPJ := sapCNPJFields[key]; isCNPJ {
+				normalizedChild = normalizeCNPJAny(normalizedChild)
+			}
+			if _, isCPF := sapCPFFields[key]; isCPF {
+				normalizedChild = padDigitsAny(normalizedChild, 11)
+			}
 			out[key] = normalizedChild
 		}
 		return out
@@ -177,4 +203,76 @@ func digitsOnlyAny(v any) any {
 	default:
 		return v
 	}
+}
+
+func padDigitsAny(v any, width int) any {
+	var raw string
+	switch typed := v.(type) {
+	case string:
+		raw = typed
+	case float64:
+		// JSON numbers: avoid scientific notation; CNPJ/CPF fit in int64.
+		raw = strconv.FormatInt(int64(typed), 10)
+	case json.Number:
+		raw = typed.String()
+	default:
+		raw = fmt.Sprint(v)
+	}
+	d := digitsOnly(raw)
+	if d == "" {
+		return nil
+	}
+	if len(d) > width {
+		return d
+	}
+	return padLeft(d, width, '0')
+}
+
+// normalizeCNPJAny preserves NT 2026.004 alphanumeric CNPJ (A-Z0-9).
+// Pure numeric values still get leading-zero padding for SAP JSON numbers.
+func normalizeCNPJAny(v any) any {
+	var raw string
+	switch typed := v.(type) {
+	case string:
+		raw = typed
+	case float64:
+		raw = strconv.FormatInt(int64(typed), 10)
+	case json.Number:
+		raw = typed.String()
+	default:
+		raw = fmt.Sprint(v)
+	}
+	hasAlpha := false
+	for _, r := range raw {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			hasAlpha = true
+			break
+		}
+	}
+	if hasAlpha {
+		var b strings.Builder
+		for _, r := range strings.ToUpper(raw) {
+			if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+			}
+		}
+		s := b.String()
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+	return padDigitsAny(raw, 14)
+}
+
+func padLeft(s string, width int, pad byte) string {
+	if len(s) >= width {
+		return s
+	}
+	buf := make([]byte, width)
+	for i := 0; i < width-len(s); i++ {
+		buf[i] = pad
+	}
+	copy(buf[width-len(s):], s)
+	return string(buf)
 }

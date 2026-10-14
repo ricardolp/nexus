@@ -25,6 +25,16 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
+export interface DataTableServerPagination {
+  pageIndex: number;
+  pageSize: number;
+  pageCount: number;
+  total: number;
+  onPageIndexChange: (index: number) => void;
+  onPageSizeChange: (size: number) => void;
+  pageSizeOptions?: number[];
+}
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -35,6 +45,9 @@ interface DataTableProps<TData, TValue> {
   // data-no-row-click, checked here the same way the click is dispatched.
   onRowClick?: (row: TData) => void;
   showSelectionCount?: boolean;
+  // The rows in `data` are already one server page. The footer walks that
+  // total instead of slicing the array again.
+  serverPagination?: DataTableServerPagination;
 }
 
 export function DataTable<TData, TValue>({
@@ -43,7 +56,8 @@ export function DataTable<TData, TValue>({
   toolbar,
   getRowClassName,
   onRowClick,
-  showSelectionCount = true
+  showSelectionCount = true,
+  serverPagination
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -61,9 +75,26 @@ export function DataTable<TData, TValue>({
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
-    state: { sorting, columnFilters, columnVisibility, rowSelection },
+    manualPagination: !!serverPagination,
+    pageCount: serverPagination?.pageCount,
+    state: {
+      sorting,
+      columnFilters,
+      columnVisibility,
+      rowSelection,
+      ...(serverPagination
+        ? { pagination: { pageIndex: 0, pageSize: Math.max(data.length, serverPagination.pageSize, 1) } }
+        : {})
+    },
     initialState: { pagination: { pageSize: 10 } }
   });
+
+  const pageSizeOptions = serverPagination?.pageSizeOptions ?? [10, 20, 30, 50];
+  const pageIndex = serverPagination?.pageIndex ?? table.getState().pagination.pageIndex;
+  const pageCount = serverPagination?.pageCount ?? (table.getPageCount() || 1);
+  const pageSize = serverPagination?.pageSize ?? table.getState().pagination.pageSize;
+  const canPrevious = serverPagination ? pageIndex > 0 : table.getCanPreviousPage();
+  const canNext = serverPagination ? pageIndex + 1 < pageCount : table.getCanNextPage();
 
   return (
     <div className="flex flex-col gap-4">
@@ -119,62 +150,76 @@ export function DataTable<TData, TValue>({
 
       <div className="flex items-center justify-between px-1">
         <div className="text-muted-foreground hidden flex-1 text-sm sm:block">
-          {showSelectionCount
-            ? `${table.getFilteredSelectedRowModel().rows.length} de ${table.getFilteredRowModel().rows.length} linha(s) selecionada(s).`
-            : `${table.getFilteredRowModel().rows.length} registro(s)`}
+          {serverPagination
+            ? `${serverPagination.total} nota(s)`
+            : showSelectionCount
+              ? `${table.getFilteredSelectedRowModel().rows.length} de ${table.getFilteredRowModel().rows.length} linha(s) selecionada(s).`
+              : `${table.getFilteredRowModel().rows.length} registro(s)`}
         </div>
         <div className="flex w-full items-center gap-6 sm:w-fit sm:gap-8">
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium">Linhas por página</p>
             <Select
-              value={`${table.getState().pagination.pageSize}`}
-              onValueChange={(value) => table.setPageSize(Number(value))}
+              value={`${pageSize}`}
+              onValueChange={(value) => {
+                const next = Number(value);
+                if (serverPagination) serverPagination.onPageSizeChange(next);
+                else table.setPageSize(next);
+              }}
             >
               <SelectTrigger size="sm" className="w-16">
-                <SelectValue placeholder={table.getState().pagination.pageSize} />
+                <SelectValue placeholder={pageSize} />
               </SelectTrigger>
               <SelectContent side="top">
-                {[10, 20, 30, 50].map((pageSize) => (
-                  <SelectItem key={pageSize} value={`${pageSize}`}>
-                    {pageSize}
+                {pageSizeOptions.map((size) => (
+                  <SelectItem key={size} value={`${size}`}>
+                    {size}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="flex w-fit items-center justify-center text-sm font-medium">
-            Página {table.getState().pagination.pageIndex + 1} de {table.getPageCount() || 1}
+            Página {pageIndex + 1} de {pageCount || 1}
           </div>
           <div className="ml-auto flex items-center gap-2 lg:ml-0">
             <Button
               variant="outline"
               className="hidden size-8 p-0 lg:flex"
-              onClick={() => table.setPageIndex(0)}
-              disabled={!table.getCanPreviousPage()}
+              onClick={() => (serverPagination ? serverPagination.onPageIndexChange(0) : table.setPageIndex(0))}
+              disabled={!canPrevious}
             >
               <ChevronsLeftIcon />
             </Button>
             <Button
               variant="outline"
               className="size-8 p-0"
-              onClick={() => table.previousPage()}
-              disabled={!table.getCanPreviousPage()}
+              onClick={() =>
+                serverPagination ? serverPagination.onPageIndexChange(pageIndex - 1) : table.previousPage()
+              }
+              disabled={!canPrevious}
             >
               <ChevronLeftIcon />
             </Button>
             <Button
               variant="outline"
               className="size-8 p-0"
-              onClick={() => table.nextPage()}
-              disabled={!table.getCanNextPage()}
+              onClick={() =>
+                serverPagination ? serverPagination.onPageIndexChange(pageIndex + 1) : table.nextPage()
+              }
+              disabled={!canNext}
             >
               <ChevronRightIcon />
             </Button>
             <Button
               variant="outline"
               className="hidden size-8 p-0 lg:flex"
-              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-              disabled={!table.getCanNextPage()}
+              onClick={() =>
+                serverPagination
+                  ? serverPagination.onPageIndexChange(Math.max(pageCount - 1, 0))
+                  : table.setPageIndex(table.getPageCount() - 1)
+              }
+              disabled={!canNext}
             >
               <ChevronsRightIcon />
             </Button>

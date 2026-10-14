@@ -67,7 +67,7 @@ func main() {
 	r.Use(chimw.Recoverer)
 	r.Use(httpx.CORS)
 	r.Use(httpx.RequestContext)
-	r.Use(httpx.LimitBody(httpx.DefaultMaxBodyBytes))
+	r.Use(httpx.LimitBodyWithOverride(httpx.DefaultMaxBodyBytes, httpapi.SAPDanfeBodyLimit))
 	r.Use(metrics.HTTP("inbound_api"))
 	r.Use(httpx.AccessLog(logger))
 	r.Use(integrationlog.Middleware(intLogs))

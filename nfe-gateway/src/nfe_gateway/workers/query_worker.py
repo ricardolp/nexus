@@ -27,14 +27,16 @@ from pathlib import Path
 
 from nfe_gateway.backend_client import BackendClient, BackendError
 from nfe_gateway.broker import Broker
-from nfe_gateway.config import load_settings
+from nfe_gateway.config import encryption_key_bytes, load_settings
 from nfe_gateway.credentials import CredentialsStore
 from nfe_gateway.db import Database, QueryRequestRow
 from nfe_gateway.distribution_state import PollOutcome, PollState, decide_next_poll, record_call
 from nfe_gateway.metrics import start_if_configured
 from nfe_gateway.oauth import TokenCache
 from nfe_gateway.sefaz.client import SefazClient
-from nfe_gateway.sefaz.distribution import DistributionResult, classify_cstat, parse_pending_summary
+from nfe_gateway.sefaz.distribution import DistributionResult, classify_cstat
+from nfe_gateway.storage import build_object_store
+from nfe_gateway.workers.dist_route import route_non_proc_nfe_document
 
 logger = logging.getLogger("nfe_gateway.query_worker")
 
@@ -192,7 +194,9 @@ async def _ingest(backend: BackendClient, req: QueryRequestRow, doc) -> uuid.UUI
     )
 
 
-async def _process_chave_items(db: Database, backend: BackendClient, sefaz: SefazClient, req: QueryRequestRow) -> None:
+async def _process_chave_items(
+    db: Database, backend: BackendClient, sefaz: SefazClient, req: QueryRequestRow, store=None
+) -> None:
     for item in await db.list_pending_query_items(req.id):
         result = await _call_sefaz_within_budget(db, backend, sefaz, req, chave=item["chave"])
         if result is None:
@@ -203,30 +207,28 @@ async def _process_chave_items(db: Database, backend: BackendClient, sefaz: Sefa
         doc = result.documents[0]
         _dump_payload(req.id, doc)
         if not doc.schema.startswith("procNFe"):
-            # Same missing_company gap as distribution_poller.py/_process_nsu
-            # — a resNFe/resEvento/procEventoNFe has no <infNFe> to ingest.
-            # Route it into the pending-manifestation table (so the user
-            # sees it under "Pendentes de Manifestação" and can send
-            # Ciência) instead of quietly failing this query item.
-            summary = parse_pending_summary(doc.xml_bytes)
-            if summary is not None and summary.chave:
-                await db.upsert_pending_manifestation_document(
-                    organization_id=req.organization_id,
-                    organization_company_id=req.organization_company_id,
-                    chave=summary.chave,
-                    nsu=doc.nsu,
-                    schema=doc.schema,
-                    cnpj_emitente=summary.cnpj_emitente,
-                    nome_emitente=summary.nome_emitente,
-                    valor=summary.valor,
-                    data_emissao=summary.data_emissao,
-                    protocolo=summary.protocolo,
-                    situacao=summary.situacao,
-                )
-            await db.mark_query_item_result(
-                item["id"], "error",
-                error_message="Encontrado apenas como resumo (sem Manifestação do Destinatário ainda) — veja em Pendentes de Manifestação.",
+            info = await route_non_proc_nfe_document(
+                db=db,
+                backend=backend,
+                store=store,
+                organization_id=req.organization_id,
+                organization_company_id=req.organization_company_id,
+                schema=doc.schema,
+                nsu=doc.nsu,
+                xml_bytes=doc.xml_bytes,
             )
+            if info.route == "outbound_event":
+                await db.mark_query_item_result(
+                    item["id"],
+                    "found",
+                    error_message="Evento anexado à NF-e de saída correspondente.",
+                )
+            else:
+                await db.mark_query_item_result(
+                    item["id"],
+                    "error",
+                    error_message="Encontrado apenas como resumo — veja em Pendentes de Manifestação.",
+                )
             continue
         try:
             document_id = await _ingest(backend, req, doc)
@@ -239,7 +241,7 @@ async def _process_chave_items(db: Database, backend: BackendClient, sefaz: Sefa
     await db.finish_query_request(req.id, "completed", {})
 
 
-async def _process_nsu(db: Database, backend: BackendClient, sefaz: SefazClient, req: QueryRequestRow) -> None:
+async def _process_nsu(db: Database, backend: BackendClient, sefaz: SefazClient, req: QueryRequestRow, store=None) -> None:
     progress = req.params.get("_progress", {})
     cursor = progress.get("cursor_nsu", req.params["nsu"])
     documents_found = progress.get("documents_found", 0)
@@ -255,38 +257,16 @@ async def _process_nsu(db: Database, backend: BackendClient, sefaz: SefazClient,
         for doc in result.documents:
             _dump_payload(req.id, doc)  # raw bytes on disk before anything else can fail
             if not doc.schema.startswith("procNFe"):
-                # Same reasoning as distribution_poller.py: resNFe/resEvento
-                # (summary only, no <infNFe>) and procEventoNFe (a real
-                # event, but <infEvento> not <infNFe>) both fail backend
-                # ingestion with missing_company — there's no <infNFe> to
-                # extract a recipient CNPJ from. Log the chave when we can
-                # parse one out so a human has something to follow up on
-                # with a targeted "por chave" query later, instead of the
-                # chave being silently lost once the cursor moves past it.
-                summary = parse_pending_summary(doc.xml_bytes)
-                logger.info(
-                    "nsu_query_skipped_non_procnfe",
-                    extra={
-                        "query_request_id": str(req.id),
-                        "nsu": doc.nsu,
-                        "schema": doc.schema,
-                        "chave": summary.chave if summary else None,
-                    },
+                await route_non_proc_nfe_document(
+                    db=db,
+                    backend=backend,
+                    store=store,
+                    organization_id=req.organization_id,
+                    organization_company_id=req.organization_company_id,
+                    schema=doc.schema,
+                    nsu=doc.nsu,
+                    xml_bytes=doc.xml_bytes,
                 )
-                if summary is not None and summary.chave:
-                    await db.upsert_pending_manifestation_document(
-                        organization_id=req.organization_id,
-                        organization_company_id=req.organization_company_id,
-                        chave=summary.chave,
-                        nsu=doc.nsu,
-                        schema=doc.schema,
-                        cnpj_emitente=summary.cnpj_emitente,
-                        nome_emitente=summary.nome_emitente,
-                        valor=summary.valor,
-                        data_emissao=summary.data_emissao,
-                        protocolo=summary.protocolo,
-                        situacao=summary.situacao,
-                    )
                 cursor = doc.nsu
                 continue
             try:
@@ -317,12 +297,14 @@ async def _process_nsu(db: Database, backend: BackendClient, sefaz: SefazClient,
         # refuses (returns None) once the window is exhausted.
 
 
-async def process_query_request(db: Database, backend: BackendClient, sefaz: SefazClient, req: QueryRequestRow) -> None:
+async def process_query_request(
+    db: Database, backend: BackendClient, sefaz: SefazClient, req: QueryRequestRow, store=None
+) -> None:
     try:
         if req.query_type == "nsu":
-            await _process_nsu(db, backend, sefaz, req)
+            await _process_nsu(db, backend, sefaz, req, store=store)
         else:
-            await _process_chave_items(db, backend, sefaz, req)
+            await _process_chave_items(db, backend, sefaz, req, store=store)
     except SigningMaterialUnavailable as exc:
         for item in await db.list_pending_query_items(req.id):
             await db.mark_query_item_result(item["id"], "error", error_message=str(exc))
@@ -375,6 +357,11 @@ async def run() -> None:
         token_cache,
     )
     sefaz: SefazClient = _build_sefaz_client(settings.sefaz_force_homologacao)
+    store = build_object_store(
+        settings.storage_backend,
+        settings.storage_local_path,
+        encryption_key_bytes(settings),
+    )
     broker: Broker | None = None
     if settings.rabbitmq_url:
         try:
@@ -393,7 +380,7 @@ async def run() -> None:
                 logger.info("claimed_query_requests", extra={"count": len(claimed)})
                 for req in claimed:
                     try:
-                        await process_query_request(db, backend, sefaz, req)
+                        await process_query_request(db, backend, sefaz, req, store=store)
                     except Exception as exc:  # noqa: BLE001 — one bad request must not kill the tick loop
                         logger.exception(
                             "query_request_processing_failed",

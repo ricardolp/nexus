@@ -20,6 +20,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/inbound"
 	"github.com/nexus/fiscal-messaging/internal/integration"
 	"github.com/nexus/fiscal-messaging/internal/integrationlog"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
 	"github.com/nexus/fiscal-messaging/internal/notification"
 	"github.com/nexus/fiscal-messaging/internal/ops"
 	"github.com/nexus/fiscal-messaging/internal/organization"
@@ -92,6 +93,7 @@ func main() {
 		Notifications:    notification.NewService(pool),
 		Inbound:          inbound.NewService(pool, fiscalSvc, orgs, integrations).WithIntegrationLog(intLogs),
 		Integrations:     integrations,
+		NFSeProviders:    nfseprovider.NewService(pool, cfg.SecretsEncryptionKey),
 		Fiscal:           fiscalSvc,
 		FiscalQueries:    fiscal.NewQueryService(pool, orgs, bus),
 		PendingDocuments: fiscal.NewPendingDocumentService(pool, orgs),

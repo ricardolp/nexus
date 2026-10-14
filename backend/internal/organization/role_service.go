@@ -387,6 +387,30 @@ func (s *Service) ListMemberRoles(ctx context.Context, organizationID, memberID 
 	return out, rows.Err()
 }
 
+// MemberHasRoleSlug reports whether the user currently holds an active
+// assignment of the given role slug in this organization.
+func (s *Service) MemberHasRoleSlug(ctx context.Context, organizationID, userID uuid.UUID, slug string) (bool, error) {
+	var allowed bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(
+			select 1
+			from organization_members m
+			join organization_member_roles mr on mr.organization_member_id = m.id
+			join organization_roles r on r.id = mr.organization_role_id and r.status = 'active'
+			where m.organization_id = $1
+			  and m.user_id = $2
+			  and m.status = 'active'
+			  and r.slug = $3
+			  and mr.valid_from <= now()
+			  and (mr.valid_until is null or mr.valid_until > now())
+		)
+	`, organizationID, userID, slug).Scan(&allowed)
+	if err != nil {
+		return false, err
+	}
+	return allowed, nil
+}
+
 // MemberHasPermission reports whether the given user currently holds, within
 // this organization, a role granting "resource:action". Only assignments
 // whose valid_from/valid_until window covers now are considered. A

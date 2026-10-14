@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<NFSe xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01">
+  <infNFSe Id="NFS41069022248401820000111000000000000326094890444784">
+    <xLocEmi>Curitiba</xLocEmi>
+    <xLocPrestacao>Curitiba</xLocPrestacao>
+    <nNFSe>3</nNFSe>
+    <cLocIncid>4106902</cLocIncid>
+    <xLocIncid>Curitiba</xLocIncid>
+    <xTribNac>Assessoria e consultoria em informática.</xTribNac>
+    <verAplic>Nexus_1.0.0</verAplic>
+    <ambGer>2</ambGer>
+    <tpEmis>1</tpEmis>
+    <procEmi>1</procEmi>
+    <cStat>100</cStat>
+    <dhProc>2026-09-06T23:40:03-03:00</dhProc>
+    <emit>
+      <CNPJ>48401820000111</CNPJ>
+      <xNome>R L PINHEIRO TECNOLOGIA DA INFORMACAO LTDA</xNome>
+      <enderNac>
+        <xLgr>R. PAULINO SANTANA DE OLIVEIRA</xLgr>
+        <nro>000114</nro>
+        <xBairro>Novo Mundo</xBairro>
+        <cMun>4106902</cMun>
+        <UF>PR</UF>
+        <CEP>81050685</CEP>
+      </enderNac>
+    </emit>
+    <valores>
+      <vLiq>500.00</vLiq>
+    </valores>
+    <IBSCBS>
+      <cLocalidadeIncid>4106902</cLocalidadeIncid>
+      <xLocalidadeIncid>Curitiba</xLocalidadeIncid>
+      <valores>
+        <vBC>500.00</vBC>
+        <uf>
+          <pIBSUF>0.10</pIBSUF>
+          <pAliqEfetUF>0.10</pAliqEfetUF>
+        </uf>
+        <mun>
+          <pIBSMun>0.00</pIBSMun>
+          <pAliqEfetMun>0.00</pAliqEfetMun>
+        </mun>
+        <fed>
+          <pCBS>0.90</pCBS>
+          <pAliqEfetCBS>0.90</pAliqEfetCBS>
+        </fed>
+      </valores>
+      <totCIBS>
+        <gIBS>
+          <gIBSMunTot>
+            <vIBSMun>0.00</vIBSMun>
+          </gIBSMunTot>
+          <gIBSUFTot>
+            <vIBSUF>0.50</vIBSUF>
+          </gIBSUFTot>
+          <vIBSTot>0.50</vIBSTot>
+        </gIBS>
+        <gCBS>
+          <vCBS>4.50</vCBS>
+        </gCBS>
+        <vTotNF>500.00</vTotNF>
+      </totCIBS>
+    </IBSCBS>
+    <DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01">
+      <infDPS Id="DPS410690222484018200001110000000000005">
+        <tpAmb>2</tpAmb>
+        <dhEmi>2026-09-06T23:38:00-03:00</dhEmi>
+        <verAplic>Nexus_1.0.0</verAplic>
+        <serie>1</serie>
+        <nDPS>5</nDPS>
+        <dCompet>2026-09-06</dCompet>
+        <tpEmit>1</tpEmit>
+        <cLocEmi>4106902</cLocEmi>
+        <prest>
+          <CNPJ>48401820000111</CNPJ>
+          <IM>105604542</IM>
+          <regTrib>
+            <opSimpNac>3</opSimpNac>
+            <regApTribSN>1</regApTribSN>
+            <regEspTrib>0</regEspTrib>
+          </regTrib>
+        </prest>
+        <toma>
+          <CNPJ>35934186000130</CNPJ>
+          <xNome>NOVA CONSULTORIA EM TECNOLOGIA DA INFORMACAO LTDA</xNome>
+          <fone>4130230570</fone>
+          <email>contato@novaconsulting.com.br</email>
+          <end>
+            <endNac>
+              <cMun>4104204</cMun>
+              <CEP>83601520</CEP>
+            </endNac>
+            <xLgr>Rua Jose Soares Pinto</xLgr>
+            <nro>440</nro>
+            <xBairro>Vila Bancaria</xBairro>
+          </end>
+        </toma>
+        <serv>
+          <locPrest>
+            <cLocPrestacao>4106902</cLocPrestacao>
+          </locPrest>
+          <cServ>
+            <cTribNac>010601</cTribNac>
+            <cNBS>115011000</cNBS>
+            <xDescServ>Prestacao de servicos de consultoria em tecnologia da informacao para NOVA CONSULTORIA EM TECNOLOGIA DA INFORMACAO LTDA</xDescServ>
+          </cServ>
+        </serv>
+        <IBSCBS>
+          <finNFSe>0</finNFSe>
+          <cIndOp>030101</cIndOp>
+          <valores>
+            <trib>
+              <CST>000</CST>
+              <cClassTrib>000001</cClassTrib>
+            </trib>
+          </valores>
+        </IBSCBS>
+        <valores>
+          <vServPrest>
+            <vServ>500.00</vServ>
+          </vServPrest>
+          <trib>
+            <tribMun>
+              <tribISSQN>1</tribISSQN>
+              <tpRetISSQN>1</tpRetISSQN>
+            </tribMun>
+            <tribFed>
+              <piscofins>
+                <CST>00</CST>
+                <tpRetPisCofins>1</tpRetPisCofins>
+              </piscofins>
+            </tribFed>
+            <totTrib>
+              <vTotTrib>
+                <vTotTribFed></vTotTribFed>
+                <vTotTribEst></vTotTribEst>
+                <vTotTribMun></vTotTribMun>
+              </vTotTrib>
+            </totTrib>
+          </trib>
+        </valores>
+      </infDPS>
+    </DPS>
+  </infNFSe>
+</NFSe>

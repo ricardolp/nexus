@@ -414,6 +414,39 @@ class Database:
             error_message,
         )
 
+    async def find_outbound_nfe_document_id(
+        self,
+        *,
+        organization_id: UUID,
+        organization_company_id: UUID,
+        chave: str,
+    ) -> UUID | None:
+        """Select-only lookup against backend-owned tables — returns the
+        outbound NF-e document id for this access key, or None."""
+        digits = "".join(c for c in (chave or "") if c.isalnum()).upper()
+        if len(digits) < 44:
+            return None
+        row = await self._pool.fetchrow(
+            """
+            select d.id
+            from organization_documents d
+            join organization_nfe n on n.organization_document_id = d.id
+            where d.organization_id = $1
+              and d.organization_company_id = $2
+              and d.document_type = 'nfe'
+              and d.direction = 'outbound'
+              and regexp_replace(upper(trim(coalesce(n.access_key, ''))), '[^0-9A-Z]', '', 'g') = $3
+            order by d.received_at desc
+            limit 1
+            """,
+            organization_id,
+            organization_company_id,
+            digits,
+        )
+        if row is None:
+            return None
+        return row["id"]
+
     # ------------------------------------------------------------------
     # On-demand queries (consulta por NSU/chave/lote) — see
     # workers/query_worker.py. claim_company_for_on_demand_call shares the

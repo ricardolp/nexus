@@ -111,7 +111,7 @@
       "ibs_cst": "000",
       "ibs_c_class_trib": "000001",
       "ibs_base": 1000.00,
-      "ibs_aliquota_uf": 0.001,
+      "ibs_aliquota_uf": 0.1,
       "ibs_valor_uf": 1.00,
       "ibs_aliquota_mun": 0.0,
       "ibs_valor_mun": 0.0,
@@ -119,7 +119,7 @@
       "cbs_cst": "000",
       "cbs_c_class_trib": "000001",
       "cbs_base": 1000.00,
-      "cbs_aliquota": 0.009,
+      "cbs_aliquota": 0.9,
       "cbs_valor": 9.00,
       
       "ipi_cst": "50",

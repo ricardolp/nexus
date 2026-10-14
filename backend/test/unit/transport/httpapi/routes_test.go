@@ -426,6 +426,22 @@ func TestResubmitOutboundDocumentRequiresAuthentication(t *testing.T) {
 	}
 }
 
+func TestAbortOutboundProcessingRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/abort_processing",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestCancelOutboundNFSeRequiresAuthentication(t *testing.T) {
 	t.Parallel()
 
@@ -433,6 +449,70 @@ func TestCancelOutboundNFSeRequiresAuthentication(t *testing.T) {
 		http.MethodPost,
 		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/cancel",
 		strings.NewReader(`{"c_motivo":"1","justificativa":"Erro na emissao da nota"}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestCancelOutboundNFeRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/cancel",
+		strings.NewReader(`{"justificativa":"Erro na emissao da nota fiscal"}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequestOutboundCCeRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/cce",
+		strings.NewReader(`{"correcao":"Correcao de dados cadastrais do destinatario"}`),
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequestOutboundProtocolRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/"+uuid.NewString()+"/request_protocol",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	testControlPlane().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRequestInutilizationRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/organizations/"+uuid.NewString()+"/fiscal_documents/inutilization",
+		strings.NewReader(`{"organization_company_id":"`+uuid.NewString()+`","serie":"1","numero_inicial":1,"numero_final":1,"ano":2026,"justificativa":"Faixa nao utilizada no periodo"}`),
 	)
 	rec := httptest.NewRecorder()
 	testControlPlane().Routes().ServeHTTP(rec, req)
@@ -713,6 +793,18 @@ func testInboundAPI() *httpapi.InboundAPI {
 	}
 }
 
+func TestInboundOAuthTokenRouteRejectsMissingGrant(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	testInboundAPI().Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
 func TestLegacySAPDocumentRouteRequiresOrgToken(t *testing.T) {
 	t.Parallel()
 
@@ -737,16 +829,106 @@ func TestLegacySAPDocumentAliasRequiresOrgToken(t *testing.T) {
 	}
 }
 
-func TestCanonicalFiscalDocumentRouteStillRequiresBearer(t *testing.T) {
+func TestSAPEventRoutesRequireOrgToken(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/fiscal_documents/nfe", strings.NewReader(`{}`))
-	req.Header.Set("X-Org-Token", "does-not-unlock-canonical-route")
+	chave := "35260912345678000190550010000001231000001234"
+	cases := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPost, "/v1/nfe/documents/sap/cancel", `{"chave_acesso":"` + chave + `","justificativa":"Erro na emissao da nota"}`},
+		{http.MethodPost, "/v1/nfe/documents/sap/cce", `{"chave_acesso":"` + chave + `","correcao":"Correcao do endereco do destinatario","n_seq_evento":1}`},
+		{http.MethodPost, "/v1/nfe/documents/sap/inutilization", `{"cnpj_emitente":"12345678000190","serie":"1","numero_inicial":1,"numero_final":1,"ano":2026,"justificativa":"Faixa nao utilizada"}`},
+		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/status", ""},
+		{http.MethodPost, "/v1/nfe/documents/sap/" + chave + "/protocol", ""},
+		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/xml", ""},
+		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/events/cce/1/xml", ""},
+		{http.MethodPost, "/v1/nfe/documents/sap/" + chave + "/danfe", `{"pdf_base64":"JVBERi0="}`},
+		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/danfe", ""},
+		{http.MethodGet, "/v1/nfse/documents/sap/" + chave + "/danfe", ""},
+		{http.MethodGet, "/v1/nfse/documents/sap/" + chave + "/xml", ""},
+		{http.MethodGet, "/api/v1/nfse/documents/sap/" + chave + "/danfe", ""},
+		{http.MethodGet, "/api/v1/nfse/documents/sap/" + chave + "/xml", ""},
+		{http.MethodPost, "/api/v1/nfe/documents/sap/cce", `{}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			testInboundAPI().Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "Missing x-Org-Token") {
+				t.Fatalf("status=%d body=%s, want 401 Missing x-Org-Token", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestSAPDanfeBodyLimitOnlyForDanfeUpload(t *testing.T) {
+	t.Parallel()
+
+	chave := "35260912345678000190550010000001231000001234"
+	upload := httptest.NewRequest(http.MethodPost, "/v1/nfe/documents/sap/"+chave+"/danfe", nil)
+	if httpapi.SAPDanfeBodyLimit(upload) <= 1<<20 {
+		t.Fatalf("DANFE upload should get a raised body limit")
+	}
+	for _, req := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/v1/nfe/documents/sap/"+chave+"/danfe", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/nfe/documents/sap", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/nfe/documents/sap/cce", nil),
+	} {
+		if got := httpapi.SAPDanfeBodyLimit(req); got != 0 {
+			t.Fatalf("%s %s limit=%d, want default (0)", req.Method, req.URL.Path, got)
+		}
+	}
+}
+
+func TestCanonicalFiscalDocumentRouteAuth(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		headers    map[string]string
+		wantDetail string
+	}{
+		{"no credentials", nil, "Missing access token"},
+		{"org token", map[string]string{"X-Org-Token": "legacy-token"}, "Invalid organization token"},
+		{"invalid bearer", map[string]string{"Authorization": "Bearer nope"}, "Invalid access token"},
+		{"bearer wins over org token", map[string]string{"Authorization": "Bearer nope", "X-Org-Token": "legacy-token"}, "Invalid access token"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodPost, "/v1/fiscal_documents/nfse", strings.NewReader(`{}`))
+			for k, v := range tc.headers {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			testInboundAPI().Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantDetail) {
+				t.Fatalf("body=%s, want detail %q", rec.Body.String(), tc.wantDetail)
+			}
+		})
+	}
+}
+
+func TestFiscalDocumentReadRouteIgnoresOrgToken(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/fiscal_documents/"+uuid.NewString(), nil)
+	req.Header.Set("X-Org-Token", "legacy-token")
 	rec := httptest.NewRecorder()
 	testInboundAPI().Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status=%d, want %d", rec.Code, http.StatusUnauthorized)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "Missing access token") {
+		t.Fatalf("status=%d body=%s, want 401 Missing access token", rec.Code, rec.Body.String())
 	}
 }
 

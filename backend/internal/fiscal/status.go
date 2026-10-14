@@ -1,25 +1,25 @@
 package fiscal
 
 const (
-	StatusReceived              = "received"
-	StatusSubmitted             = "submitted"
-	StatusAuthorized            = "authorized"
-	StatusRejected              = "rejected"
-	StatusFailed                = "failed"
-	StatusCancelRequested       = "cancel_requested"
-	StatusCancelled             = "cancelled"
-	StatusCorrectionRegistered  = "correction_registered"
-	StatusInutilized            = "inutilized"
-	StatusContingencyPending    = "contingency_pending"
+	StatusReceived             = "received"
+	StatusSubmitted            = "submitted"
+	StatusAuthorized           = "authorized"
+	StatusRejected             = "rejected"
+	StatusFailed               = "failed"
+	StatusCancelRequested      = "cancel_requested"
+	StatusCancelled            = "cancelled"
+	StatusCorrectionRegistered = "correction_registered"
+	StatusInutilized           = "inutilized"
+	StatusContingencyPending   = "contingency_pending"
 
-	ProcessingPending    = "pending"
-	ProcessingQueued     = "queued"
-	ProcessingProcessing = "processing"
-	ProcessingWaiting    = "waiting_external"
+	ProcessingPending       = "pending"
+	ProcessingQueued        = "queued"
+	ProcessingProcessing    = "processing"
+	ProcessingWaiting       = "waiting_external"
 	ProcessingWaitingRecibo = "waiting_recibo"
-	ProcessingRetry      = "retry_scheduled"
-	ProcessingFailed     = "failed"
-	ProcessingCompleted  = "completed"
+	ProcessingRetry         = "retry_scheduled"
+	ProcessingFailed        = "failed"
+	ProcessingCompleted     = "completed"
 )
 
 // IsTerminalStatus returns true when business status no longer changes in the happy path.
@@ -48,6 +48,10 @@ func EventTypeForOutcome(outcome string) string {
 		return "fiscal.document.submitted.v1"
 	case "waiting_recibo":
 		return "fiscal.document.waiting_recibo.v1"
+	case "error":
+		return "fiscal.document.failed.v1"
+	case "retry":
+		return "fiscal.document.retry_scheduled.v1"
 	case "cancelled", "accepted_cancel":
 		return "fiscal.document.cancelled.v1"
 	case "correction_registered", "accepted_cce":
@@ -70,6 +74,11 @@ func NextStatusesFromProvider(outcome string) (status, processing string, ok boo
 		return StatusSubmitted, ProcessingWaiting, true
 	case "waiting_recibo":
 		return StatusSubmitted, ProcessingWaitingRecibo, true
+	case "error":
+		return StatusFailed, ProcessingFailed, true
+	case "retry":
+		// Calculator/SEFIN timeout: keep the note open and let the worker send it again.
+		return StatusReceived, ProcessingRetry, true
 	case "cancelled", "accepted_cancel":
 		return StatusCancelled, ProcessingCompleted, true
 	case "correction_registered", "accepted_cce":

@@ -195,6 +195,10 @@ type IBSCBSNode struct {
 			PAliqEfetCBS string `xml:"http://www.sped.fazenda.gov.br/nfse pAliqEfetCBS"`
 		} `xml:"http://www.sped.fazenda.gov.br/nfse fed"`
 		Trib struct {
+			// NT 009 v1.01: CST and cClassTrib are direct children of trib.
+			// GIBSCBS keeps the layout used before 01/10/2026.
+			CST        string `xml:"http://www.sped.fazenda.gov.br/nfse CST"`
+			CClassTrib string `xml:"http://www.sped.fazenda.gov.br/nfse cClassTrib"`
 			GIBSCBS struct {
 				CST        string `xml:"http://www.sped.fazenda.gov.br/nfse CST"`
 				CClassTrib string `xml:"http://www.sped.fazenda.gov.br/nfse cClassTrib"`

@@ -1,4 +1,6 @@
-# Pin PyNFe to GitHub main (reforma IBS/CBS + gIBSCBSMono).
+# Pin PyNFe to GitHub main. IBS/CBS is NOT serialized by PyNFe any more: the
+# gateway builds det/IBSCBS and IBSCBSTot itself (sefaz/ibscbs_nfe.py) because
+# PyNFe picks groups from a fixed CST list and has no gIBSCBSMono/gRed/gDif.
 # PyPI 0.6.5 (Feb 2026) does NOT include NT 2025.002-RTC serialization.
 # Bump the commit SHA deliberately after reviewing upstream changelog;
 # switch to a PyPI release only when it includes reforma docs/tests.

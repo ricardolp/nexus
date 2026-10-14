@@ -10,6 +10,7 @@ import (
 const (
 	EventDocumentReceived      = "fiscal.document.received.v1"
 	EventDocumentRetryScheduled = "fiscal.document.retry_scheduled.v1"
+	EventDocumentResubmitted   = "fiscal.document.resubmitted.v1"
 	EventDocumentStatusChanged = "fiscal.document.status_changed.v1"
 	EventWebhookDeliver        = "webhook.delivery_requested.v1"
 	EventUserInvited           = "identity.user_invited.v1"
@@ -26,7 +27,10 @@ const (
 	EventDocumentCancelRequested         = "fiscal.document.cancel_requested.v1"
 	EventDocumentCCeRequested            = "fiscal.document.cce_requested.v1"
 	EventDocumentInutilizationRequested  = "fiscal.document.inutilization_requested.v1"
+	EventDocumentProtocolRequested       = "fiscal.document.protocol_requested.v1"
+	EventDocumentProtocolResult          = "fiscal.document.protocol_result.v1"
 	EventDocumentEventResult             = "fiscal.document.event_result.v1"
+	EventDocumentDanfeUploaded           = "fiscal.document.danfe_uploaded.v1"
 	EventSefazStatusChanged              = "sefaz.status.changed.v1"
 
 	// EventDocumentQueryRequested/Result are the on-demand SEFAZ query

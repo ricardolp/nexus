@@ -49,7 +49,7 @@ import { getFiscalQueryColumns } from './fiscal-query-columns';
 import { KpiSummaryCards } from './kpi-summary-cards';
 import { ManifestCienciaDialog } from './manifest-ciencia-dialog';
 import { getPendingDocumentColumns } from './pending-document-columns';
-import { documentListBucket, type DocumentListFilter } from './status-labels';
+import { type DocumentListFilter } from './status-labels';
 import { isInboundProcessing } from './format';
 import { XMLUploadDialog } from './xml-upload-dialog';
 
@@ -116,6 +116,11 @@ export function FiscalDocumentsPage({
     fields: ALL_SEARCH_FIELDS
   });
   const [statusFilter, setStatusFilter] = useState<DocumentListFilter>('all');
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [draftNumberFrom, setDraftNumberFrom] = useState('');
+  const [draftNumberTo, setDraftNumberTo] = useState('');
+  const [appliedRange, setAppliedRange] = useState({ from: '', to: '' });
   const [listTab, setListTab] = useState<ListTab>('documents');
   const [activeQueryDialog, setActiveQueryDialog] = useState<FiscalQueryType | null>(null);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -133,31 +138,47 @@ export function FiscalDocumentsPage({
     : `/app/${documentType}`;
 
   const documentsQuery = useQuery({
-    queryKey: ['fiscal-documents', organizationId, documentType, direction, appliedSearch],
+    queryKey: [
+      'fiscal-documents',
+      organizationId,
+      documentType,
+      direction,
+      appliedSearch,
+      appliedRange,
+      statusFilter,
+      pageIndex,
+      pageSize
+    ],
     queryFn: () =>
       listFiscalDocuments(token!, organizationId!, {
         documentType,
         direction,
         q: appliedSearch.query || undefined,
         fields: appliedSearch.query ? appliedSearch.fields.join(',') : undefined,
-        limit: 200
+        numberFrom: appliedRange.from || undefined,
+        numberTo: appliedRange.to || undefined,
+        statusGroup: statusFilter === 'all' ? undefined : statusFilter,
+        limit: pageSize,
+        offset: pageIndex * pageSize
       }),
     placeholderData: keepPreviousData,
     enabled,
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
+      const inProgress = (query.state.data?.counts?.in_progress ?? 0) > 0;
       if (isOutbound) {
-        return items.some(
-          (d) =>
-            d.processing_status === 'queued' ||
-            d.processing_status === 'waiting_external' ||
-            d.processing_status === 'processing' ||
-            d.processing_status === 'retry_scheduled'
-        )
+        return inProgress ||
+          items.some(
+            (d) =>
+              d.processing_status === 'queued' ||
+              d.processing_status === 'waiting_external' ||
+              d.processing_status === 'processing' ||
+              d.processing_status === 'retry_scheduled'
+          )
           ? 2000
           : false;
       }
-      return items.some((d) => isInboundProcessing(d.processing_status)) ? 2000 : false;
+      return inProgress || items.some((d) => isInboundProcessing(d.processing_status)) ? 2000 : false;
     }
   });
 
@@ -178,15 +199,14 @@ export function FiscalDocumentsPage({
   });
 
   const documents = documentsQuery.data?.items ?? [];
+  const documentTotal = documentsQuery.data?.total ?? documents.length;
+  const documentPageCount = Math.max(1, Math.ceil(documentTotal / pageSize));
   const pendingDocuments = pendingDocumentsQuery.data?.items ?? [];
   const sefazQueries = sefazQueriesQuery.data?.items ?? [];
   const pendingManifestationCount = pendingDocuments.filter((d) => d.status === 'pending').length;
   const inFlightQueryCount = sefazQueries.filter((q) => q.status === 'pending' || q.status === 'processing').length;
 
-  const filteredDocuments = useMemo(() => {
-    if (statusFilter === 'all') return documents;
-    return documents.filter((d) => documentListBucket(d.status) === statusFilter);
-  }, [documents, statusFilter]);
+  const filteredDocuments = documents;
 
   const filteredPendingDocuments = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -283,8 +303,8 @@ export function FiscalDocumentsPage({
           .map((field) => field.label)
           .join(', ');
 
-  const showTableSkeleton = documentsQuery.isLoading || documentsQuery.isPlaceholderData;
-  const hasAppliedSearch = Boolean(appliedSearch.query);
+  const showTableSkeleton = documentsQuery.isLoading;
+  const hasAppliedSearch = Boolean(appliedSearch.query || appliedRange.from || appliedRange.to);
 
   function toggleSearchField(id: DocumentSearchField) {
     setDraftFields((current) => {
@@ -297,6 +317,18 @@ export function FiscalDocumentsPage({
   }
 
   function applyDocumentSearch() {
+    const from = draftNumberFrom.trim();
+    const to = draftNumberTo.trim();
+    if ((from && !/^\d+$/.test(from)) || (to && !/^\d+$/.test(to))) {
+      toast.error('O intervalo de número aceita apenas dígitos.');
+      return;
+    }
+    if (from && to && Number(from) > Number(to)) {
+      toast.error('O número inicial não pode ser maior que o final.');
+      return;
+    }
+    setPageIndex(0);
+    setAppliedRange({ from, to });
     setAppliedSearch({
       query: draftQuery.trim(),
       fields: draftFields.length ? draftFields : ALL_SEARCH_FIELDS
@@ -305,6 +337,10 @@ export function FiscalDocumentsPage({
 
   function clearDocumentSearch() {
     setDraftQuery('');
+    setDraftNumberFrom('');
+    setDraftNumberTo('');
+    setAppliedRange({ from: '', to: '' });
+    setPageIndex(0);
     setAppliedSearch({ query: '', fields: draftFields.length ? draftFields : ALL_SEARCH_FIELDS });
   }
 
@@ -340,7 +376,15 @@ export function FiscalDocumentsPage({
   return (
     <div className="flex flex-col gap-6" data-tour="fiscal-list">
       {organizationId && listTab === 'documents' && documentsQuery.data && !documentsQuery.isError && (
-        <KpiSummaryCards documents={documents} activeFilter={statusFilter} onFilterChange={setStatusFilter} />
+        <KpiSummaryCards
+          documents={documents}
+          totals={documentsQuery.data?.counts}
+          activeFilter={statusFilter}
+          onFilterChange={(filter) => {
+            setStatusFilter(filter);
+            setPageIndex(0);
+          }}
+        />
       )}
 
       <Card>
@@ -424,6 +468,22 @@ export function FiscalDocumentsPage({
                           className="pl-8"
                         />
                       </div>
+                      <Input
+                        inputMode="numeric"
+                        placeholder="Número de"
+                        aria-label="Número inicial do SAP"
+                        value={draftNumberFrom}
+                        onChange={(e) => setDraftNumberFrom(e.target.value)}
+                        className="w-full sm:w-32"
+                      />
+                      <Input
+                        inputMode="numeric"
+                        placeholder="Número até"
+                        aria-label="Número final do SAP"
+                        value={draftNumberTo}
+                        onChange={(e) => setDraftNumberTo(e.target.value)}
+                        className="w-full sm:w-32"
+                      />
                       <Button type="submit">
                         <SearchIcon />
                         Pesquisar
@@ -460,6 +520,18 @@ export function FiscalDocumentsPage({
                       columns={columns}
                       data={filteredDocuments}
                       onRowClick={(doc) => navigate(`${detailBasePath}/${doc.id}`)}
+                      serverPagination={{
+                        pageIndex,
+                        pageSize,
+                        pageCount: documentPageCount,
+                        total: documentTotal,
+                        pageSizeOptions: [20, 50, 100],
+                        onPageIndexChange: setPageIndex,
+                        onPageSizeChange: (size) => {
+                          setPageSize(size);
+                          setPageIndex(0);
+                        }
+                      }}
                       toolbar={(table) =>
                         table.getFilteredSelectedRowModel().rows.length > 0 ? (
                           <BulkActionBar

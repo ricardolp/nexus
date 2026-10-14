@@ -60,6 +60,46 @@ func LevelFromStatus(status int) string {
 	}
 }
 
+// RedactJSONFields replaces the named keys anywhere in a JSON value.
+// A body that is not JSON becomes "[REDACTED]" so a secret is never stored
+// when parsing fails.
+func RedactJSONFields(body []byte, keys ...string) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return []byte("[REDACTED]")
+	}
+	sensitive := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		sensitive[strings.ToLower(k)] = struct{}{}
+	}
+	redactJSONValue(v, sensitive)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return []byte("[REDACTED]")
+	}
+	return out
+}
+
+func redactJSONValue(v any, sensitive map[string]struct{}) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			if _, ok := sensitive[strings.ToLower(k)]; ok {
+				t[k] = "[REDACTED]"
+				continue
+			}
+			redactJSONValue(child, sensitive)
+		}
+	case []any:
+		for _, child := range t {
+			redactJSONValue(child, sensitive)
+		}
+	}
+}
+
 // TruncateBody returns a UTF-8-safe preview capped at limit bytes.
 func TruncateBody(body []byte, limit int) string {
 	if limit <= 0 {

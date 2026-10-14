@@ -56,6 +56,20 @@ func TestSanitizeHeaders(t *testing.T) {
 	}
 }
 
+func TestRedactJSONFields(t *testing.T) {
+	body := []byte(`{"grant_type":"client_credentials","client_id":"fm_1","client_secret":"super-secret","nested":{"access_token":"jwt"}}`)
+	got := string(integrationlog.RedactJSONFields(body, "client_secret", "access_token"))
+	if strings.Contains(got, "super-secret") || strings.Contains(got, "jwt") {
+		t.Fatalf("secret leaked: %s", got)
+	}
+	if !strings.Contains(got, "fm_1") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("got %s", got)
+	}
+	if string(integrationlog.RedactJSONFields([]byte("not-json"), "client_secret")) != "[REDACTED]" {
+		t.Fatal("non-json body should be fully redacted")
+	}
+}
+
 func TestTruncateBody(t *testing.T) {
 	body := []byte(stringsRepeat("a", 100))
 	got := integrationlog.TruncateBody(body, 10)

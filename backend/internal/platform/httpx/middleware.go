@@ -50,6 +50,28 @@ func LimitBody(maxBytes int64) func(http.Handler) http.Handler {
 	}
 }
 
+// LimitBodyWithOverride is LimitBody where override may raise (or lower) the
+// limit for specific requests; a non-positive override keeps defaultMax.
+func LimitBodyWithOverride(defaultMax int64, override func(*http.Request) int64) func(http.Handler) http.Handler {
+	if defaultMax <= 0 {
+		defaultMax = DefaultMaxBodyBytes
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				maxBytes := defaultMax
+				if override != nil {
+					if n := override(r); n > 0 {
+						maxBytes = n
+					}
+				}
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

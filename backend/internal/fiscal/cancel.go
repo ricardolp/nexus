@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/nexus/fiscal-messaging/internal/messaging"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 	"github.com/nexus/fiscal-messaging/internal/platform/ids"
 )
@@ -21,8 +22,12 @@ type CancelNFSeInput struct {
 }
 
 type nfseCancelMaterial struct {
-	AccessKey string
-	CNPJ      string
+	AccessKey        string
+	CNPJ             string
+	NFSeNumber       string
+	ProviderCode     string
+	ProviderConfig   json.RawMessage
+	MunicipalityCode string
 }
 
 // RequestCancelNFSe moves an authorized outbound NFS-e to cancel_requested and
@@ -63,8 +68,19 @@ func (s *Service) RequestCancelNFSe(
 	if err != nil {
 		return nil, err
 	}
-	if material.AccessKey == "" {
-		return nil, domainerr.Validation("missing_access_key", "NFS-e access key is required before cancel")
+	provider, ok := nfseprovider.Lookup(material.ProviderCode)
+	if !ok {
+		return nil, domainerr.Validation("nfse_provider_unknown", "Provedor de NFS-e '"+material.ProviderCode+"' não é suportado")
+	}
+	switch provider.IdentifiesBy {
+	case nfseprovider.IdentifiesByNumber:
+		if material.NFSeNumber == "" {
+			return nil, domainerr.Validation("missing_nfse_number", "NFS-e number is required before cancel")
+		}
+	default:
+		if material.AccessKey == "" {
+			return nil, domainerr.Validation("missing_access_key", "NFS-e access key is required before cancel")
+		}
 	}
 	if material.CNPJ == "" {
 		company, companyErr := s.orgs.GetCompany(ctx, organizationID, doc.OrganizationCompanyID)
@@ -121,6 +137,14 @@ func (s *Service) RequestCancelNFSe(
 			"c_motivo":                cMotivo,
 			"justificativa":           justificativa,
 			"n_seq_evento":            1,
+			"nfse_provider":           provider.Code,
+			"nfse_number":             material.NFSeNumber,
+		}
+		if material.MunicipalityCode != "" {
+			outbox["municipality_code"] = material.MunicipalityCode
+		}
+		if len(material.ProviderConfig) > 0 {
+			outbox["nfse_provider_config"] = material.ProviderConfig
 		}
 		if objectKey, keyErr := s.OriginalPayloadObjectKey(ctx, documentID); keyErr == nil && objectKey != "" {
 			outbox["payload_object_key"] = objectKey
@@ -136,12 +160,15 @@ func (s *Service) RequestCancelNFSe(
 }
 
 func (s *Service) loadNFSeCancelMaterial(ctx context.Context, organizationID, documentID uuid.UUID) (nfseCancelMaterial, error) {
-	var accessKey, providerCNPJ *string
+	var accessKey, providerCNPJ, nfseNumber, providerCode, municipality *string
+	var providerConfig []byte
 	err := s.pool.QueryRow(ctx, `
-		select nullif(trim(access_key), ''), nullif(trim(provider_cnpj), '')
+		select nullif(trim(access_key), ''), nullif(trim(provider_cnpj), ''),
+		       nullif(trim(nfse_number), ''), nullif(trim(provider_code), ''), provider_config,
+		       coalesce(nullif(provider_municipality_code, ''), nullif(municipality_code, ''), nullif(service_municipality_code, ''))
 		from organization_nfse
 		where organization_id = $1 and organization_document_id = $2
-	`, organizationID, documentID).Scan(&accessKey, &providerCNPJ)
+	`, organizationID, documentID).Scan(&accessKey, &providerCNPJ, &nfseNumber, &providerCode, &providerConfig, &municipality)
 	if err == pgx.ErrNoRows {
 		return nfseCancelMaterial{}, domainerr.NotFound("nfse_extension_not_found", "NFS-e extension row not found")
 	}
@@ -154,6 +181,19 @@ func (s *Service) loadNFSeCancelMaterial(ctx context.Context, organizationID, do
 	}
 	if providerCNPJ != nil {
 		out.CNPJ = digitsOnly(*providerCNPJ)
+	}
+	if nfseNumber != nil {
+		out.NFSeNumber = normalizeNFSeNumber(*nfseNumber)
+	}
+	out.ProviderCode = nfseprovider.CodeSefinNacional
+	if providerCode != nil {
+		out.ProviderCode = nfseprovider.NormalizeCode(*providerCode)
+	}
+	if len(providerConfig) > 0 && string(providerConfig) != "null" {
+		out.ProviderConfig = json.RawMessage(providerConfig)
+	}
+	if municipality != nil {
+		out.MunicipalityCode = strings.TrimSpace(*municipality)
 	}
 	return out, nil
 }

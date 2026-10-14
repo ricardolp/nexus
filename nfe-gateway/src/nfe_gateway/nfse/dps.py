@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from lxml import etree
@@ -10,6 +13,10 @@ from lxml import etree
 NS = "http://www.sped.fazenda.gov.br/nfse"
 NSMAP = {None: NS}
 VER_APLIC = "NexusNFeGateway1.0.0"
+
+# cIndOp derivation rules (Anexo VII / VIII da NFS-e Nacional). Data file so the
+# fiscal team can extend it without a code change.
+_CINDOP_RULES_PATH = Path(__file__).parent / "data" / "cindop_rules.json"
 
 
 class SapNfseMapperError(ValueError):
@@ -41,6 +48,21 @@ def _money(value: Any) -> str:
     if value is None:
         return "0.00"
     return f"{float(value):.2f}"
+
+
+def _optional_positive_money(value: Any, *, field: str) -> str | None:
+    """TSDec15V2 when the SAP sent a discount greater than zero; otherwise omit."""
+    if value is None or _text(value) == "":
+        return None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SapNfseMapperError(f"{field} must be a number") from exc
+    if amount < 0:
+        raise SapNfseMapperError(f"{field} cannot be negative")
+    if amount == 0:
+        return None
+    return f"{amount:.2f}"
 
 
 def _rate(value: Any) -> str | None:
@@ -129,6 +151,29 @@ def _append_endereco(parent: etree._Element, end: Any) -> None:
     _sub(end_el, "xBairro", x_bairro)
 
 
+def _append_pessoa(el: etree._Element, pessoa: dict[str, Any], *, default_name: str) -> None:
+    """TCInfoPessoa: CNPJ|CPF|NIF|cNaoNIF, IM?, xNome, end?, fone?, email?."""
+    cnpj = _digits(pessoa.get("cnpj"))
+    cpf = _digits(pessoa.get("cpf"))
+    if cnpj:
+        _sub(el, "CNPJ", cnpj.zfill(14)[:14])
+    elif cpf:
+        _sub(el, "CPF", cpf.zfill(11)[:11])
+    elif _text(pessoa.get("nif")):
+        _sub(el, "NIF", _text(pessoa.get("nif")))
+    else:
+        # Consumidor não identificado: XSD choice allows cNaoNIF.
+        _sub(el, "cNaoNIF", "1")
+    if _text(pessoa.get("inscricao_municipal")):
+        _sub(el, "IM", _text(pessoa.get("inscricao_municipal"))[:15])
+    _sub(el, "xNome", (_text(pessoa.get("razao_social") or pessoa.get("nome")) or default_name)[:150])
+    _append_endereco(el, pessoa.get("endereco") or {})
+    if _fone(pessoa.get("telefone")):
+        _sub(el, "fone", _fone(pessoa.get("telefone")))
+    if _text(pessoa.get("email")):
+        _sub(el, "email", _text(pessoa.get("email"))[:80])
+
+
 def _natureza_to_trib_issqn(natureza: str) -> str:
     mapping = {
         "1": "1",
@@ -168,6 +213,141 @@ def _reg_esp_trib(payload: dict[str, Any]) -> str:
 def _normalize_nbs(value: Any) -> str:
     """NBS in DPS is digits-only (e.g. 1.2002.90.00 → 120029000)."""
     return _digits(value)
+
+
+_TOT_SPHERES = ("federal", "estadual", "municipal")
+# SAP contract sends approximate Lei 12.741 amounts either as money
+# (total_tributos / valor_total_tributos_*) or as percentages
+# (percentual_total_tributos_fed/est/mun). DPS vTotTrib wants money.
+_TOT_MONEY_KEYS = {
+    "federal": ("valor_total_tributos_fed", "valor_tributos_federais"),
+    "estadual": ("valor_total_tributos_est", "valor_tributos_estaduais"),
+    "municipal": ("valor_total_tributos_mun", "valor_tributos_municipais"),
+}
+_TOT_PERCENT_KEYS = {
+    "federal": ("percentual_total_tributos_fed",),
+    "estadual": ("percentual_total_tributos_est",),
+    "municipal": ("percentual_total_tributos_mun",),
+}
+
+
+def _present(value: Any) -> bool:
+    return value is not None and _text(value) != ""
+
+
+def _first_present(sources: list[Any], keys: tuple[str, ...]) -> Any:
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key in keys:
+            if key in src and _present(src.get(key)):
+                return src.get(key)
+    return None
+
+
+def _percent_to_amount(percent: Any, base: float) -> float:
+    """0.34 (fraction) and 34 (percent) both mean 34% of base. Same rule as pAliq."""
+    return base * _percent_points(percent) / 100.0
+
+
+def _percent_points(percent: Any) -> float:
+    """0.34 and 34 both mean 34 percentage points."""
+    f = float(percent)
+    if abs(f) <= 1:
+        return f * 100.0
+    return f
+
+
+# When fed+est+mun sum to 100, SAP sent the share of the tax among spheres
+# (PIS+COFINS vs ISS), not a Lei 12.741 rate on the service. Applying that
+# share to valor_servicos makes the approximate total equal the price.
+_INVOICE_FED_KEYS = ("valor_pis", "valor_cofins", "valor_inss", "valor_ir", "valor_csll")
+
+
+def _sum_present(sources: list[Any], keys: tuple[str, ...]) -> tuple[float, bool]:
+    total = 0.0
+    found = False
+    for key in keys:
+        value = _first_present(sources, (key,))
+        if value is None:
+            continue
+        total += float(value)
+        found = True
+    return total, found
+
+
+def _invoice_tax_amounts(sources: list[Any]) -> dict[str, float] | None:
+    """PIS/COFINS/INSS/IR/CSLL as federal and ISS as municipal."""
+    federal, fed_ok = _sum_present(sources, _INVOICE_FED_KEYS)
+    municipal = _first_present(sources, ("valor_iss",))
+    if municipal is None:
+        municipal = _first_present(sources, ("valor_iss_retido",))
+    mun_ok = municipal is not None
+    if not fed_ok and not mun_ok:
+        return None
+    return {
+        "federal": federal if fed_ok else 0.0,
+        "estadual": 0.0,
+        "municipal": float(municipal) if mun_ok else 0.0,
+    }
+
+
+def _nao_optante_totals(payload: dict[str, Any], serv: dict[str, Any]) -> dict[str, Any] | None:
+    """Monetary vTotTribFed/Est/Mun for opSimpNac=1.
+
+    Prefers an explicit total_tributos object. Otherwise converts the SAP
+    percentage fields (or direct valor_* aliases) using valor_servicos.
+    Percentages that sum to 100 are a split of the tax (PIS+COFINS vs ISS),
+    not a rate on the service: the invoice amounts are used instead.
+    A sphere omitted while another is present becomes 0.
+    """
+    sources: list[Any] = [serv, payload]
+    tot = serv.get("total_tributos") if isinstance(serv.get("total_tributos"), dict) else None
+    if tot is None and isinstance(payload.get("total_tributos"), dict):
+        tot = payload.get("total_tributos")
+    if isinstance(tot, dict) and all(k in tot for k in _TOT_SPHERES):
+        return tot
+
+    base_raw = serv.get("valor_servicos")
+    base = float(base_raw) if _present(base_raw) else 0.0
+    percent_points = []
+    money_hit = False
+    for sphere in _TOT_SPHERES:
+        if isinstance(tot, dict) and sphere in tot and _present(tot.get(sphere)):
+            money_hit = True
+            continue
+        if _first_present(sources, _TOT_MONEY_KEYS[sphere]) is not None:
+            money_hit = True
+            continue
+        percent = _first_present(sources, _TOT_PERCENT_KEYS[sphere])
+        if percent is not None:
+            percent_points.append(_percent_points(percent))
+    if percent_points and not money_hit and abs(sum(percent_points) - 100.0) <= 0.06:
+        invoice = _invoice_tax_amounts(sources)
+        if invoice is not None:
+            return invoice
+
+    found = False
+    out: dict[str, Any] = {}
+    for sphere in _TOT_SPHERES:
+        if isinstance(tot, dict) and sphere in tot and _present(tot.get(sphere)):
+            out[sphere] = tot.get(sphere)
+            found = True
+            continue
+        money = _first_present(sources, _TOT_MONEY_KEYS[sphere])
+        if money is not None:
+            out[sphere] = money
+            found = True
+            continue
+        percent = _first_present(sources, _TOT_PERCENT_KEYS[sphere])
+        if percent is not None:
+            out[sphere] = _percent_to_amount(percent, base)
+            found = True
+            continue
+        out[sphere] = 0
+    if not found:
+        return None
+    return out
 
 
 def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._Element:
@@ -230,27 +410,7 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
         _sub(reg_trib, "regApTribSN", reg_ap)
     _sub(reg_trib, "regEspTrib", _reg_esp_trib(payload))
 
-    toma_el = _sub(inf, "toma")
-    toma_cnpj = _digits(toma.get("cnpj"))
-    toma_cpf = _digits(toma.get("cpf"))
-    if toma_cnpj:
-        _sub(toma_el, "CNPJ", toma_cnpj.zfill(14)[:14])
-    elif toma_cpf:
-        _sub(toma_el, "CPF", toma_cpf.zfill(11)[:11])
-    elif _text(toma.get("nif")):
-        _sub(toma_el, "NIF", _text(toma.get("nif")))
-    else:
-        # Consumidor não identificado: XSD choice allows cNaoNIF.
-        _sub(toma_el, "cNaoNIF", "1")
-    if _text(toma.get("inscricao_municipal")):
-        _sub(toma_el, "IM", _text(toma.get("inscricao_municipal"))[:15])
-    # TCInfoPessoa sequence: CNPJ, IM?, xNome (required), end?, fone?, email?
-    _sub(toma_el, "xNome", (_text(toma.get("razao_social")) or "CONSUMIDOR NAO IDENTIFICADO")[:150])
-    _append_endereco(toma_el, toma.get("endereco") or {})
-    if _fone(toma.get("telefone")):
-        _sub(toma_el, "fone", _fone(toma.get("telefone")))
-    if _text(toma.get("email")):
-        _sub(toma_el, "email", _text(toma.get("email"))[:80])
+    _append_pessoa(_sub(inf, "toma"), toma, default_name="CONSUMIDOR NAO IDENTIFICADO")
 
     if interm:
         inter_el = _sub(inf, "interm")
@@ -290,13 +450,20 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
     if serv.get("valor_recebido") is not None and _text(serv.get("valor_recebido")) != "":
         _sub(vserv, "vReceb", _money(serv.get("valor_recebido")))
     _sub(vserv, "vServ", _money(amount))
+    # TCVDescCondIncond is optional and must sit between vServPrest and trib.
+    # SEFIN uses vDescIncond in the ISS base (vServ - vDescIncond - …) and the
+    # DANFSE prints both discounts from this group.
+    _append_desc_cond_incond(valores, serv, service_amount=float(amount))
 
     trib = _sub(valores, "trib")
     trib_mun_el = _sub(trib, "tribMun")
     _sub(trib_mun_el, "tribISSQN", _natureza_to_trib_issqn(_text(payload.get("natureza_operacao"))))
     # tpRetISSQN: 1=Não Retido, 2=Retido pelo Tomador, 3=Retido pelo Intermediário
     _sub(trib_mun_el, "tpRetISSQN", "2" if _boolish(serv.get("iss_retido")) else "1")
-    if serv.get("aliquota") is not None and _text(serv.get("aliquota")) != "":
+    # pAliq is only accepted for ME/EPP (opSimpNac=3); for Não Optante/MEI the
+    # Sistema Nacional takes the rate from the município parametrization and
+    # rejects the DPS if it is informed.
+    if op_simp == "3" and serv.get("aliquota") is not None and _text(serv.get("aliquota")) != "":
         f = float(serv.get("aliquota"))
         if f <= 1:
             f *= 100
@@ -345,24 +512,40 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
     elif op_simp == "2":
         _sub(tot_trib, "indTotTrib", "0")
     else:
-        if not isinstance(tot, dict) or not all(
-            k in tot for k in ("federal", "estadual", "municipal")
-        ):
+        resolved = _nao_optante_totals(payload, serv)
+        if resolved is None:
             raise SapNfseMapperError(
                 "total_tributos.federal/estadual/municipal are required for Não Optante (opSimpNac=1)"
             )
         v_tot = _sub(tot_trib, "vTotTrib")
-        _sub(v_tot, "vTotTribFed", _money(tot.get("federal")))
-        _sub(v_tot, "vTotTribEst", _money(tot.get("estadual")))
-        _sub(v_tot, "vTotTribMun", _money(tot.get("municipal")))
+        _sub(v_tot, "vTotTribFed", _money(resolved.get("federal")))
+        _sub(v_tot, "vTotTribEst", _money(resolved.get("estadual")))
+        _sub(v_tot, "vTotTribMun", _money(resolved.get("municipal")))
 
-    # Reforma tributária (IBS/CBS): optional through 2026 (SE/CGNFS-e — absence does
-    # not reject until 31/12/2026; SN destaque from 01/01/2027 per Ato Conjunto
-    # RFB/CGIBS nº 4/2026). Emit classification-only group when payload provides it;
-    # rates are computed on the authorized NFSe response side.
+    # Reforma tributária (IBS/CBS). Obrigatório desde 01/10/2026 para prestadores
+    # do regime regular sujeitos ao ISS (Ato Conjunto RFB/CGIBS nº 4/2026); a
+    # SEFIN não rejeita a ausência do grupo até 31/12/2026.
     _append_ibscbs(inf, payload, serv)
 
     return root
+
+
+def _append_desc_cond_incond(valores: etree._Element, serv: dict[str, Any], *, service_amount: float) -> None:
+    """Emit valores/vDescCondIncond from desconto_incondicionado / desconto_condicionado."""
+    v_incond = _optional_positive_money(serv.get("desconto_incondicionado"), field="desconto_incondicionado")
+    v_cond = _optional_positive_money(serv.get("desconto_condicionado"), field="desconto_condicionado")
+    if v_incond is None and v_cond is None:
+        return
+    total = float(v_incond or 0) + float(v_cond or 0)
+    if total > service_amount + 0.001:
+        raise SapNfseMapperError(
+            "desconto_incondicionado + desconto_condicionado cannot exceed valor_servicos"
+        )
+    grp = _sub(valores, "vDescCondIncond")
+    if v_incond is not None:
+        _sub(grp, "vDescIncond", v_incond)
+    if v_cond is not None:
+        _sub(grp, "vDescCond", v_cond)
 
 
 def _append_subst(inf: etree._Element, payload: dict[str, Any]) -> None:
@@ -413,12 +596,67 @@ def _append_subst(inf: etree._Element, payload: dict[str, Any]) -> None:
         _sub(subst, "xMotivo", x_motivo[:255])
 
 
-def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str, Any]) -> None:
-    """Append <IBSCBS> only when CST and cClassTrib are explicitly provided.
+@lru_cache(maxsize=1)
+def _cindop_rules() -> dict[str, dict[str, str]]:
+    try:
+        data = json.loads(_CINDOP_RULES_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    rules = data.get("por_codigo") if isinstance(data, dict) else None
+    return rules if isinstance(rules, dict) else {}
 
-    Omitting the group is valid while IBS/CBS remains optional on the national
-    layout; do not invent transitional CST/cClassTrib defaults.
+
+def _infer_c_ind_op(payload: dict[str, Any], serv: dict[str, Any]) -> str:
+    """cIndOp from the rule table when SAP omitted the indicator.
+
+    The table is keyed by cTribNac (6 digits) or LC 116 subitem (4 digits).
+    Location-dependent rules pick ``estabelecimento_fornecedor`` when the
+    service municipality is the supplier's, else ``outro_local``. Items with
+    no rule return "" — the caller decides (we never guess a code).
     """
+    try:
+        item = _normalize_trib_nac(_text(serv.get("item_lista_servico")))
+    except SapNfseMapperError:
+        return ""
+    rules = _cindop_rules()
+    rule = rules.get(item) or rules.get(item[:4])
+    if not isinstance(rule, dict):
+        return ""
+    if _digits(rule.get("padrao")):
+        return _digits(rule.get("padrao"))
+    prest = payload.get("prestador") or {}
+    prest_mun = _digits(prest.get("codigo_municipio"))
+    serv_mun = _digits(serv.get("codigo_municipio")) or prest_mun
+    if prest_mun and serv_mun and prest_mun != serv_mun:
+        return _digits(rule.get("outro_local"))
+    return _digits(rule.get("estabelecimento_fornecedor"))
+
+
+def resolve_c_ind_op(payload: dict[str, Any], serv: dict[str, Any]) -> tuple[str, str]:
+    """Return (cIndOp, origem). origem: 'payload' | 'regra' | ''."""
+    explicit = _text(
+        serv.get("codigo_indicador_operacao")
+        or serv.get("c_ind_op")
+        or serv.get("cIndOp")
+        or payload.get("codigo_indicador_operacao")
+        or payload.get("c_ind_op")
+        or payload.get("cIndOp")
+    )
+    if explicit:
+        digits = _digits(explicit)
+        # Codes start with 0 (01xxxx–05xxxx): a JSON number loses it (50101).
+        if not digits or len(digits) > 6 or len(digits) < 5:
+            raise SapNfseMapperError(
+                f"codigo_indicador_operacao (cIndOp) deve ter 6 dígitos (Anexo VII da NFS-e); recebido {explicit!r}"
+            )
+        return digits.zfill(6), "payload"
+    inferred = _infer_c_ind_op(payload, serv)
+    if len(inferred) == 6:
+        return inferred, "regra"
+    return "", ""
+
+
+def _ibscbs_classification(payload: dict[str, Any], serv: dict[str, Any]) -> tuple[str, str]:
     cst = _digits(
         serv.get("ibs_cbs_situacao_tributaria")
         or payload.get("ibs_cbs_situacao_tributaria")
@@ -427,32 +665,98 @@ def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str,
         serv.get("ibs_cbs_classificacao_tributaria")
         or serv.get("ibs_cbs_classificacao_tributar")
         or payload.get("ibs_cbs_classificacao_tributaria")
+        or payload.get("ibs_cbs_classificacao_tributar")
     )
-    if not cst or not c_class:
-        return
+    return cst, c_class
 
-    c_ind_op = _digits(
-        serv.get("codigo_indicador_operacao")
-        or payload.get("codigo_indicador_operacao")
-    )
-    if not c_ind_op:
+
+# Competência >= 2026-10-01 exige o grupo (E0855). CST 000 tem IndExigeTrib,
+# então cIndOp entra. O Anexo VI v1.04.01 manda indDest para depois do tomador,
+# mas a SefinNacional 1.6.0 ainda espera interm/serv nesse ponto e rejeita o
+# elemento (esquema). indDest permanece dentro de IBSCBS.
+_EMIT_DPS_IBSCBS = True
+
+
+def _validate_ind_dest(payload: dict[str, Any]) -> str:
+    ind_dest = _text(payload.get("indicador_destinatario") or payload.get("ind_dest") or "0") or "0"
+    if ind_dest[:1] not in {"0", "1"}:
+        raise SapNfseMapperError(f"indicador_destinatario (indDest) deve ser 0 ou 1: {ind_dest!r}")
+    dest = payload.get("destinatario") or payload.get("destinatario_operacao")
+    if ind_dest[:1] == "1" and not isinstance(dest, dict):
         raise SapNfseMapperError(
-            "codigo_indicador_operacao is required when IBSCBS classification is provided"
+            "indicador_destinatario=1 significa que o destinatário do serviço não é o tomador: "
+            "informe o objeto 'destinatario' (cnpj/cpf, razao_social, endereco) ou envie 0 "
+            "quando o próprio tomador for o destinatário."
         )
+    return ind_dest[:1]
+
+
+def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str, Any]) -> None:
+    """Validate and, when enabled, append <IBSCBS>.
+
+    Sem CST e sem cClassTrib o grupo é omitido (prestador fora do cronograma,
+    ex.: Simples Nacional até 2027). Com a classificação informada, os códigos
+    são conferidos. A escrita no XML depende de ``_EMIT_DPS_IBSCBS``.
+    """
+    cst, c_class = _ibscbs_classification(payload, serv)
+    if not cst and not c_class:
+        return
+    if not cst or not c_class:
+        raise SapNfseMapperError(
+            "IBS/CBS incompleto: informe ibs_cbs_situacao_tributaria (CST) e "
+            "ibs_cbs_classificacao_tributaria (cClassTrib) juntos."
+        )
+    if len(cst) > 3 or len(c_class) > 6:
+        raise SapNfseMapperError(
+            f"IBS/CBS inválido: CST deve ter 3 dígitos e cClassTrib 6 dígitos (CST={cst}, cClassTrib={c_class})."
+        )
+    cst = cst.zfill(3)
+    c_class = c_class.zfill(6)
+    if not c_class.startswith(cst):
+        raise SapNfseMapperError(
+            f"cClassTrib {c_class} não pertence ao CST {cst} (os 3 primeiros dígitos do cClassTrib são o CST)."
+        )
+
+    c_ind_op, _origem = resolve_c_ind_op(payload, serv)
+    if not c_ind_op:
+        item = _text(serv.get("item_lista_servico"))
+        nbs = _text(serv.get("codigo_nbs"))
+        raise SapNfseMapperError(
+            "cIndOp ausente: com IBS/CBS informado (CST "
+            f"{cst} / cClassTrib {c_class}) a DPS precisa do indicador da operação "
+            "(servico.codigo_indicador_operacao, 6 dígitos). Sem ele a SEFIN "
+            "responde E999. Informe no SAP ou cadastre o cIndOp no serviço da "
+            f"empresa (item LC 116 {item or '?'}, NBS {nbs or '?'})."
+        )
+
     fin = _text(payload.get("finalidade_emissao") or payload.get("fin_nfse") or "0") or "0"
     ind_final = _text(payload.get("consumidor_final") or payload.get("ind_final") or "0") or "0"
-    ind_dest = _text(payload.get("indicador_destinatario") or payload.get("ind_dest") or "0") or "0"
+    if fin[:1] not in {"0", "1", "2"}:
+        raise SapNfseMapperError(f"finalidade_emissao (finNFSe) inválida: {fin!r}")
+    if ind_final[:1] not in {"0", "1"}:
+        raise SapNfseMapperError(f"consumidor_final (indFinal) deve ser 0 ou 1: {ind_final!r}")
+    ind_dest = _validate_ind_dest(payload)
+
+    if not _EMIT_DPS_IBSCBS:
+        return
 
     ibs = _sub(inf, "IBSCBS")
     _sub(ibs, "finNFSe", fin[:1])
     _sub(ibs, "indFinal", ind_final[:1])
-    _sub(ibs, "cIndOp", c_ind_op[:6].zfill(6))
-    _sub(ibs, "indDest", ind_dest[:1])
+    _sub(ibs, "cIndOp", c_ind_op)
+    _sub(ibs, "indDest", ind_dest)
+    if ind_dest == "1":
+        dest = payload.get("destinatario") or payload.get("destinatario_operacao")
+        _append_pessoa(_sub(ibs, "dest"), dest, default_name="DESTINATARIO")
+    # Homologação em 13/10/2026 19:20 voltou a exigir trib/gIBSCBS. CST direto
+    # em trib é recusado: "invalid child element 'CST', expected 'gIBSCBS'".
+    # De manhã o schema inverso (CST direto) estava no ar; a DPS segue o que
+    # a SEFIN valida agora. Alíquotas e valores continuam com a calculadora.
     valores = _sub(ibs, "valores")
     trib = _sub(valores, "trib")
-    g = _sub(trib, "gIBSCBS")
-    _sub(g, "CST", cst[:3].zfill(3))
-    _sub(g, "cClassTrib", c_class[:6].zfill(6))
+    grupo = _sub(trib, "gIBSCBS")
+    _sub(grupo, "CST", cst)
+    _sub(grupo, "cClassTrib", c_class)
 
 
 def dps_xml_bytes(root: etree._Element) -> bytes:

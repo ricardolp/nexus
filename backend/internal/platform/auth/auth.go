@@ -195,13 +195,29 @@ func principalFromClaims(claims *Claims) *Principal {
 
 type principalKey struct{}
 
+type principalSlotKey struct{}
+
+type principalSlot struct{ p *Principal }
+
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {
+	if slot, ok := ctx.Value(principalSlotKey{}).(*principalSlot); ok {
+		slot.p = p
+	}
 	return context.WithValue(ctx, principalKey{}, p)
 }
 
 func PrincipalFrom(ctx context.Context) (*Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(*Principal)
 	return p, ok
+}
+
+// WithPrincipalSlot lets an outer middleware read the principal that an inner
+// auth middleware attaches to a derived request context.
+func WithPrincipalSlot(ctx context.Context) (context.Context, func() (*Principal, bool)) {
+	slot := &principalSlot{}
+	return context.WithValue(ctx, principalSlotKey{}, slot), func() (*Principal, bool) {
+		return slot.p, slot.p != nil
+	}
 }
 
 func tokenFromRequest(r *http.Request) string {

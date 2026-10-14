@@ -1,7 +1,11 @@
 package danfse_test
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"regexp"
@@ -263,6 +267,32 @@ func TestRenderer_Render(t *testing.T) {
 
 	assert.True(t, len(pdfBytes) > 100)
 	assert.Equal(t, "%PDF-", string(pdfBytes[:5]))
+}
+
+func TestRenderer_CustomLogoReplacesNationalMark(t *testing.T) {
+	xmlData, err := os.ReadFile("testdata/mock_danfse.xml")
+	require.NoError(t, err)
+
+	renderer := danfse.NewDanfseRenderer()
+	national, err := renderer.Render(xmlData)
+	require.NoError(t, err)
+
+	img := image.NewRGBA(image.Rect(0, 0, 80, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 80; x++ {
+			img.Set(x, y, color.RGBA{R: 220, G: 30, B: 30, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, img))
+
+	custom, err := renderer.Render(xmlData, danfse.RenderOptions{Logo: buf.Bytes()})
+	require.NoError(t, err)
+	assert.Equal(t, "%PDF-", string(custom[:5]))
+	assert.NotEqual(t, national, custom)
+
+	_, err = renderer.Render(xmlData, danfse.RenderOptions{Logo: []byte("not-an-image")})
+	require.Error(t, err)
 }
 
 // TestRenderer_ServicoPrestado_DescricaoELocal garante que a seção "Serviço

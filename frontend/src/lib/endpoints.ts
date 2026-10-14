@@ -1,6 +1,10 @@
 import { apiFetch, apiFetchBlob, triggerBlobDownload } from './api';
 import type {
   ApiAuthSettings,
+  ApiCompanyNFSeProviderSettings,
+  ApiNFSeMunicipalProvider,
+  ApiNFSeProviderDescriptor,
+  ApiNFSeProviderRoute,
   ApiCertificate,
   ApiCompany,
   ApiCompanyNFSeService,
@@ -818,16 +822,28 @@ export function updateIntegration(
   });
 }
 
+export interface FiscalDocumentListCounts {
+  all: number;
+  action_needed: number;
+  in_progress: number;
+  completed: number;
+  problem: number;
+}
+
 export interface ListFiscalDocumentsParams {
   documentType: 'nfe' | 'nfse';
   status?: string;
+  statusGroup?: 'action_needed' | 'in_progress' | 'completed' | 'problem';
   direction?: 'inbound' | 'outbound';
   q?: string;
   fields?: string;
   number?: string;
   partner?: string;
   accessKey?: string;
+  numberFrom?: string;
+  numberTo?: string;
   limit?: number;
+  offset?: number;
 }
 
 export function listFiscalDocuments(
@@ -840,11 +856,15 @@ export function listFiscalDocuments(
   if (params.direction) query.set('direction', params.direction);
   if (params.q) query.set('q', params.q);
   if (params.fields) query.set('fields', params.fields);
+  if (params.statusGroup) query.set('status_group', params.statusGroup);
   if (params.number) query.set('number', params.number);
   if (params.partner) query.set('partner', params.partner);
   if (params.accessKey) query.set('access_key', params.accessKey);
+  if (params.numberFrom) query.set('number_from', params.numberFrom);
+  if (params.numberTo) query.set('number_to', params.numberTo);
   if (params.limit) query.set('limit', String(params.limit));
-  return apiFetch<{ items: ApiFiscalDocument[] }>(
+  if (params.offset) query.set('offset', String(params.offset));
+  return apiFetch<{ items: ApiFiscalDocument[]; total?: number; counts?: FiscalDocumentListCounts }>(
     `/v1/organizations/${organizationId}/fiscal_documents?${query.toString()}`,
     { token }
   );
@@ -917,6 +937,14 @@ export function resubmitOutboundDocument(token: string, organizationId: string, 
   );
 }
 
+/** Stops outbound processing before the note is sent to SEFAZ/SEFIN. Admin only. */
+export function abortOutboundProcessing(token: string, organizationId: string, documentId: string) {
+  return apiFetch<{ document_id: string; status: string; processing_status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/abort_processing`,
+    { method: 'POST', token }
+  );
+}
+
 /** Requests SEFIN cancelamento (101101) for an authorized outbound NFS-e. */
 export function cancelOutboundNFSe(
   token: string,
@@ -926,6 +954,60 @@ export function cancelOutboundNFSe(
 ) {
   return apiFetch<{ document_id: string; status: string; processing_status: string }>(
     `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/cancel`,
+    { method: 'POST', token, body }
+  );
+}
+
+/** Requests SEFAZ cancelamento (110111) for an authorized outbound NF-e. */
+export function cancelOutboundNFe(
+  token: string,
+  organizationId: string,
+  documentId: string,
+  body: { justificativa: string }
+) {
+  return apiFetch<{ document_id: string; status: string; processing_status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/cancel`,
+    { method: 'POST', token, body }
+  );
+}
+
+/** Requests SEFAZ Carta de Correção (110110) for an authorized outbound NF-e. */
+export function requestOutboundCCe(
+  token: string,
+  organizationId: string,
+  documentId: string,
+  body: { correcao: string; n_seq_evento?: number }
+) {
+  return apiFetch<{ document_id: string; status: string; processing_status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/cce`,
+    { method: 'POST', token, body }
+  );
+}
+
+/** On-demand ConsultaProtocolo — stores protNFe for download. */
+export function requestOutboundProtocol(token: string, organizationId: string, documentId: string) {
+  return apiFetch<{ document_id: string; status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/${documentId}/request_protocol`,
+    { method: 'POST', token }
+  );
+}
+
+/** Company-scoped NF-e number range inutilization. */
+export function requestNFeInutilization(
+  token: string,
+  organizationId: string,
+  body: {
+    organization_company_id: string;
+    serie: string;
+    numero_inicial: number;
+    numero_final: number;
+    ano: number;
+    justificativa: string;
+    document_id?: string;
+  }
+) {
+  return apiFetch<{ status: string }>(
+    `/v1/organizations/${organizationId}/fiscal_documents/inutilization`,
     { method: 'POST', token, body }
   );
 }
@@ -1100,6 +1182,7 @@ export interface UpdateCompanyDetailsInput {
   ibge_municipality_code?: string;
   tax_regime?: string;
   special_tax_regime?: string;
+  danfse_custom_logo_enabled?: boolean;
 }
 
 export function updateCompanyDetails(
@@ -1113,6 +1196,27 @@ export function updateCompanyDetails(
     token,
     body: input
   });
+}
+
+export function uploadCompanyDanfseLogo(token: string, organizationId: string, companyId: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiFetch<ApiCompany>(`/v1/organizations/${organizationId}/companies/${companyId}/danfse-logo`, {
+    method: 'POST',
+    token,
+    formData
+  });
+}
+
+export function deleteCompanyDanfseLogo(token: string, organizationId: string, companyId: string) {
+  return apiFetch<ApiCompany>(`/v1/organizations/${organizationId}/companies/${companyId}/danfse-logo`, {
+    method: 'DELETE',
+    token
+  });
+}
+
+export function getCompanyDanfseLogoBlob(token: string, organizationId: string, companyId: string) {
+  return apiFetchBlob(`/v1/organizations/${organizationId}/companies/${companyId}/danfse-logo`, { token });
 }
 
 export function listCustomers(
@@ -1882,4 +1986,53 @@ export function rejectInboundDocument(
     token,
     body: { reason }
   });
+}
+
+
+// Provedores municipais de NFS-e (catálogo + credenciais do webservice da prefeitura por empresa).
+export function listNFSeMunicipalProviders(token: string) {
+  return apiFetch<{ items: ApiNFSeMunicipalProvider[]; providers: ApiNFSeProviderDescriptor[] }>(
+    '/v1/nfse/municipal-providers',
+    { token }
+  );
+}
+
+export function listCompanyNFSeProviderSettings(token: string, organizationId: string, companyId: string) {
+  return apiFetch<{ items: ApiCompanyNFSeProviderSettings[]; route?: ApiNFSeProviderRoute }>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse-provider-settings`,
+    { token }
+  );
+}
+
+export interface UpsertCompanyNFSeProviderSettingsInput {
+  username?: string;
+  /** Ausente mantém a senha atual; "" apaga. */
+  password?: string;
+  config_overrides?: Record<string, unknown>;
+  force_route?: boolean;
+}
+
+export function upsertCompanyNFSeProviderSettings(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  providerCode: string,
+  input: UpsertCompanyNFSeProviderSettingsInput
+) {
+  return apiFetch<ApiCompanyNFSeProviderSettings>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse-provider-settings/${providerCode}`,
+    { method: 'PUT', token, body: input }
+  );
+}
+
+export function deleteCompanyNFSeProviderSettings(
+  token: string,
+  organizationId: string,
+  companyId: string,
+  providerCode: string
+) {
+  return apiFetch<void>(
+    `/v1/organizations/${organizationId}/companies/${companyId}/nfse-provider-settings/${providerCode}`,
+    { method: 'DELETE', token }
+  );
 }

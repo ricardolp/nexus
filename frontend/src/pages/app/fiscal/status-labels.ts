@@ -90,6 +90,11 @@ export const processingStatusLabels: Record<string, { label: string; className: 
     className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
     dot: 'bg-amber-500'
   },
+  waiting_recibo: {
+    label: 'Aguardando recibo',
+    className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    dot: 'bg-amber-500'
+  },
   retry_scheduled: {
     label: 'Nova tentativa agendada',
     className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/inbound"
 	"github.com/nexus/fiscal-messaging/internal/integration"
 	"github.com/nexus/fiscal-messaging/internal/integrationlog"
+	"github.com/nexus/fiscal-messaging/internal/nfseprovider"
 	"github.com/nexus/fiscal-messaging/internal/notification"
 	"github.com/nexus/fiscal-messaging/internal/ops"
 	"github.com/nexus/fiscal-messaging/internal/organization"
@@ -39,6 +41,7 @@ type ControlPlane struct {
 	Notifications    *notification.Service
 	Inbound          *inbound.Service
 	Integrations     *integration.Service
+	NFSeProviders    *nfseprovider.Service
 	Fiscal           *fiscal.Service
 	FiscalQueries    *fiscal.QueryService
 	PendingDocuments *fiscal.PendingDocumentService
@@ -132,6 +135,13 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Get("/v1/organizations/{organization_id}/companies", a.listCompanies)
 		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}", a.updateCompanyStatus)
 		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/details", a.updateCompanyDetails)
+		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.uploadCompanyDanfseLogo)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.getCompanyDanfseLogo)
+		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.deleteCompanyDanfseLogo)
+		r.Get("/v1/nfse/municipal-providers", a.listNFSeMunicipalProviders)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings", a.listCompanyNFSeProviderSettings)
+		r.Put("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings/{provider_code}", a.upsertCompanyNFSeProviderSettings)
+		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings/{provider_code}", a.deleteCompanyNFSeProviderSettings)
 		r.Get("/v1/organizations/{organization_id}/services", a.listOrganizationServices)
 		r.Patch("/v1/organizations/{organization_id}/services/{service_id}", a.updateOrganizationServiceStatus)
 		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse_services", a.listCompanyNFSeServices)
@@ -176,7 +186,11 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Get("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/download", a.downloadFiscalDocument)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/download_zip", a.downloadFiscalDocumentsZip)
 		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/resubmit", a.resubmitOutboundDocument)
-		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/cancel", a.cancelOutboundNFSe)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/abort_processing", a.abortOutboundProcessing)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/cancel", a.cancelOutboundDocument)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/cce", a.requestOutboundCCe)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/{document_id}/request_protocol", a.requestOutboundProtocol)
+		r.Post("/v1/organizations/{organization_id}/fiscal_documents/inutilization", a.requestInutilization)
 		r.Post("/v1/organizations/{organization_id}/api_clients", a.createAPIClient)
 		r.Get("/v1/organizations/{organization_id}/api_clients", a.listAPIClients)
 		r.Post("/v1/organizations/{organization_id}/api_clients/{api_client_id}/legacy_org_token", a.setAPIClientLegacyOrgToken)
@@ -502,6 +516,13 @@ func (a *ControlPlane) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *ControlPlane) clientToken(w http.ResponseWriter, r *http.Request) {
+	issueClientCredentialsToken(w, r, a.Orgs, a.Tokens)
+}
+
+// issueClientCredentialsToken is the OAuth2 client-credentials grant. It is
+// served by control_plane_api and inbound_api so an ERP can keep a single
+// base URL for the token and the document calls.
+func issueClientCredentialsToken(w http.ResponseWriter, r *http.Request, orgs *organization.Service, tokens *auth.TokenService) {
 	var body struct {
 		GrantType    string `json:"grant_type"`
 		ClientID     string `json:"client_id"`
@@ -519,12 +540,12 @@ func (a *ControlPlane) clientToken(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, domainerr.Validation("invalid_client_credentials", "client_id and client_secret are required"))
 		return
 	}
-	client, err := a.Orgs.AuthenticateAPIClient(r.Context(), body.ClientID, body.ClientSecret)
+	client, err := orgs.AuthenticateAPIClient(r.Context(), body.ClientID, body.ClientSecret)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	token, exp, err := a.Tokens.IssueClientToken(client.OrganizationID, client.ClientID, client.SourceSystem, client.Scopes)
+	token, exp, err := tokens.IssueClientToken(client.OrganizationID, client.ClientID, client.SourceSystem, client.Scopes)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -1068,31 +1089,33 @@ func (a *ControlPlane) updateCompanyDetails(w http.ResponseWriter, r *http.Reque
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
 	var body struct {
-		LegalName             string `json:"legal_name"`
-		TradeName             string `json:"trade_name"`
-		UF                    string `json:"uf"`
-		Environment           string `json:"environment"`
-		MunicipalRegistration string `json:"municipal_registration"`
-		IBGEMunicipalityCode  string `json:"ibge_municipality_code"`
-		TaxRegime             string `json:"tax_regime"`
-		SpecialTaxRegime      string `json:"special_tax_regime"`
+		LegalName               string `json:"legal_name"`
+		TradeName               string `json:"trade_name"`
+		UF                      string `json:"uf"`
+		Environment             string `json:"environment"`
+		MunicipalRegistration   string `json:"municipal_registration"`
+		IBGEMunicipalityCode    string `json:"ibge_municipality_code"`
+		TaxRegime               string `json:"tax_regime"`
+		SpecialTaxRegime        string `json:"special_tax_regime"`
+		DanfseCustomLogoEnabled *bool  `json:"danfse_custom_logo_enabled"`
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
 		return
 	}
 	company, err := a.Orgs.UpdateCompanyDetails(r.Context(), organization.UpdateCompanyDetailsInput{
-		OrganizationID:        orgID,
-		CompanyID:             companyID,
-		LegalName:             body.LegalName,
-		TradeName:             body.TradeName,
-		UF:                    body.UF,
-		Environment:           body.Environment,
-		MunicipalRegistration: body.MunicipalRegistration,
-		IBGEMunicipalityCode:  body.IBGEMunicipalityCode,
-		TaxRegime:             body.TaxRegime,
-		SpecialTaxRegime:      body.SpecialTaxRegime,
-		ActorUserID:           p.UserID,
+		OrganizationID:          orgID,
+		CompanyID:               companyID,
+		LegalName:               body.LegalName,
+		TradeName:               body.TradeName,
+		UF:                      body.UF,
+		Environment:             body.Environment,
+		MunicipalRegistration:   body.MunicipalRegistration,
+		IBGEMunicipalityCode:    body.IBGEMunicipalityCode,
+		TaxRegime:               body.TaxRegime,
+		SpecialTaxRegime:        body.SpecialTaxRegime,
+		DanfseCustomLogoEnabled: body.DanfseCustomLogoEnabled,
+		ActorUserID:             p.UserID,
 	})
 	if err != nil {
 		writeErr(w, r, err)
@@ -1617,6 +1640,32 @@ func (a *ControlPlane) ensureOrganizationPermission(r *http.Request, organizatio
 	return nil
 }
 
+// ensureProcessingAdmin allows the platform admin and the tenant
+// Administrador role to stop an outbound note that has not been sent.
+func (a *ControlPlane) ensureProcessingAdmin(r *http.Request, organizationID uuid.UUID) error {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if !ok {
+		return domainerr.Forbidden("User session required")
+	}
+	if p.PlatformRole == identity.PlatformRoleAdmin {
+		return a.Orgs.EnsureActiveOrganization(r.Context(), organizationID)
+	}
+	if p.OrganizationID != organizationID {
+		return domainerr.Forbidden("organization_id does not match the active session organization")
+	}
+	if err := a.Orgs.EnsureMember(r.Context(), organizationID, p.UserID); err != nil {
+		return err
+	}
+	allowed, err := a.Orgs.MemberHasRoleSlug(r.Context(), organizationID, p.UserID, "administrador")
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return domainerr.Forbidden("Apenas um administrador pode cancelar o processamento")
+	}
+	return nil
+}
+
 func (a *ControlPlane) ensureAnyOrganizationPermission(r *http.Request, organizationID uuid.UUID, permissions ...string) error {
 	if len(permissions) == 0 {
 		return domainerr.Forbidden("Missing permission")
@@ -1644,11 +1693,19 @@ func (a *InboundAPI) Routes() http.Handler {
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	r.Post("/v1/oauth/token", a.clientToken)
+
+	// SAP programs (e.g. NFS-e) still call the canonical outbound route with
+	// X-Org-Token; Bearer wins when both are sent.
+	r.Group(func(r chi.Router) {
+		r.Use(a.bearerOrLegacyOrgTokenAuth)
+		r.Use(auth.RequireClient)
+		r.Post("/v1/fiscal_documents/{document_type}", a.receiveDocument)
+	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(a.Tokens))
 		r.Use(auth.RequireClient)
-		r.Post("/v1/fiscal_documents/{document_type}", a.receiveDocument)
 		r.Get("/v1/fiscal_documents/{document_id}", a.getDocument)
 		r.Get("/v1/fiscal_documents/{document_id}/timeline", a.getTimeline)
 		r.Post("/v1/inbound/fiscal_documents/{document_type}", a.receiveInboundDocument)
@@ -1660,8 +1717,31 @@ func (a *InboundAPI) Routes() http.Handler {
 		r.Use(a.legacyOrgTokenAuth)
 		r.Post("/api/v1/nfe/documents/sap", a.receiveLegacySAPDocument)
 		r.Post("/v1/nfe/documents/sap", a.receiveLegacySAPDocument)
+		a.sapEventRoutes(r, "/api/v1/nfe/documents/sap")
+		a.sapEventRoutes(r, "/v1/nfe/documents/sap")
+		r.Get("/api/v1/nfse/documents/sap/{chave_acesso}/danfe", a.sapDownloadDanfse)
+		r.Get("/v1/nfse/documents/sap/{chave_acesso}/danfe", a.sapDownloadDanfse)
+		r.Get("/api/v1/nfse/documents/sap/{chave_acesso}/xml", a.sapDownloadNFSeXML)
+		r.Get("/v1/nfse/documents/sap/{chave_acesso}/xml", a.sapDownloadNFSeXML)
 	})
 	return r
+}
+
+func (a *InboundAPI) clientToken(w http.ResponseWriter, r *http.Request) {
+	issueClientCredentialsToken(w, r, a.Orgs, a.Tokens)
+}
+
+func (a *InboundAPI) bearerOrLegacyOrgTokenAuth(next http.Handler) http.Handler {
+	bearer := auth.Middleware(a.Tokens)(next)
+	legacy := a.legacyOrgTokenAuth(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") &&
+			strings.TrimSpace(r.Header.Get("X-Org-Token")) != "" {
+			legacy.ServeHTTP(w, r)
+			return
+		}
+		bearer.ServeHTTP(w, r)
+	})
 }
 
 func (a *InboundAPI) legacyOrgTokenAuth(next http.Handler) http.Handler {
@@ -1784,6 +1864,13 @@ func (a *InboundAPI) receiveOutboundDocument(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if deriveIdempotency {
+		if err := rejectSAPEventOnEmissionRoute(payload); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idempotencyKey == "" && deriveIdempotency {
 		// Existing SAP iflows do not send Idempotency-Key; derive a stable
@@ -1809,15 +1896,51 @@ func (a *InboundAPI) receiveOutboundDocument(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	label := "NF-e"
+	if strings.EqualFold(documentType, "nfse") {
+		label = "NFS-e"
+	}
+	if result.AlreadyAuthorized {
+		body := map[string]any{
+			"document_id":        result.Document.ID,
+			"trace_id":           result.Document.TraceID,
+			"status":             result.Document.Status,
+			"already_authorized": true,
+			"message":            label + " já autorizada",
+		}
+		if result.AccessKey != "" {
+			body["access_key"] = result.AccessKey
+		}
+		if result.Protocol != "" {
+			body["protocol"] = result.Protocol
+		}
+		if result.Number != "" {
+			body["numero"] = result.Number
+		}
+		if result.RPSNumber != "" {
+			body["numero_rps"] = result.RPSNumber
+		}
+		if result.Series != "" {
+			body["serie"] = result.Series
+		}
+		httpx.WriteJSON(w, http.StatusOK, body)
+		return
+	}
+
 	status := http.StatusAccepted
 	if result.Replayed {
 		status = http.StatusOK
 	}
-	httpx.WriteJSON(w, status, map[string]any{
+	body := map[string]any{
 		"document_id": result.Document.ID,
 		"trace_id":    result.Document.TraceID,
 		"status":      result.Document.Status,
-	})
+	}
+	if result.Resubmitted {
+		body["resubmitted"] = true
+		body["message"] = label + " atualizada e reenviada para autorização"
+	}
+	httpx.WriteJSON(w, status, body)
 }
 
 func (a *InboundAPI) getDocument(w http.ResponseWriter, r *http.Request) {
@@ -1826,17 +1949,70 @@ func (a *InboundAPI) getDocument(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, domainerr.Forbidden("Missing scope fiscal_documents:read"))
 		return
 	}
-	docID, err := uuid.Parse(chi.URLParam(r, "document_id"))
-	if err != nil {
-		writeErr(w, r, domainerr.Validation("invalid_document_id", "Invalid document_id"))
-		return
-	}
-	doc, err := a.Fiscal.GetDocument(r.Context(), p.OrganizationID, docID)
+	doc, err := a.Fiscal.GetDocumentByRef(r.Context(), fiscal.GetDocumentByRefInput{
+		OrganizationID: p.OrganizationID,
+		Ref:            chi.URLParam(r, "document_id"),
+		SourceSystem:   p.SourceSystem,
+		ActorType:      "api_client",
+		ActorID:        p.ClientID,
+		CorrelationID:  httpx.CorrelationIDFrom(r.Context()),
+		TraceID:        httpx.TraceIDFrom(r.Context()),
+	})
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
+	if strings.EqualFold(doc.DocumentType, "nfse") {
+		consult, err := a.Fiscal.NFSeConsult(r.Context(), doc)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, nfseConsultResponse{Document: *doc, consult: consult})
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, doc)
+}
+
+type nfseConsultResponse struct {
+	fiscal.Document
+	consult fiscal.NFSeConsult
+}
+
+func (r nfseConsultResponse) MarshalJSON() ([]byte, error) {
+	body, err := json.Marshal(r.Document)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	if r.consult.AccessKey != "" {
+		fields["access_key"] = r.consult.AccessKey
+	}
+	if r.consult.Numero != "" {
+		fields["numero"] = r.consult.Numero
+	}
+	if r.consult.NumeroRPS != "" {
+		fields["numero_rps"] = r.consult.NumeroRPS
+	}
+	if r.consult.Serie != "" {
+		fields["serie"] = r.consult.Serie
+	}
+	if r.consult.CodigoVerificacao != "" {
+		fields["codigo_verificacao"] = r.consult.CodigoVerificacao
+	}
+	if r.consult.Protocol != "" {
+		fields["protocol"] = r.consult.Protocol
+	}
+	if r.consult.URL != "" {
+		fields["url"] = r.consult.URL
+	}
+	if r.consult.Provider != "" {
+		fields["nfse_provider"] = r.consult.Provider
+	}
+	return json.Marshal(fields)
 }
 
 func (a *InboundAPI) getTimeline(w http.ResponseWriter, r *http.Request) {

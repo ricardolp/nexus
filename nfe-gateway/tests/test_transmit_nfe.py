@@ -245,7 +245,8 @@ async def test_transmit_nfe_mapper_error(mock_pfx, sefaz_client):
     )
     assert result["outcome"] == "rejected"
     assert result["error_code"] == "mapper_error"
-    assert "Failed to build NF-e XML" in result["error_message"]
+    assert result["error_message"]
+    assert "Failed to build NF-e XML" not in result["error_message"]
 
 
 @pytest.mark.asyncio

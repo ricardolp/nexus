@@ -6,7 +6,9 @@ const companySelectColumns = `
 	id, organization_id, legal_name, trade_name, cnpj, uf,
 	municipal_registration, ibge_municipality_code,
 	tax_regime, special_tax_regime,
-	environment, status, metadata_json, created_at, updated_at
+	environment, status,
+	danfse_custom_logo_enabled, (danfse_logo is not null),
+	metadata_json, created_at, updated_at
 `
 
 type companyScanner interface {
@@ -19,7 +21,9 @@ func scanCompany(row companyScanner) (Company, error) {
 		&c.ID, &c.OrganizationID, &c.LegalName, &c.TradeName, &c.CNPJ, &c.UF,
 		&c.MunicipalRegistration, &c.IBGEMunicipalityCode,
 		&c.TaxRegime, &c.SpecialTaxRegime,
-		&c.Environment, &c.Status, &c.MetadataJSON, &c.CreatedAt, &c.UpdatedAt,
+		&c.Environment, &c.Status,
+		&c.DanfseCustomLogoEnabled, &c.HasDanfseLogo,
+		&c.MetadataJSON, &c.CreatedAt, &c.UpdatedAt,
 	)
 	return c, err
 }

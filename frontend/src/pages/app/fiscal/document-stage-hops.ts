@@ -129,6 +129,33 @@ function sapStepLabel(step?: HopTrackInput['currentPlanStep'], fallback = 'Lanç
   return stepTypeLabels[step.step_type] ?? step.step_type;
 }
 
+const CERTIFICATE_MISSING_FALLBACK =
+  'A empresa não tem certificado A1 ativo. Cadastre o certificado em Configurações → Empresas para transmitir a nota.';
+const CERTIFICATE_EXPIRED_FALLBACK =
+  'O certificado A1 da empresa está vencido ou ainda não é válido. Envie um certificado válido em Configurações → Empresas.';
+
+function hasProcessingCancelled(events: ApiDocumentEvent[] | undefined) {
+  return (events ?? []).some((event) => {
+    const meta = event.metadata_json;
+    if (!meta || typeof meta !== 'object') return false;
+    const code = (meta as Record<string, unknown>).error_code;
+    return typeof code === 'string' && norm(code) === 'processing_cancelled';
+  });
+}
+
+function certificateProblemCode(document: ApiFiscalDocument, events: ApiDocumentEvent[] | undefined) {
+  const fromDocument = norm(document.authorization_code);
+  if (fromDocument === 'certificate_not_found' || fromDocument === 'certificate_expired') return fromDocument;
+  for (const event of events ?? []) {
+    const meta = event.metadata_json;
+    if (!meta || typeof meta !== 'object') continue;
+    const raw = (meta as Record<string, unknown>).error_code ?? (meta as Record<string, unknown>).cstat;
+    const code = typeof raw === 'string' ? norm(raw) : '';
+    if (code === 'certificate_not_found' || code === 'certificate_expired') return code;
+  }
+  return '';
+}
+
 function latestReason(document: ApiFiscalDocument, events: ApiDocumentEvent[] | undefined) {
   if (events?.length) {
     const preferred = [
@@ -172,11 +199,14 @@ function buildOutbound(input: HopTrackInput): DocumentHop[] {
     (status === 'submitted' ||
       status === 'cancel_requested' ||
       processing === 'waiting_external' ||
+      processing === 'waiting_recibo' ||
       processing === 'retry_scheduled');
   const nexusFailed = !hasResult && !atSefaz && processing === 'failed';
   const sefazFailed = rejected || (atSefaz && processing === 'failed');
   const protocolDone = hasResult;
   const returnDone = hasResult && (processing === 'completed' || processing === 'failed' || authorized || cancelled || rejected);
+  const certificateCode = certificateProblemCode(document, events);
+  const certificateMissing = certificateCode === 'certificate_not_found' || certificateCode === 'certificate_expired';
 
   const receivedAt = eventAt(events, ['fiscal.document.received.v1']) ?? document.received_at;
   const submittedAt = eventAt(events, ['fiscal.document.submitted.v1', 'fiscal.document.queued.v1']);
@@ -213,14 +243,18 @@ function buildOutbound(input: HopTrackInput): DocumentHop[] {
     hop(
       'authority',
       authority,
-      cancelled
-        ? 'Cancelada'
-        : authorized
-          ? 'Autorizada'
-          : sefazFailed
-            ? status === 'rejected'
-              ? 'Rejeitada'
-              : 'Falhou'
+      certificateMissing
+        ? certificateCode === 'certificate_expired'
+          ? 'Certificado vencido'
+          : 'Sem certificado'
+        : cancelled
+          ? 'Cancelada'
+          : authorized
+            ? 'Autorizada'
+            : sefazFailed
+              ? status === 'rejected'
+                ? 'Rejeitada'
+                : 'Falhou'
             : atSefaz
               ? status === 'cancel_requested'
                 ? 'Cancelando'
@@ -236,13 +270,15 @@ function buildOutbound(input: HopTrackInput): DocumentHop[] {
       'nexus-out',
       'nexus',
       protocolDone
-        ? cancelled
-          ? cancelProtocol
-            ? `Cancelamento · Protocolo ${cancelProtocol}`
-            : 'Cancelamento gravado'
-          : rejected
-            ? 'Rejeição gravada'
-            : 'Protocolo gravado'
+        ? certificateMissing
+          ? 'Falha gravada'
+          : cancelled
+            ? cancelProtocol
+              ? `Cancelamento · Protocolo ${cancelProtocol}`
+              : 'Cancelamento gravado'
+            : rejected
+              ? 'Rejeição gravada'
+              : 'Protocolo gravado'
         : 'Protocolo',
       protocolDone ? 'done' : hasResult ? 'current' : 'pending',
       protocolDone ? resultAt : undefined
@@ -355,6 +391,23 @@ function buildAlert(input: HopTrackInput, hops: DocumentHop[]): DocumentHopAlert
   }
 
   if (failed) {
+    const certificateCode = certificateProblemCode(document, events);
+    if (certificateCode === 'certificate_not_found' || certificateCode === 'certificate_expired') {
+      return {
+        tone: 'danger',
+        title: certificateCode === 'certificate_expired' ? 'Certificado digital vencido' : 'Certificado digital ausente',
+        description:
+          reason ??
+          (certificateCode === 'certificate_expired' ? CERTIFICATE_EXPIRED_FALLBACK : CERTIFICATE_MISSING_FALLBACK)
+      };
+    }
+    if (norm(document.authorization_code) === 'processing_cancelled' || hasProcessingCancelled(events)) {
+      return {
+        tone: 'danger',
+        title: 'Processamento cancelado',
+        description: reason ?? 'Um administrador interrompeu o processamento antes do envio à autoridade fiscal.'
+      };
+    }
     if (failed.id === 'authority') {
       return {
         tone: 'danger',
@@ -420,7 +473,9 @@ function buildAlert(input: HopTrackInput, hops: DocumentHop[]): DocumentHopAlert
       description:
         norm(document.processing_status) === 'retry_scheduled'
           ? 'Nova tentativa já agendada. A tela atualiza sozinha.'
-          : `O XML já foi transmitido. A resposta da ${authorityName} pode levar alguns instantes.`
+          : norm(document.processing_status) === 'waiting_recibo'
+            ? `O XML já foi transmitido. A resposta da ${authorityName} pode levar alguns instantes. Se passar de 10 minutos, o envio é tentado de novo.`
+            : `A nota ainda está na fila de autorização. Se passar de 10 minutos sem retorno, o envio é tentado de novo automaticamente.`
     };
   }
 

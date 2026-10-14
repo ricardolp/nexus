@@ -255,7 +255,7 @@ class PyNfeSefazClient(SefazClient):
             return {
                 "outcome": "rejected",
                 "error_code": "mapper_error",
-                "error_message": f"Failed to build NF-e XML: {exc}",
+                "error_message": str(exc),
                 "response_xml": b"",
             }
         
@@ -673,7 +673,7 @@ class PyNfeSefazClient(SefazClient):
             # reading comunicacao.py) to keep the same shape as
             # consult_distribution and in case PyNFe ever starts using it.
             comunicacao = Comunicacao(uf, cert_path, "", homologacao=homologacao)
-            response = await asyncio.to_thread(comunicacao.evento, "55", signed, 1)
+            response = await asyncio.to_thread(comunicacao.evento, "nfe", signed, 1)
         if response.status_code >= 300:
             raise SefazResponseError(f"SEFAZ evento HTTP {response.status_code}: {response.text[:500]}")
         return parse_evento_response(response.content)

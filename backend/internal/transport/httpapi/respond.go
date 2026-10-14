@@ -12,6 +12,11 @@ import (
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var de *domainerr.Error
 	if errors.As(err, &de) {
+		if de.Status == http.StatusUnprocessableEntity || de.Status == http.StatusConflict {
+			slog.Warn("request_rejected: "+de.Code,
+				"trace_id", httpx.TraceIDFrom(r.Context()), "path", r.URL.Path, "method", r.Method,
+				"status", de.Status, "code", de.Code, "detail", de.Detail)
+		}
 		httpx.WriteProblem(w, de.Status, de.Code, de.Title, de.Detail, httpx.TraceIDFrom(r.Context()))
 		return
 	}

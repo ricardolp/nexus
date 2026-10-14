@@ -112,8 +112,15 @@ type NFSeExtension struct {
 }
 
 type ReceiveResult struct {
-	Document *Document `json:"document"`
-	Replayed bool      `json:"replayed"`
+	Document          *Document `json:"document"`
+	Replayed          bool      `json:"replayed"`
+	AlreadyAuthorized bool      `json:"already_authorized,omitempty"`
+	Resubmitted       bool      `json:"resubmitted,omitempty"`
+	AccessKey         string    `json:"access_key,omitempty"`
+	Protocol          string    `json:"protocol,omitempty"`
+	Number            string    `json:"numero,omitempty"`
+	RPSNumber         string    `json:"numero_rps,omitempty"`
+	Series            string    `json:"serie,omitempty"`
 }
 
 type NormalizedReceive struct {

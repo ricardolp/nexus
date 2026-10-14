@@ -245,6 +245,9 @@ export interface ApiCompany {
   tax_regime?: string | null;
   /** NFS-e regEspTrib: 0=Nenhum … 7 */
   special_tax_regime?: string | null;
+  /** Quando true e há logo enviada, o DANFSe usa a marca da empresa no cabeçalho. */
+  danfse_custom_logo_enabled?: boolean;
+  has_danfse_logo?: boolean;
   environment: 'production' | 'homologation' | string;
   status: 'active' | 'suspended' | 'disabled' | string;
   metadata_json: unknown;
@@ -491,6 +494,8 @@ export interface ApiFiscalDocument {
   issuer_cnpj?: string | null;
   recipient_document?: string | null;
   issued_at?: string | null;
+  authorized_at?: string | null;
+  authorization_protocol?: string | null;
   issuer_name?: string | null;
   nfe?: ApiNFeDetails | null;
   nfse?: ApiNFSeDetails | null;
@@ -1069,4 +1074,45 @@ export interface ApiEmailMessage {
 export interface ApiEmailToken {
   token: string;
   description: string;
+}
+
+
+/** Provedor municipal de NFS-e (docs/architecture/25_nfse_provedores_municipais.md). */
+export interface ApiNFSeProviderDescriptor {
+  code: string;
+  name: string;
+  identifies_by: 'access_key' | 'number' | string;
+  credentials: 'none' | 'basic' | string;
+}
+
+export interface ApiNFSeMunicipalProvider {
+  ibge_municipality_code: string;
+  municipality_name: string;
+  uf: string;
+  provider_code: string;
+  provider_name?: string;
+  provider_config: Record<string, unknown>;
+  enabled: boolean;
+  notes?: string | null;
+  updated_at: string;
+}
+
+export interface ApiCompanyNFSeProviderSettings {
+  id: string;
+  organization_id: string;
+  organization_company_id: string;
+  provider_code: string;
+  username?: string | null;
+  has_password: boolean;
+  config_overrides: Record<string, unknown>;
+  force_route: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiNFSeProviderRoute {
+  provider_code: string;
+  provider_config: Record<string, unknown>;
+  municipality_code?: string;
+  source: 'company_force_route' | 'municipal_catalog' | 'default' | string;
 }

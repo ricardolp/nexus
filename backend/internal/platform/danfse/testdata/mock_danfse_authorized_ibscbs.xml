@@ -111,10 +111,8 @@
           <cIndOp>030101</cIndOp>
           <valores>
             <trib>
-              <gIBSCBS>
-                <CST>000</CST>
-                <cClassTrib>000001</cClassTrib>
-              </gIBSCBS>
+              <CST>000</CST>
+              <cClassTrib>000001</cClassTrib>
             </trib>
           </valores>
         </IBSCBS>
