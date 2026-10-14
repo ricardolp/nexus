@@ -1,0 +1,12 @@
+{
+  "_descricao": "Regras para derivar o cIndOp (Indicador da Operação, Anexo VII da NFS-e Nacional) quando o SAP não informa servico.codigo_indicador_operacao. A chave é o cTribNac (6 dígitos) ou o subitem da LC 116 (4 dígitos). 'estabelecimento_fornecedor' vale quando o município da prestação é o do prestador; 'outro_local' quando é outro município; 'padrao' vale para qualquer local. Complete esta tabela a partir do Anexo VIII oficial (correlação item LC 116 x NBS x cIndOp x cClassTrib) publicado no portal da NFS-e. Não inclua códigos sem conferir no anexo vigente.",
+  "_fonte": "LC 214/2025 art. 11, V (serviço prestado fisicamente sobre bem móvel material). Anexo VII da NFS-e Nacional.",
+  "por_codigo": {
+    "140101": {"estabelecimento_fornecedor": "050101", "outro_local": "050102", "descricao": "Lubrificação, limpeza, revisão e manutenção de bens"},
+    "140201": {"estabelecimento_fornecedor": "050101", "outro_local": "050102", "descricao": "Assistência técnica"},
+    "140301": {"estabelecimento_fornecedor": "050101", "outro_local": "050102", "descricao": "Recondicionamento de motores"},
+    "140401": {"estabelecimento_fornecedor": "050101", "outro_local": "050102", "descricao": "Recauchutagem ou regeneração de pneus"},
+    "140501": {"estabelecimento_fornecedor": "050101", "outro_local": "050102", "descricao": "Restauração, recondicionamento, acondicionamento, pintura, beneficiamento de objetos"},
+    "141201": {"estabelecimento_fornecedor": "050101", "outro_local": "050102", "descricao": "Funilaria e lanternagem"}
+  }
+}

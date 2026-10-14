@@ -23,6 +23,8 @@ coverage.out
 
 # Local data and caches
 data/
+# Tabelas empacotadas no gateway (lidas em runtime; o railway up respeita este arquivo).
+!nfe-gateway/src/**/data/
 .pytest_cache/
 .cache/
 .turbo/

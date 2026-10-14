@@ -36,3 +36,21 @@ def test_ignore_files_keep_package_data(ignore_file):
             f"{ignore_file}: '{pattern}' exclui {', '.join(str(p.relative_to(ROOT)) for p in PACKAGE_DATA)}; "
             "use '/data' para ignorar só a pasta da raiz"
         )
+
+
+def test_package_data_not_gitignored():
+    """``railway up`` também pula o que o .gitignore do repositório ignora."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("git") or not (ROOT.parent / ".git").exists():
+        pytest.skip("fora de um checkout git")
+    for path in PACKAGE_DATA:
+        res = subprocess.run(
+            ["git", "check-ignore", "-v", str(path)],
+            check=False,
+            cwd=ROOT.parent,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 1, f"{path.relative_to(ROOT)} está no .gitignore: {res.stdout.strip()}"

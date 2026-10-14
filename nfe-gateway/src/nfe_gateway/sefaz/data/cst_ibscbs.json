@@ -1,0 +1,26 @@
+{
+  "_descricao": "Grupos XML do IBS/CBS por CST (NF-e, NT 2025.002-RTC v1.5x, tipo TTribNFe). 'obrigatorio': o grupo sai sempre e a falta de dados vira erro de mapeamento. 'opcional': sai quando o SAP manda algum valor diferente de zero. Grupo não listado: não sai. 'por_cclasstrib' sobrepõe o CST para um cClassTrib específico (mesmo formato). Mantenha sincronizado com os indicadores ind_gIBSCBS, ind_gIBSCBSMono, ind_gRed, ind_gDif, ind_gTransfCred, ind_gCredPresIBSZFM e ind_gAjusteCompet da tabela oficial de CST/cClassTrib (Informe Técnico 2025.002, https://dfe-portal.svrs.rs.gov.br/DFE/TabelaClassificacaoTributaria).",
+  "por_cst": {
+    "000": {"descricao": "Tributação integral", "gIBSCBS": "obrigatorio"},
+    "010": {"descricao": "Tributação com alíquotas uniformes", "gIBSCBS": "obrigatorio"},
+    "011": {"descricao": "Tributação com alíquotas uniformes reduzidas", "gIBSCBS": "obrigatorio", "gRed": "opcional"},
+    "200": {"descricao": "Alíquota reduzida", "gIBSCBS": "obrigatorio", "gRed": "obrigatorio"},
+    "220": {"descricao": "Alíquota fixa", "gIBSCBS": "obrigatorio"},
+    "221": {"descricao": "Alíquota fixa proporcional", "gIBSCBS": "obrigatorio"},
+    "222": {"descricao": "Redução de base de cálculo", "gIBSCBS": "obrigatorio"},
+    "400": {"descricao": "Isenção"},
+    "410": {"descricao": "Imunidade e não incidência"},
+    "510": {"descricao": "Diferimento", "gIBSCBS": "obrigatorio", "gDif": "obrigatorio"},
+    "515": {"descricao": "Diferimento com redução de alíquota", "gIBSCBS": "obrigatorio", "gDif": "obrigatorio", "gRed": "obrigatorio"},
+    "550": {"descricao": "Suspensão", "gIBSCBS": "opcional"},
+    "620": {"descricao": "Tributação monofásica", "gIBSCBSMono": "obrigatorio"},
+    "800": {"descricao": "Transferência de crédito", "gTransfCred": "obrigatorio"},
+    "810": {"descricao": "Ajuste de IBS na ZFM", "gCredPresIBSZFM": "obrigatorio"},
+    "811": {"descricao": "Ajustes", "gAjusteCompet": "obrigatorio"},
+    "820": {"descricao": "Tributação em declaração de regime específico", "gIBSCBS": "opcional"},
+    "830": {"descricao": "Exclusão da base de cálculo", "gIBSCBS": "obrigatorio"}
+  },
+  "por_cclasstrib": {},
+  "opcionais_com_gIBSCBS": ["gDevTrib", "gTribRegular", "gTribCompraGov"],
+  "opcionais_qualquer_cst": ["gEstornoCred", "gCredPresOper"]
+}
