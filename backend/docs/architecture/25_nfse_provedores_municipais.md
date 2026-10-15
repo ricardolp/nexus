@@ -142,7 +142,7 @@ O `outbound_consumer` e o `event_consumer` não conhecem mais nenhum protocolo d
 ### Homologação
 
 - **SEFIN**: ambiente de produção restrita, como hoje.
-- **IPM**: não existe ambiente de homologação. Em `homologation` o adapter envia o XML com `<nfse_teste>1</nfse_teste>`; a IPM valida e **sempre** responde com erro, sem emitir. O resultado é `rejected` com `error_code = homologacao_validada` quando o XML é válido, para nunca marcar como autorizada uma nota que não existe. `SEFAZ_FORCE_HOMOLOGACAO=true` (default) continua valendo para todos os provedores.
+- **IPM**: não existe ambiente de homologação. Em `homologation` o adapter envia o XML com `<nfse_teste>1</nfse_teste>`; a IPM valida e não emite número. Quando o XML é válido, o resultado é `authorized` com `error_code = homologacao_validada` e sem número de NFS-e, para o QAS devolver ok ao cliente. Rejeição de cadastro (ex.: 00042) continua `rejected`. `SEFAZ_FORCE_HOMOLOGACAO=true` (default) continua valendo para todos os provedores.
 
 ### Idempotência
 
@@ -166,7 +166,7 @@ Na IPM, a tag `<identificador>` impede reprocessamento: reenviar o mesmo identif
 | `tomador.cnpj/cpf/nif` | `tomador/tipo` J/F/E + `cpfcnpj`/`identificador` | |
 | `tomador.endereco.*` | `tomador/logradouro`… `cidade` (TOM), `cep` | `endereco_informado` = S quando há endereço |
 | `tomador.telefone` | `ddd_fone_comercial` + `fone_comercial` | |
-| `servico.item_lista_servico` | `itens/lista/codigo_item_lista_servico` | `config.item_lista_format`: `lc116` (1709) ou `nacional_6` (170901, Garuva) |
+| `servico.item_lista_servico` | `itens/lista/codigo_item_lista_servico` | `config.item_lista_format`: `lc116` (14.01 → 1401) ou `nacional_6` (14.01 → 140101). Garuva exige o desdobramento nacional: 1401 devolve IPM 00383. O 00042 é atividade fora do econômico |
 | `servico.codigo_tributario_municipio` | `itens/lista/codigo_atividade` | |
 | `servico.codigo_municipio` | `itens/lista/codigo_local_prestacao_servico` | IBGE → TOM |
 | `natureza_operacao` / `iss_retido` | `situacao_tributaria`, `tributa_municipio_prestador` | `servico.situacao_tributaria` explícito tem prioridade; senão 3→6 ISE, 4→7 IMU, retido→2 TIST, demais→0 TI; natureza 2 → N |

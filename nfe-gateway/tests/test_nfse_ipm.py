@@ -348,6 +348,80 @@ def test_non_xml_response():
     assert parse_retorno(b"").parse_error
 
 
+def test_parse_html_session_and_json_denied():
+    html = (
+        "<!DOCTYPE html><html><title>"
+        "Sua sessão foi encerrada por inatividade, por favor realize login novamente."
+        "</title></html>"
+    ).encode("iso-8859-1")
+    assert "inatividade" in parse_retorno(html).parse_error
+    denied = parse_retorno(b'{"retorno":{"msg":"Acesso Negado!","code":401}}')
+    assert denied.parse_error == "Acesso Negado!"
+
+
+def test_post_xml_retries_once_after_expired_session():
+    import requests
+
+    html = (
+        "<!DOCTYPE html><html><title>Sua sessao foi encerrada por inatividade</title></html>"
+    ).encode()
+    xml = b"<retorno><mensagem><codigo>00001 - Sucesso</codigo></mensagem></retorno>"
+    session = requests.Session()
+    session.cookies.set("PHPSESSID", "expirada")
+    seen: list[str | None] = []
+    payloads = [html, xml]
+
+    def post(url, files, timeout):
+        seen.append(session.cookies.get("PHPSESSID"))
+        body = payloads.pop(0)
+        resp = requests.Response()
+        resp.status_code = 401 if body is html else 200
+        resp._content = body
+        resp.reason = "Unauthorized" if resp.status_code == 401 else "OK"
+        resp.url = url
+        return resp
+
+    session.post = post  # type: ignore[method-assign]
+    result = ipm_client.post_xml(url=URL, xml=b"<nfse/>", credentials=CREDS, session=session)
+    assert seen == ["expirada", None]
+    assert result.status_code == 200
+    assert result.content == xml
+
+
+def test_post_xml_does_not_retry_acesso_negado():
+    import requests
+
+    session = requests.Session()
+    calls = 0
+
+    def post(url, files, timeout):
+        nonlocal calls
+        calls += 1
+        resp = requests.Response()
+        resp.status_code = 401
+        resp._content = b'{"retorno":{"msg":"Acesso Negado!","sis":"EST","code":401}}'
+        resp.reason = "Unauthorized"
+        resp.url = url
+        return resp
+
+    session.post = post  # type: ignore[method-assign]
+    result = ipm_client.post_xml(url=URL, xml=b"<nfse/>", credentials=CREDS, session=session)
+    assert calls == 1
+    assert result.status_code == 401
+
+
+def test_emit_html_401_reports_session_page(monkeypatch):
+    html = (
+        "<!DOCTYPE html><html><title>"
+        "Sua sessão foi encerrada por inatividade, por favor realize login novamente."
+        "</title></html>"
+    ).encode("iso-8859-1")
+    monkeypatch.setattr(ipm_client, "post_xml", _Recorder([ipm_client.IpmResponse(401, html)]))
+    result = IpmProvider().emit(_req())
+    assert result["outcome"] == "rejected"
+    assert "inatividade" in result["error_message"]
+
+
 # --------------------------------------------------------------------------- emit / cancel
 
 
@@ -409,12 +483,13 @@ def test_emit_login_error_hints_credentials(monkeypatch):
     assert "usuário/senha" in result["error_message"]
 
 
-def test_emit_homologacao_never_authorizes(monkeypatch):
+def test_emit_homologacao_validada_autoriza_sem_numero(monkeypatch):
     rec = _Recorder([ipm_client.IpmResponse(200, TESTE_OK)])
     monkeypatch.setattr(ipm_client, "post_xml", rec)
     result = IpmProvider().emit(_req(homologacao=True))
-    assert result["outcome"] == "rejected"
+    assert result["outcome"] == "authorized"
     assert result["error_code"] == "homologacao_validada"
+    assert "number" not in result
     assert b"<nfse_teste>1</nfse_teste>" in rec.calls[0]["xml"]
 
 

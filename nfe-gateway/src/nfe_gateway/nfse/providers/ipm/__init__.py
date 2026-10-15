@@ -133,12 +133,15 @@ class IpmProvider:
             }
 
         if req.homologacao and looks_like_test_validation(ret):
+            # A IPM não emite número em <nfse_teste>1. O XML passou na prefeitura:
+            # no QAS isso libera o cliente (status authorized), sem inventar NFS-e.
             msg = (
                 "Homologação IPM: XML validado pela prefeitura com <nfse_teste>1 — nenhuma "
                 f"NFS-e foi emitida (a IPM não tem ambiente de homologação). Retorno: {ret.message_text}"
             )
-            return {**base, "outcome": "rejected", "error_code": HOMOLOGACAO_VALIDADA,
-                    "error_message": msg, "cstat": HOMOLOGACAO_VALIDADA, "x_motivo": msg}
+            return {**base, "outcome": "authorized", "error_code": HOMOLOGACAO_VALIDADA,
+                    "error_message": msg, "cstat": HOMOLOGACAO_VALIDADA, "x_motivo": msg,
+                    "protocol": emission.identificador}
 
         code = _code(ret, f"http_{resp.status_code}")
         msg = ret.message_text or f"IPM recusou a nota (HTTP {resp.status_code})."

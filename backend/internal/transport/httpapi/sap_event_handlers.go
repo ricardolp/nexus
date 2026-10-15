@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -42,6 +41,8 @@ func (a *InboundAPI) sapEventRoutes(r chi.Router, base string) {
 	r.Get(base+"/{chave_acesso}/events/{tipo_evento}/{n_seq_evento}/xml", a.sapDownloadEventXML)
 	r.Post(base+"/{chave_acesso}/danfe", a.sapUploadDanfe)
 	r.Get(base+"/{chave_acesso}/danfe", a.sapDownloadDanfe)
+	r.Get(base+"/{chave_acesso}/danfe/retrato", a.sapDownloadGeneratedDanfe(fiscal.PayloadDanfeRetrato))
+	r.Get(base+"/{chave_acesso}/danfe/paisagem", a.sapDownloadGeneratedDanfe(fiscal.PayloadDanfePaisagem))
 }
 
 type sapCancelBody struct {
@@ -130,7 +131,7 @@ func writeSAPEventAccepted(w http.ResponseWriter, doc *fiscal.Document) {
 
 func writeSAPDownload(w http.ResponseWriter, dl *fiscal.DocumentPayloadDownload) {
 	w.Header().Set("Content-Type", dl.ContentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, dl.Filename))
+	w.Header().Set("Content-Disposition", httpx.AttachmentDisposition(dl.Filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(dl.Data)
 }
@@ -373,6 +374,27 @@ func (a *InboundAPI) sapDownloadDanfse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSAPDownload(w, dl)
+}
+
+// sapDownloadGeneratedDanfe serves the DANFE Nexus generates from the
+// authorized XML (NT 2026.010), apart from the PDF SAP uploaded.
+func (a *InboundAPI) sapDownloadGeneratedDanfe(payloadType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := sapPrincipal(w, r)
+		if !ok {
+			return
+		}
+		doc, ok := a.resolveSAPNFe(w, r, p, chi.URLParam(r, "chave_acesso"))
+		if !ok {
+			return
+		}
+		dl, err := a.Fiscal.DownloadPayload(r.Context(), p.OrganizationID, doc.ID, payloadType)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		writeSAPDownload(w, dl)
+	}
 }
 
 func (a *InboundAPI) sapDownloadDanfe(w http.ResponseWriter, r *http.Request) {

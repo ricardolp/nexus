@@ -138,6 +138,9 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.uploadCompanyDanfseLogo)
 		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.getCompanyDanfseLogo)
 		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.deleteCompanyDanfseLogo)
+		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/danfe-logo", a.uploadCompanyDanfeLogo)
+		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/danfe-logo", a.getCompanyDanfeLogo)
+		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/danfe-logo", a.deleteCompanyDanfeLogo)
 		r.Get("/v1/nfse/municipal-providers", a.listNFSeMunicipalProviders)
 		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings", a.listCompanyNFSeProviderSettings)
 		r.Put("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings/{provider_code}", a.upsertCompanyNFSeProviderSettings)
@@ -1098,6 +1101,7 @@ func (a *ControlPlane) updateCompanyDetails(w http.ResponseWriter, r *http.Reque
 		TaxRegime               string `json:"tax_regime"`
 		SpecialTaxRegime        string `json:"special_tax_regime"`
 		DanfseCustomLogoEnabled *bool  `json:"danfse_custom_logo_enabled"`
+		DanfeCustomLogoEnabled  *bool  `json:"danfe_custom_logo_enabled"`
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
@@ -1115,6 +1119,7 @@ func (a *ControlPlane) updateCompanyDetails(w http.ResponseWriter, r *http.Reque
 		TaxRegime:               body.TaxRegime,
 		SpecialTaxRegime:        body.SpecialTaxRegime,
 		DanfseCustomLogoEnabled: body.DanfseCustomLogoEnabled,
+		DanfeCustomLogoEnabled:  body.DanfeCustomLogoEnabled,
 		ActorUserID:             p.UserID,
 	})
 	if err != nil {

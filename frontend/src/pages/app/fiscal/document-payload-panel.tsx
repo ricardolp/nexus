@@ -93,12 +93,25 @@ export function DocumentPayloadPanel({ document }: { document: ApiFiscalDocument
             disabled={!hasProtocol}
           />
           <DownloadRow
-            title="DANFE (PDF)"
-            hint={hasDanfe ? 'DANFE gerada no SAP e enviada à mensageria.' : 'Disponível após o SAP enviar a DANFE.'}
-            payloadType="danfe"
+            title="DANFE retrato (PDF)"
+            hint="Gerada pelo Nexus a partir do XML autorizado, no leiaute da NT 2026.010 (IBS/CBS/IS)."
+            payloadType="danfe_retrato"
             documentId={document.id}
-            disabled={!hasDanfe}
           />
+          <DownloadRow
+            title="DANFE paisagem (PDF)"
+            hint="Mesmos campos da retrato, no leiaute horizontal da NT 2026.010."
+            payloadType="danfe_paisagem"
+            documentId={document.id}
+          />
+          {hasDanfe && (
+            <DownloadRow
+              title="DANFE do SAP (PDF)"
+              hint="PDF gerado no SAP e enviado à mensageria."
+              payloadType="danfe"
+              documentId={document.id}
+            />
+          )}
           <DownloadRow
             title="XML de cancelamento"
             hint={hasCancel ? 'Evento de cancelamento aceito pela SEFAZ.' : 'Disponível após cancelamento aceito.'}
@@ -196,6 +209,12 @@ export function DocumentPayloadPanel({ document }: { document: ApiFiscalDocument
         <div className="text-muted-foreground flex items-start gap-2 text-xs">
           <FileTextIcon className="mt-0.5 size-3.5 shrink-0" />
           <span>Em homologação (tpAmb=2) o DANFSe traz a marca “NFS-e SEM VALIDADE JURÍDICA”.</span>
+        </div>
+      )}
+      {nfeAuthorized && (
+        <div className="text-muted-foreground flex items-start gap-2 text-xs">
+          <FileTextIcon className="mt-0.5 size-3.5 shrink-0" />
+          <span>Em homologação (tpAmb=2) a DANFE traz a marca “SEM VALOR FISCAL”; nota cancelada traz “CANCELADA”.</span>
         </div>
       )}
       {!outbound && (

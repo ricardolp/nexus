@@ -28,13 +28,17 @@ def test_package_data_exists():
     assert {"ibge_tom.json", "cst_ibscbs.json", "cindop_rules.json"} <= names
 
 
-@pytest.mark.parametrize("ignore_file", [".railwayignore", ".dockerignore"])
+@pytest.mark.parametrize(
+    "ignore_file",
+    [".railwayignore", ".dockerignore", "../.gitignore"],
+)
 def test_ignore_files_keep_package_data(ignore_file):
     for pattern in _patterns(ignore_file):
-        bare = pattern.rstrip("/")
+        bare = pattern.lstrip("!").rstrip("/")
         assert bare not in {"data", "*.json", "**/data"}, (
             f"{ignore_file}: '{pattern}' exclui {', '.join(str(p.relative_to(ROOT)) for p in PACKAGE_DATA)}; "
-            "use '/data' para ignorar só a pasta da raiz"
+            "use '/data' para ignorar só a pasta da raiz. "
+            "Um 'data/' sem barra também casa quando o railway up sobe a partir de nfe-gateway/"
         )
 
 
@@ -47,7 +51,7 @@ def test_package_data_not_gitignored():
         pytest.skip("fora de um checkout git")
     for path in PACKAGE_DATA:
         res = subprocess.run(
-            ["git", "check-ignore", "-v", str(path)],
+            ["git", "check-ignore", "-v", "--no-index", str(path)],
             check=False,
             cwd=ROOT.parent,
             capture_output=True,

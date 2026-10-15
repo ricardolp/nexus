@@ -707,13 +707,30 @@ export default function FiscalDocumentDetailPage() {
                           XML do protocolo
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          disabled={!hasPayload(document, 'danfe')}
+                          disabled={!isNfeAuthorized}
                           onSelect={() => {
-                            void handleDownload('danfe');
+                            void handleDownload('danfe_retrato');
                           }}
                         >
-                          DANFE (PDF)
+                          DANFE retrato
                         </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!isNfeAuthorized}
+                          onSelect={() => {
+                            void handleDownload('danfe_paisagem');
+                          }}
+                        >
+                          DANFE paisagem
+                        </DropdownMenuItem>
+                        {hasPayload(document, 'danfe') && (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              void handleDownload('danfe');
+                            }}
+                          >
+                            DANFE do SAP
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
                           disabled={!hasPayload(document, 'cancel_response')}
                           onSelect={() => {

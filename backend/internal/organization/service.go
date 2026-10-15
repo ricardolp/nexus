@@ -781,9 +781,10 @@ func (s *Service) UpdateCompanyDetails(ctx context.Context, in UpdateCompanyDeta
 			    municipal_registration = $5, ibge_municipality_code = $6,
 			    tax_regime = $7, special_tax_regime = $8,
 			    danfse_custom_logo_enabled = coalesce($9, danfse_custom_logo_enabled),
+			    danfe_custom_logo_enabled = coalesce($12, danfe_custom_logo_enabled),
 			    updated_at = $10
 			where id = $11
-		`, legalName, tradeNamePtr, ufPtr, environment, munReg, ibgePtr, taxRegimePtr, specialRegimePtr, in.DanfseCustomLogoEnabled, now, in.CompanyID); err != nil {
+		`, legalName, tradeNamePtr, ufPtr, environment, munReg, ibgePtr, taxRegimePtr, specialRegimePtr, in.DanfseCustomLogoEnabled, now, in.CompanyID, in.DanfeCustomLogoEnabled); err != nil {
 			return err
 		}
 

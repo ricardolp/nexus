@@ -847,6 +847,8 @@ func TestSAPEventRoutesRequireOrgToken(t *testing.T) {
 		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/events/cce/1/xml", ""},
 		{http.MethodPost, "/v1/nfe/documents/sap/" + chave + "/danfe", `{"pdf_base64":"JVBERi0="}`},
 		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/danfe", ""},
+		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/danfe/retrato", ""},
+		{http.MethodGet, "/v1/nfe/documents/sap/" + chave + "/danfe/paisagem", ""},
 		{http.MethodGet, "/v1/nfse/documents/sap/" + chave + "/danfe", ""},
 		{http.MethodGet, "/v1/nfse/documents/sap/" + chave + "/xml", ""},
 		{http.MethodGet, "/api/v1/nfse/documents/sap/" + chave + "/danfe", ""},

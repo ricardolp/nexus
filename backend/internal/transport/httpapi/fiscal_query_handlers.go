@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -111,7 +113,7 @@ func (a *ControlPlane) downloadFiscalDocument(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", dl.ContentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, dl.Filename))
+	w.Header().Set("Content-Disposition", httpx.AttachmentDisposition(dl.Filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(dl.Data)
 }
@@ -345,13 +347,14 @@ func (a *ControlPlane) downloadFiscalDocumentsZip(w http.ResponseWriter, r *http
 	}
 
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="notas_fiscais.zip"`)
+	w.Header().Set("Content-Disposition", httpx.AttachmentDisposition(fiscalZipFilename(time.Now())))
 	w.WriteHeader(http.StatusOK)
 
 	zw := zip.NewWriter(w)
 	defer zw.Close()
-	for _, dl := range downloads {
-		f, err := zw.Create(dl.Filename)
+	names := uniqueZipEntryNames(downloads)
+	for i, dl := range downloads {
+		f, err := zw.Create(names[i])
 		if err != nil {
 			return
 		}
@@ -359,4 +362,32 @@ func (a *ControlPlane) downloadFiscalDocumentsZip(w http.ResponseWriter, r *http
 			return
 		}
 	}
+}
+
+var brasiliaTZ = func() *time.Location {
+	if loc, err := time.LoadLocation("America/Sao_Paulo"); err == nil {
+		return loc
+	}
+	return time.FixedZone("BRT", -3*60*60)
+}()
+
+func fiscalZipFilename(now time.Time) string {
+	return "notas_fiscais_" + now.In(brasiliaTZ).Format("20060102_150405") + ".zip"
+}
+
+// uniqueZipEntryNames keeps each document's filename and suffixes repeats
+// (e.g. NFe{chave}-2.xml) so no zip entry overwrites another.
+func uniqueZipEntryNames(downloads []*fiscal.DocumentPayloadDownload) []string {
+	seen := make(map[string]int, len(downloads))
+	out := make([]string, len(downloads))
+	for i, dl := range downloads {
+		name := dl.Filename
+		seen[name]++
+		if n := seen[name]; n > 1 {
+			ext := path.Ext(name)
+			name = fmt.Sprintf("%s-%d%s", strings.TrimSuffix(name, ext), n, ext)
+		}
+		out[i] = name
+	}
+	return out
 }

@@ -1,15 +1,48 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"net/http"
 
+	"github.com/google/uuid"
+	"github.com/nexus/fiscal-messaging/internal/organization"
 	"github.com/nexus/fiscal-messaging/internal/platform/auth"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 	"github.com/nexus/fiscal-messaging/internal/platform/httpx"
 )
 
+type companyLogoSetter func(ctx context.Context, orgID, companyID, actorID uuid.UUID, data []byte) (*organization.Company, error)
+
+type companyLogoDeleter func(ctx context.Context, orgID, companyID, actorID uuid.UUID) (*organization.Company, error)
+
+type companyLogoGetter func(ctx context.Context, orgID, companyID uuid.UUID) ([]byte, string, error)
+
 func (a *ControlPlane) uploadCompanyDanfseLogo(w http.ResponseWriter, r *http.Request) {
+	a.uploadCompanyLogo(w, r, a.Orgs.SetCompanyDanfseLogo)
+}
+
+func (a *ControlPlane) deleteCompanyDanfseLogo(w http.ResponseWriter, r *http.Request) {
+	a.deleteCompanyLogo(w, r, a.Orgs.DeleteCompanyDanfseLogo)
+}
+
+func (a *ControlPlane) getCompanyDanfseLogo(w http.ResponseWriter, r *http.Request) {
+	a.getCompanyLogo(w, r, a.Orgs.GetCompanyDanfseLogo)
+}
+
+func (a *ControlPlane) uploadCompanyDanfeLogo(w http.ResponseWriter, r *http.Request) {
+	a.uploadCompanyLogo(w, r, a.Orgs.SetCompanyDanfeLogo)
+}
+
+func (a *ControlPlane) deleteCompanyDanfeLogo(w http.ResponseWriter, r *http.Request) {
+	a.deleteCompanyLogo(w, r, a.Orgs.DeleteCompanyDanfeLogo)
+}
+
+func (a *ControlPlane) getCompanyDanfeLogo(w http.ResponseWriter, r *http.Request) {
+	a.getCompanyLogo(w, r, a.Orgs.GetCompanyDanfeLogo)
+}
+
+func (a *ControlPlane) uploadCompanyLogo(w http.ResponseWriter, r *http.Request, set companyLogoSetter) {
 	orgID, companyID, err := a.companyFromURL(r)
 	if err != nil {
 		writeErr(w, r, err)
@@ -35,7 +68,7 @@ func (a *ControlPlane) uploadCompanyDanfseLogo(w http.ResponseWriter, r *http.Re
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	company, err := a.Orgs.SetCompanyDanfseLogo(r.Context(), orgID, companyID, p.UserID, data)
+	company, err := set(r.Context(), orgID, companyID, p.UserID, data)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -43,7 +76,7 @@ func (a *ControlPlane) uploadCompanyDanfseLogo(w http.ResponseWriter, r *http.Re
 	httpx.WriteJSON(w, http.StatusOK, company)
 }
 
-func (a *ControlPlane) deleteCompanyDanfseLogo(w http.ResponseWriter, r *http.Request) {
+func (a *ControlPlane) deleteCompanyLogo(w http.ResponseWriter, r *http.Request, del companyLogoDeleter) {
 	orgID, companyID, err := a.companyFromURL(r)
 	if err != nil {
 		writeErr(w, r, err)
@@ -54,7 +87,7 @@ func (a *ControlPlane) deleteCompanyDanfseLogo(w http.ResponseWriter, r *http.Re
 		return
 	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	company, err := a.Orgs.DeleteCompanyDanfseLogo(r.Context(), orgID, companyID, p.UserID)
+	company, err := del(r.Context(), orgID, companyID, p.UserID)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -62,13 +95,13 @@ func (a *ControlPlane) deleteCompanyDanfseLogo(w http.ResponseWriter, r *http.Re
 	httpx.WriteJSON(w, http.StatusOK, company)
 }
 
-func (a *ControlPlane) getCompanyDanfseLogo(w http.ResponseWriter, r *http.Request) {
+func (a *ControlPlane) getCompanyLogo(w http.ResponseWriter, r *http.Request, get companyLogoGetter) {
 	orgID, companyID, err := a.companyFromURL(r)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	data, ct, err := a.Orgs.GetCompanyDanfseLogo(r.Context(), orgID, companyID)
+	data, ct, err := get(r.Context(), orgID, companyID)
 	if err != nil {
 		writeErr(w, r, err)
 		return

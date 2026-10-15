@@ -103,10 +103,26 @@ export async function apiFetchBlob(
     });
   }
 
-  const disposition = res.headers.get('Content-Disposition') ?? '';
-  const match = /filename="?([^"]+)"?/.exec(disposition);
-  const filename = match?.[1] ?? 'download';
+  const filename = filenameFromDisposition(res.headers.get('Content-Disposition'));
   return { blob: await res.blob(), filename };
+}
+
+// filenameFromDisposition prefers RFC 5987 filename* (UTF-8) over the ASCII
+// filename parameter of a Content-Disposition header.
+export function filenameFromDisposition(disposition: string | null, fallback = 'download'): string {
+  if (!disposition) return fallback;
+  const extended = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(disposition);
+  if (extended) {
+    try {
+      const decoded = decodeURIComponent(extended[1].trim());
+      if (decoded) return decoded;
+    } catch {
+      // malformed percent-encoding: fall through to the ASCII filename
+    }
+  }
+  const plain = /filename\s*=\s*(?:"([^"]*)"|([^;]+))/.exec(disposition);
+  const name = (plain?.[1] ?? plain?.[2] ?? '').trim();
+  return name || fallback;
 }
 
 // triggerBlobDownload saves a Blob to the user's filesystem via a throwaway

@@ -178,6 +178,28 @@
         "description": "Última DANFE enviada pelo SAP (application/pdf)."
       },
       "response": []
+    },
+    {
+      "name": "Download DANFE Nexus retrato",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/danfe/retrato",
+        "description": "DANFE gerada pelo Nexus a partir do XML autorizado, leiaute retrato da NT 2026.010 (IBS/CBS/IS). Usa a logo da empresa quando habilitada. Sem XML autorizado responde danfe_xml_not_found."
+      },
+      "response": []
+    },
+    {
+      "name": "Download DANFE Nexus paisagem",
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "header": [{ "key": "X-Org-Token", "value": "{{x_org_token}}" }],
+        "url": "{{sap_nfe_url}}/{{chave_acesso}}/danfe/paisagem",
+        "description": "Mesma DANFE gerada pelo Nexus, no leiaute paisagem da NT 2026.010."
+      },
+      "response": []
     }
   ]
 }

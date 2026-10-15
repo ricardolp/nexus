@@ -178,7 +178,7 @@ func (s *Service) LoadEventPayloadBySeq(ctx context.Context, doc *Document, kind
 	if err != nil || len(data) == 0 {
 		return nil, domainerr.NotFound("event_xml_not_found", "Event XML not found")
 	}
-	name := s.downloadBaseName(ctx, doc)
+	name := s.downloadBaseNameFromXML(ctx, doc, data)
 	filename := name + "-cancelamento.xml"
 	if kind == "cce" {
 		filename = fmt.Sprintf("%s-cce-%d.xml", name, seq)

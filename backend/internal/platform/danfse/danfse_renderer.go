@@ -22,6 +22,12 @@ var embeddedFontBold []byte
 //go:embed assets/logo-nfse.png
 var embeddedLogo []byte
 
+// EmbeddedFonts exposes the Liberation Sans faces so other fiscal PDFs
+// (DANFE) share them instead of embedding a second copy in the binary.
+func EmbeddedFonts() (regular, bold []byte) {
+	return embeddedFontReg, embeddedFontBold
+}
+
 // RenderOptions controls marks that are not present in the authorized XML
 // (cancel/substitution are events; cStat stays 100).
 // Logo, when set, replaces the national NFS-e mark in the header. Empty keeps

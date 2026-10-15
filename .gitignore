@@ -21,10 +21,10 @@ coverage.out
 .env.*
 !.env.example
 
-# Local data and caches
-data/
-# Tabelas empacotadas no gateway (lidas em runtime; o railway up respeita este arquivo).
-!nfe-gateway/src/**/data/
+# Local data and caches. Só a pasta da raiz: `data/` sem barra também
+# ignora nfe-gateway/src/**/data quando o upload parte de nfe-gateway/
+# (o padrão de negação é relativo à raiz do git e não casa com esse caminho).
+/data/
 .pytest_cache/
 .cache/
 .turbo/

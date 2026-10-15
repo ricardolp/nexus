@@ -4,6 +4,10 @@ POST ``multipart/form-data`` com o XML (uma nota por requisição), Basic Auth
 (CPF/CNPJ + senha do portal) e cookie ``PHPSESSID`` reaproveitado entre
 chamadas. O webservice é síncrono: uma requisição só depois que a anterior
 terminar — por isso há um lock por (URL, usuário).
+
+A IPM não reautentica um ``PHPSESSID`` vencido: devolve HTTP 401 com a página
+"sessão encerrada por inatividade" e ignora o Basic Auth. Nesse caso o cookie
+é descartado e a mesma nota é enviada de novo, uma única vez.
 """
 
 from __future__ import annotations
@@ -50,6 +54,27 @@ def _session_and_lock(url: str, creds: ProviderCredentials) -> tuple[requests.Se
     return session, lock
 
 
+def _stale_session(status_code: int, content: bytes) -> bool:
+    """Página de login da IPM no lugar do XML — o PHPSESSID venceu."""
+    sample = (content or b"")[:8000].lower()
+    if b"inatividade" in sample or b"realize login novamente" in sample:
+        return True
+    if status_code != 401:
+        return False
+    head = sample.lstrip()[:20]
+    return head.startswith(b"<!doctype") or head.startswith(b"<html")
+
+
+def _post_once(
+    http: requests.Session, *, url: str, xml: bytes, timeout: float, file_field: str
+) -> requests.Response:
+    return http.post(
+        url,
+        files={file_field: ("nfse.xml", xml, "text/xml")},
+        timeout=timeout,
+    )
+
+
 def post_xml(
     *,
     url: str,
@@ -64,11 +89,10 @@ def post_xml(
         http.auth = (credentials.username, credentials.password)
     with lock:
         try:
-            resp = http.post(
-                url,
-                files={file_field: ("nfse.xml", xml, "text/xml")},
-                timeout=timeout,
-            )
+            resp = _post_once(http, url=url, xml=xml, timeout=timeout, file_field=file_field)
+            if _stale_session(resp.status_code, resp.content or b""):
+                http.cookies.clear()
+                resp = _post_once(http, url=url, xml=xml, timeout=timeout, file_field=file_field)
         except (requests.Timeout, requests.ConnectionError) as exc:
             raise IpmTransportError(f"IPM não respondeu ({exc.__class__.__name__})") from exc
     return IpmResponse(status_code=resp.status_code, content=resp.content or b"", reason=str(resp.reason or ""))

@@ -248,6 +248,9 @@ export interface ApiCompany {
   /** Quando true e há logo enviada, o DANFSe usa a marca da empresa no cabeçalho. */
   danfse_custom_logo_enabled?: boolean;
   has_danfse_logo?: boolean;
+  /** Quando true e há logo enviada, a DANFE gerada pelo Nexus usa a marca no quadro do emitente. */
+  danfe_custom_logo_enabled?: boolean;
+  has_danfe_logo?: boolean;
   environment: 'production' | 'homologation' | string;
   status: 'active' | 'suspended' | 'disabled' | string;
   metadata_json: unknown;

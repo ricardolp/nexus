@@ -15,6 +15,7 @@ As tags podem vir em ``<nfse><nf>`` (retorno completo) ou direto na raiz
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 
@@ -85,9 +86,37 @@ def parse_message(raw: str) -> IpmMessage:
     return IpmMessage(code=None, text=(raw or "").strip())
 
 
+_HTML_TITLE_RE = re.compile(br"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _html_message(content: bytes) -> str:
+    match = _HTML_TITLE_RE.search(content[:8000])
+    if match:
+        title = re.sub(r"\s+", " ", match.group(1).decode("iso-8859-1", errors="replace")).strip()
+        if title:
+            return title
+    return "A IPM devolveu a página de login em vez do XML da nota."
+
+
+def _json_message(content: bytes) -> str:
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return "resposta da IPM não é XML"
+    retorno = data.get("retorno") if isinstance(data, dict) else None
+    if isinstance(retorno, dict) and retorno.get("msg"):
+        return str(retorno["msg"])
+    return "resposta da IPM não é XML"
+
+
 def parse_retorno(content: bytes) -> IpmRetorno:
     if not content or not content.strip():
         return IpmRetorno(parse_error="resposta vazia da IPM")
+    head = content.lstrip()[:32].lower()
+    if head.startswith(b"<!doctype") or head.startswith(b"<html"):
+        return IpmRetorno(parse_error=_html_message(content))
+    if head.startswith(b"{") or head.startswith(b"["):
+        return IpmRetorno(parse_error=_json_message(content))
     try:
         root = etree.fromstring(content, parser=etree.XMLParser(recover=True, resolve_entities=False))
     except etree.XMLSyntaxError as exc:

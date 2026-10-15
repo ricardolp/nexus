@@ -2,10 +2,13 @@ package organization
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
 	"testing"
+
+	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 )
 
 func TestValidateDanfseLogo(t *testing.T) {
@@ -75,6 +78,33 @@ func TestResizeDanfseLogoFitsHeaderSlot(t *testing.T) {
 	if kept.DstW != 80 || kept.DstH != 24 {
 		t.Fatalf("small logo was resized to %dx%d", kept.DstW, kept.DstH)
 	}
+}
+
+func TestResizeDanfeLogoFitsIssuerSlot(t *testing.T) {
+	t.Parallel()
+
+	maxW, maxH := danfeLogoSpec.printMaxPixels()
+	if maxW != 378 || maxH != 260 {
+		t.Fatalf("issuer slot at 300 DPI = %dx%d, want 378x260", maxW, maxH)
+	}
+	fitted, err := danfeLogoSpec.resize(tinyPNG(t, 1200, 1200))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fitted.DstW != maxH || fitted.DstH != maxH {
+		t.Fatalf("square logo fitted to %dx%d, want %dx%d", fitted.DstW, fitted.DstH, maxH, maxH)
+	}
+	if _, err := danfeLogoSpec.validate([]byte("not-an-image")); domainCode(err) != "invalid_danfe_logo_type" {
+		t.Fatalf("err = %v, want invalid_danfe_logo_type", err)
+	}
+}
+
+func domainCode(err error) string {
+	var de *domainerr.Error
+	if errors.As(err, &de) {
+		return de.Code
+	}
+	return ""
 }
 
 func tinyPNG(t *testing.T, w, h int) []byte {

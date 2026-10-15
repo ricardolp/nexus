@@ -14,19 +14,32 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/nexus/fiscal-messaging/internal/platform/audit"
+	"github.com/nexus/fiscal-messaging/internal/platform/danfe"
 	"github.com/nexus/fiscal-messaging/internal/platform/domainerr"
 	xdraw "golang.org/x/image/draw"
 )
 
 const maxDanfseLogoBytes = 1 << 20
 
-// Header slot from platform/danfse drawHeaderLogo: 4.00 cm × 1.16 cm.
 // The print copy is rasterized at 300 DPI so the PDF stays sharp without
 // embedding the original file.
-const (
-	danfseLogoMaxWidthCm  = 4.00
-	danfseLogoMaxHeightCm = 1.16
-	danfseLogoPrintDPI    = 300
+const logoPrintDPI = 300
+
+// companyLogoSpec describes one printable company mark. kind is also the
+// column prefix in organization_companies (<kind>_logo, <kind>_logo_print, …)
+// and the prefix of error codes and audit actions.
+type companyLogoSpec struct {
+	kind        string
+	label       string
+	maxWidthCm  float64
+	maxHeightCm float64
+}
+
+var (
+	// Header slot from platform/danfse drawHeaderLogo: 4.00 cm × 1.16 cm.
+	danfseLogoSpec = companyLogoSpec{kind: "danfse", label: "DANFSe", maxWidthCm: 4.00, maxHeightCm: 1.16}
+	// Issuer box slot from platform/danfe.
+	danfeLogoSpec = companyLogoSpec{kind: "danfe", label: "DANFE", maxWidthCm: danfe.LogoMaxWidthCm, maxHeightCm: danfe.LogoMaxHeightCm}
 )
 
 type danfseLogoPrint struct {
@@ -38,29 +51,35 @@ type danfseLogoPrint struct {
 	DstH        int
 }
 
-func validateDanfseLogo(data []byte) (string, error) {
+func (spec companyLogoSpec) validate(data []byte) (string, error) {
 	if len(data) == 0 {
-		return "", domainerr.Validation("empty_danfse_logo", "logo file is required")
+		return "", domainerr.Validation("empty_"+spec.kind+"_logo", "logo file is required")
 	}
 	if len(data) > maxDanfseLogoBytes {
-		return "", domainerr.Validation("danfse_logo_too_large", "logo must be at most 1 MB")
+		return "", domainerr.Validation(spec.kind+"_logo_too_large", "logo must be at most 1 MB")
 	}
 	ct := http.DetectContentType(data)
 	if ct != "image/png" && ct != "image/jpeg" {
-		return "", domainerr.Validation("invalid_danfse_logo_type", "logo must be PNG or JPEG")
+		return "", domainerr.Validation("invalid_"+spec.kind+"_logo_type", "logo must be PNG or JPEG")
 	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
-		return "", domainerr.Validation("invalid_danfse_logo", "logo image could not be read")
+		return "", domainerr.Validation("invalid_"+spec.kind+"_logo", "logo image could not be read")
 	}
 	return ct, nil
 }
 
-func danfseLogoPrintMaxPixels() (int, int) {
-	w := int(math.Round(danfseLogoMaxWidthCm / 2.54 * danfseLogoPrintDPI))
-	h := int(math.Round(danfseLogoMaxHeightCm / 2.54 * danfseLogoPrintDPI))
+func (spec companyLogoSpec) printMaxPixels() (int, int) {
+	w := int(math.Round(spec.maxWidthCm / 2.54 * logoPrintDPI))
+	h := int(math.Round(spec.maxHeightCm / 2.54 * logoPrintDPI))
 	return w, h
 }
+
+func validateDanfseLogo(data []byte) (string, error) { return danfseLogoSpec.validate(data) }
+
+func danfseLogoPrintMaxPixels() (int, int) { return danfseLogoSpec.printMaxPixels() }
+
+func resizeDanfseLogo(data []byte) (danfseLogoPrint, error) { return danfseLogoSpec.resize(data) }
 
 // fitDanfseLogoSize scales src down so it fits inside the header box.
 // Images already smaller than the box are not enlarged.
@@ -89,14 +108,14 @@ func fitDanfseLogoSize(srcW, srcH, maxW, maxH int) (int, int) {
 	return dstW, dstH
 }
 
-func resizeDanfseLogo(data []byte) (danfseLogoPrint, error) {
+func (spec companyLogoSpec) resize(data []byte) (danfseLogoPrint, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return danfseLogoPrint{}, domainerr.Validation("invalid_danfse_logo", "logo image could not be read")
+		return danfseLogoPrint{}, domainerr.Validation("invalid_"+spec.kind+"_logo", "logo image could not be read")
 	}
 	bounds := src.Bounds()
 	srcW, srcH := bounds.Dx(), bounds.Dy()
-	maxW, maxH := danfseLogoPrintMaxPixels()
+	maxW, maxH := spec.printMaxPixels()
 	dstW, dstH := fitDanfseLogoSize(srcW, srcH, maxW, maxH)
 
 	dst := image.NewNRGBA(image.Rect(0, 0, dstW, dstH))
@@ -121,19 +140,44 @@ func resizeDanfseLogo(data []byte) (danfseLogoPrint, error) {
 }
 
 func (s *Service) SetCompanyDanfseLogo(ctx context.Context, organizationID, companyID, actorID uuid.UUID, data []byte) (*Company, error) {
-	ct, err := validateDanfseLogo(data)
+	return s.setCompanyLogo(ctx, danfseLogoSpec, organizationID, companyID, actorID, data)
+}
+
+func (s *Service) DeleteCompanyDanfseLogo(ctx context.Context, organizationID, companyID, actorID uuid.UUID) (*Company, error) {
+	return s.deleteCompanyLogo(ctx, danfseLogoSpec, organizationID, companyID, actorID)
+}
+
+func (s *Service) GetCompanyDanfseLogo(ctx context.Context, organizationID, companyID uuid.UUID) ([]byte, string, error) {
+	return s.getCompanyLogo(ctx, danfseLogoSpec, organizationID, companyID)
+}
+
+func (s *Service) SetCompanyDanfeLogo(ctx context.Context, organizationID, companyID, actorID uuid.UUID, data []byte) (*Company, error) {
+	return s.setCompanyLogo(ctx, danfeLogoSpec, organizationID, companyID, actorID, data)
+}
+
+func (s *Service) DeleteCompanyDanfeLogo(ctx context.Context, organizationID, companyID, actorID uuid.UUID) (*Company, error) {
+	return s.deleteCompanyLogo(ctx, danfeLogoSpec, organizationID, companyID, actorID)
+}
+
+func (s *Service) GetCompanyDanfeLogo(ctx context.Context, organizationID, companyID uuid.UUID) ([]byte, string, error) {
+	return s.getCompanyLogo(ctx, danfeLogoSpec, organizationID, companyID)
+}
+
+func (s *Service) setCompanyLogo(ctx context.Context, spec companyLogoSpec, organizationID, companyID, actorID uuid.UUID, data []byte) (*Company, error) {
+	ct, err := spec.validate(data)
 	if err != nil {
 		return nil, err
 	}
-	printLogo, err := resizeDanfseLogo(data)
+	printLogo, err := spec.resize(data)
 	if err != nil {
 		return nil, err
 	}
+	k := spec.kind
 	err = s.pool.WithTenant(ctx, organizationID, func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			update organization_companies
-			set danfse_logo = $3, danfse_logo_content_type = $4,
-			    danfse_logo_print = $5, danfse_logo_print_content_type = $6,
+			set `+k+`_logo = $3, `+k+`_logo_content_type = $4,
+			    `+k+`_logo_print = $5, `+k+`_logo_print_content_type = $6,
 			    updated_at = now()
 			where id = $1 and organization_id = $2
 		`, companyID, organizationID, data, ct, printLogo.Data, printLogo.ContentType)
@@ -147,7 +191,7 @@ func (s *Service) SetCompanyDanfseLogo(ctx context.Context, organizationID, comp
 			OrganizationID: &organizationID,
 			ActorType:      "user",
 			ActorID:        actorID.String(),
-			Action:         "company.danfse_logo.upload",
+			Action:         "company." + k + "_logo.upload",
 			ResourceType:   "organization_companies",
 			ResourceID:     companyID.String(),
 			After: map[string]any{
@@ -167,12 +211,13 @@ func (s *Service) SetCompanyDanfseLogo(ctx context.Context, organizationID, comp
 	return s.GetCompany(ctx, organizationID, companyID)
 }
 
-func (s *Service) DeleteCompanyDanfseLogo(ctx context.Context, organizationID, companyID, actorID uuid.UUID) (*Company, error) {
+func (s *Service) deleteCompanyLogo(ctx context.Context, spec companyLogoSpec, organizationID, companyID, actorID uuid.UUID) (*Company, error) {
+	k := spec.kind
 	err := s.pool.WithTenant(ctx, organizationID, func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			update organization_companies
-			set danfse_logo = null, danfse_logo_content_type = null,
-			    danfse_logo_print = null, danfse_logo_print_content_type = null,
+			set `+k+`_logo = null, `+k+`_logo_content_type = null,
+			    `+k+`_logo_print = null, `+k+`_logo_print_content_type = null,
 			    updated_at = now()
 			where id = $1 and organization_id = $2
 		`, companyID, organizationID)
@@ -186,7 +231,7 @@ func (s *Service) DeleteCompanyDanfseLogo(ctx context.Context, organizationID, c
 			OrganizationID: &organizationID,
 			ActorType:      "user",
 			ActorID:        actorID.String(),
-			Action:         "company.danfse_logo.delete",
+			Action:         "company." + k + "_logo.delete",
 			ResourceType:   "organization_companies",
 			ResourceID:     companyID.String(),
 			After:          map[string]any{"removed": true},
@@ -198,16 +243,17 @@ func (s *Service) DeleteCompanyDanfseLogo(ctx context.Context, organizationID, c
 	return s.GetCompany(ctx, organizationID, companyID)
 }
 
-func (s *Service) GetCompanyDanfseLogo(ctx context.Context, organizationID, companyID uuid.UUID) ([]byte, string, error) {
+func (s *Service) getCompanyLogo(ctx context.Context, spec companyLogoSpec, organizationID, companyID uuid.UUID) ([]byte, string, error) {
+	k := spec.kind
 	var data []byte
 	var ct *string
 	err := s.pool.QueryRow(ctx, `
-		select danfse_logo, danfse_logo_content_type
+		select `+k+`_logo, `+k+`_logo_content_type
 		from organization_companies
-		where id = $1 and organization_id = $2 and danfse_logo is not null
+		where id = $1 and organization_id = $2 and `+k+`_logo is not null
 	`, companyID, organizationID).Scan(&data, &ct)
 	if err != nil || len(data) == 0 {
-		return nil, "", domainerr.NotFound("danfse_logo_not_found", "DANFSe logo not found")
+		return nil, "", domainerr.NotFound(k+"_logo_not_found", spec.label+" logo not found")
 	}
 	contentType := "image/png"
 	if ct != nil && strings.TrimSpace(*ct) != "" {
