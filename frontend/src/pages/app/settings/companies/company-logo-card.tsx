@@ -4,13 +4,7 @@ import { CheckIcon, PencilIcon, Trash2Icon, UploadIcon, XIcon } from 'lucide-rea
 import { toast } from 'sonner';
 
 import { ApiError } from '@/lib/api';
-import {
-  type CompanyLogoKind,
-  deleteCompanyLogo,
-  getCompanyLogoBlob,
-  updateCompanyDetails,
-  uploadCompanyLogo
-} from '@/lib/endpoints';
+import { deleteCompanyLogo, getCompanyLogoBlob, updateCompanyDetails, uploadCompanyLogo } from '@/lib/endpoints';
 import type { ApiCompany } from '@/lib/api-types';
 import { useAuthStore } from '@/store/auth-store';
 import { Button } from '@/components/ui/button';
@@ -25,70 +19,43 @@ function isLogoFile(file: File) {
   return file.type === 'image/png' || file.type === 'image/jpeg' || file.type === 'image/jpg';
 }
 
-type LogoCardConfig = {
-  title: string;
-  description: string;
-  switchLabel: string;
-  sizeHint: string;
-  savedToast: string;
-  enabled: (c: ApiCompany) => boolean;
-  hasLogo: (c: ApiCompany) => boolean;
-  enabledPatch: (v: boolean) => { danfse_custom_logo_enabled?: boolean; danfe_custom_logo_enabled?: boolean };
-};
+type LogoFlag = 'danfe_custom_logo_enabled' | 'danfse_custom_logo_enabled';
 
-const LOGO_CARDS: Record<CompanyLogoKind, LogoCardConfig> = {
-  danfse: {
-    title: 'DANFSe',
-    description:
-      'O PDF nacional usa a marca padrão da NFS-e. Ative a logo personalizada para imprimir a marca desta empresa no cabeçalho.',
-    switchLabel: 'Logo personalizada na DANFSe?',
-    sizeHint:
-      'PNG ou JPEG, até 1 MB. O arquivo original é guardado e uma cópia é gerada no tamanho do cabeçalho da DANFSe (4,00 × 1,16 cm). O PDF usa essa cópia.',
-    savedToast: 'DANFSe atualizada',
-    enabled: (c) => Boolean(c.danfse_custom_logo_enabled),
-    hasLogo: (c) => Boolean(c.has_danfse_logo),
-    enabledPatch: (v) => ({ danfse_custom_logo_enabled: v })
+const LOGO_FLAGS: { key: LogoFlag; label: string; hint: string }[] = [
+  {
+    key: 'danfe_custom_logo_enabled',
+    label: 'Usar na DANFE (NF-e)',
+    hint: 'Quadro do emitente da DANFE gerada pelo Nexus, retrato e paisagem (até 3,20 × 2,20 cm).'
   },
-  danfe: {
-    title: 'DANFE (NF-e)',
-    description:
-      'A DANFE gerada pelo Nexus (retrato e paisagem) traz só os dados do emitente. Ative a logo personalizada para imprimir a marca desta empresa no quadro do emitente.',
-    switchLabel: 'Logo personalizada na DANFE?',
-    sizeHint:
-      'PNG ou JPEG, até 1 MB. O arquivo original é guardado e uma cópia é gerada no tamanho do quadro do emitente da DANFE (3,20 × 2,20 cm). O PDF usa essa cópia.',
-    savedToast: 'DANFE atualizada',
-    enabled: (c) => Boolean(c.danfe_custom_logo_enabled),
-    hasLogo: (c) => Boolean(c.has_danfe_logo),
-    enabledPatch: (v) => ({ danfe_custom_logo_enabled: v })
+  {
+    key: 'danfse_custom_logo_enabled',
+    label: 'Usar na DANFSe (NFS-e)',
+    hint: 'Cabeçalho da DANFSe no lugar da marca nacional da NFS-e (até 4,00 × 1,16 cm).'
   }
-};
+];
 
-export function CompanyDanfseLogoCard({ company }: { company: ApiCompany }) {
-  return <CompanyLogoCard kind="danfse" company={company} />;
-}
-
-export function CompanyDanfeLogoCard({ company }: { company: ApiCompany }) {
-  return <CompanyLogoCard kind="danfe" company={company} />;
-}
-
-function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: ApiCompany }) {
-  const cfg = LOGO_CARDS[kind];
+export function CompanyLogoCard({ company }: { company: ApiCompany }) {
   const token = useAuthStore((s) => s.token);
   const organizationId = useAuthStore((s) => s.organizationId);
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const hasLogo = cfg.hasLogo(company);
+  const hasLogo = Boolean(company.has_logo);
+
+  const storedFlags = (): Record<LogoFlag, boolean> => ({
+    danfe_custom_logo_enabled: Boolean(company.danfe_custom_logo_enabled),
+    danfse_custom_logo_enabled: Boolean(company.danfse_custom_logo_enabled)
+  });
 
   const [editing, setEditing] = useState(false);
-  const [enabled, setEnabled] = useState(cfg.enabled(company));
+  const [flags, setFlags] = useState(storedFlags);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [removeLogo, setRemoveLogo] = useState(false);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
   const [remotePreview, setRemotePreview] = useState<string | null>(null);
 
   const logoQuery = useQuery({
-    queryKey: ['company-logo', kind, organizationId, company.id, company.updated_at],
-    queryFn: () => getCompanyLogoBlob(kind, token!, organizationId!, company.id),
+    queryKey: ['company-logo', organizationId, company.id, company.updated_at],
+    queryFn: () => getCompanyLogoBlob(token!, organizationId!, company.id),
     enabled: Boolean(token && organizationId && hasLogo)
   });
 
@@ -113,7 +80,7 @@ function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: Ap
   }, [logoFile]);
 
   function resetDraft() {
-    setEnabled(cfg.enabled(company));
+    setFlags(storedFlags());
     setLogoFile(null);
     setRemoveLogo(false);
   }
@@ -134,16 +101,16 @@ function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: Ap
         ibge_municipality_code: company.ibge_municipality_code ?? '',
         tax_regime: company.tax_regime ?? '',
         special_tax_regime: company.special_tax_regime ?? '',
-        ...cfg.enabledPatch(enabled)
+        ...flags
       });
       if (logoFile) {
-        await uploadCompanyLogo(kind, token!, organizationId!, company.id, logoFile);
+        await uploadCompanyLogo(token!, organizationId!, company.id, logoFile);
       } else if (removeLogo && hasLogo) {
-        await deleteCompanyLogo(kind, token!, organizationId!, company.id);
+        await deleteCompanyLogo(token!, organizationId!, company.id);
       }
     },
     onSuccess: () => {
-      toast.success(cfg.savedToast);
+      toast.success('Logo da empresa atualizada');
       setEditing(false);
       setLogoFile(null);
       setRemoveLogo(false);
@@ -169,13 +136,15 @@ function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: Ap
   const saving = saveMutation.isPending;
   const storedVisible = hasLogo && !removeLogo && !logoFile;
   const preview = localPreview ?? (storedVisible ? remotePreview : null);
-  const switchId = `${kind}-custom-logo`;
 
   return (
     <Card>
       <CardHeader className="border-b">
-        <CardTitle>{cfg.title}</CardTitle>
-        <CardDescription>{cfg.description}</CardDescription>
+        <CardTitle>Logo da empresa</CardTitle>
+        <CardDescription>
+          Uma única imagem, impressa na DANFE e na DANFSe conforme as opções abaixo. Sem logo ou com a opção
+          desligada, o PDF segue o padrão oficial.
+        </CardDescription>
         <CardAction>
           {editing ? (
             <div className="flex gap-2">
@@ -208,15 +177,6 @@ function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: Ap
       <CardContent>
         {editing ? (
           <div className="grid gap-4 py-2">
-            <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-4 py-3">
-              <div>
-                <Label htmlFor={switchId}>{cfg.switchLabel}</Label>
-                <p className="text-muted-foreground text-xs">
-                  A marca só entra no PDF quando esta opção está ligada e existe um arquivo enviado.
-                </p>
-              </div>
-              <Switch id={switchId} checked={enabled} onCheckedChange={setEnabled} disabled={saving} />
-            </div>
             <div className="grid gap-3">
               <input
                 ref={fileInputRef}
@@ -228,10 +188,19 @@ function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: Ap
                   e.target.value = '';
                 }}
               />
-              <LogoPreview src={preview} alt={`Logo da ${cfg.title}`} />
-              <p className="text-muted-foreground text-xs">{cfg.sizeHint}</p>
+              <LogoPreview src={preview} alt="Logo da empresa" />
+              <p className="text-muted-foreground text-xs">
+                PNG ou JPEG, até 1 MB. O arquivo original é guardado e o sistema gera uma cópia no tamanho de cada
+                documento; os PDFs usam essas cópias.
+              </p>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={saving}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={saving}
+                >
                   <UploadIcon />
                   {preview ? 'Trocar logo' : 'Enviar logo'}
                 </Button>
@@ -252,24 +221,41 @@ function CompanyLogoCard({ kind, company }: { kind: CompanyLogoKind; company: Ap
                 ) : null}
               </div>
             </div>
+            {LOGO_FLAGS.map((flag) => (
+              <div
+                key={flag.key}
+                className="flex items-center justify-between gap-4 rounded-lg border bg-muted/20 px-4 py-3"
+              >
+                <div>
+                  <Label htmlFor={flag.key}>{flag.label}</Label>
+                  <p className="text-muted-foreground text-xs">{flag.hint}</p>
+                </div>
+                <Switch
+                  id={flag.key}
+                  checked={flags[flag.key]}
+                  onCheckedChange={(v) => setFlags((prev) => ({ ...prev, [flag.key]: v }))}
+                  disabled={saving}
+                />
+              </div>
+            ))}
           </div>
         ) : (
           <>
-            <FieldRow label={cfg.switchLabel} value={cfg.enabled(company) ? 'Sim' : 'Não'} />
-            {hasLogo || cfg.enabled(company) ? (
-              <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-muted-foreground text-sm">Logo</span>
-                {hasLogo ? (
-                  logoQuery.isError ? (
-                    <span className="text-sm font-medium">Não foi possível carregar a logo</span>
-                  ) : (
-                    <LogoPreview src={remotePreview} alt={`Logo da ${cfg.title}`} emptyLabel="Carregando..." />
-                  )
+            <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-muted-foreground text-sm">Logo</span>
+              {hasLogo ? (
+                logoQuery.isError ? (
+                  <span className="text-sm font-medium">Não foi possível carregar a logo</span>
                 ) : (
-                  <span className="text-sm font-medium">Nenhuma logo enviada</span>
-                )}
-              </div>
-            ) : null}
+                  <LogoPreview src={remotePreview} alt="Logo da empresa" emptyLabel="Carregando..." />
+                )
+              ) : (
+                <span className="text-sm font-medium">Nenhuma logo enviada</span>
+              )}
+            </div>
+            {LOGO_FLAGS.map((flag) => (
+              <FieldRow key={flag.key} label={flag.label} value={company[flag.key] ? 'Sim' : 'Não'} />
+            ))}
           </>
         )}
       </CardContent>

@@ -135,12 +135,12 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Get("/v1/organizations/{organization_id}/companies", a.listCompanies)
 		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}", a.updateCompanyStatus)
 		r.Patch("/v1/organizations/{organization_id}/companies/{company_id}/details", a.updateCompanyDetails)
-		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.uploadCompanyDanfseLogo)
-		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.getCompanyDanfseLogo)
-		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/danfse-logo", a.deleteCompanyDanfseLogo)
-		r.Post("/v1/organizations/{organization_id}/companies/{company_id}/danfe-logo", a.uploadCompanyDanfeLogo)
-		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/danfe-logo", a.getCompanyDanfeLogo)
-		r.Delete("/v1/organizations/{organization_id}/companies/{company_id}/danfe-logo", a.deleteCompanyDanfeLogo)
+		for _, p := range []string{"logo", "danfse-logo"} {
+			route := "/v1/organizations/{organization_id}/companies/{company_id}/" + p
+			r.Post(route, a.uploadCompanyLogo)
+			r.Get(route, a.getCompanyLogo)
+			r.Delete(route, a.deleteCompanyLogo)
+		}
 		r.Get("/v1/nfse/municipal-providers", a.listNFSeMunicipalProviders)
 		r.Get("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings", a.listCompanyNFSeProviderSettings)
 		r.Put("/v1/organizations/{organization_id}/companies/{company_id}/nfse-provider-settings/{provider_code}", a.upsertCompanyNFSeProviderSettings)

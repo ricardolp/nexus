@@ -8,7 +8,7 @@ const companySelectColumns = `
 	tax_regime, special_tax_regime,
 	environment, status,
 	danfse_custom_logo_enabled, (danfse_logo is not null),
-	danfe_custom_logo_enabled, (danfe_logo is not null),
+	danfe_custom_logo_enabled,
 	metadata_json, created_at, updated_at
 `
 
@@ -23,8 +23,8 @@ func scanCompany(row companyScanner) (Company, error) {
 		&c.MunicipalRegistration, &c.IBGEMunicipalityCode,
 		&c.TaxRegime, &c.SpecialTaxRegime,
 		&c.Environment, &c.Status,
-		&c.DanfseCustomLogoEnabled, &c.HasDanfseLogo,
-		&c.DanfeCustomLogoEnabled, &c.HasDanfeLogo,
+		&c.DanfseCustomLogoEnabled, &c.HasLogo,
+		&c.DanfeCustomLogoEnabled,
 		&c.MetadataJSON, &c.CreatedAt, &c.UpdatedAt,
 	)
 	return c, err

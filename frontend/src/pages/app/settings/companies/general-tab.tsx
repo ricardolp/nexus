@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FieldRow } from '@/pages/organization/field-row';
 import { companyEnvironmentLabels, formatCNPJ } from './columns';
-import { CompanyDanfeLogoCard, CompanyDanfseLogoCard } from './danfse-logo-card';
+import { CompanyLogoCard } from './company-logo-card';
 
 type Section = 'general' | 'tax' | 'environment';
 
@@ -336,8 +336,7 @@ export function CompanyGeneralTab({ company }: { company: ApiCompany }) {
         </CardContent>
       </Card>
 
-      <CompanyDanfeLogoCard company={company} />
-      <CompanyDanfseLogoCard company={company} />
+      <CompanyLogoCard company={company} />
     </div>
   );
 }

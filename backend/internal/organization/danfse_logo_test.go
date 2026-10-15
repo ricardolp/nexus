@@ -94,8 +94,8 @@ func TestResizeDanfeLogoFitsIssuerSlot(t *testing.T) {
 	if fitted.DstW != maxH || fitted.DstH != maxH {
 		t.Fatalf("square logo fitted to %dx%d, want %dx%d", fitted.DstW, fitted.DstH, maxH, maxH)
 	}
-	if _, err := danfeLogoSpec.validate([]byte("not-an-image")); domainCode(err) != "invalid_danfe_logo_type" {
-		t.Fatalf("err = %v, want invalid_danfe_logo_type", err)
+	if _, err := validateCompanyLogo([]byte("not-an-image")); domainCode(err) != "invalid_logo_type" {
+		t.Fatalf("err = %v, want invalid_logo_type", err)
 	}
 }
 

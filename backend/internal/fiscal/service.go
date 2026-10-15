@@ -604,18 +604,20 @@ func (s *Service) renderDanfe(ctx context.Context, doc *Document, orientation da
 	}, nil
 }
 
-// companyDanfeLogo returns the DANFE issuer-box image when the flag is on.
+// companyDanfeLogo returns the company logo for the DANFE issuer box when the
+// flag is on. Logos uploaded before the DANFE print copy existed fall back to
+// the original file; the renderer fits it into the slot.
 func (s *Service) companyDanfeLogo(ctx context.Context, organizationID, companyID uuid.UUID) []byte {
 	if s == nil || s.pool == nil || companyID == uuid.Nil {
 		return nil
 	}
 	var logo []byte
 	err := s.pool.QueryRow(ctx, `
-		select coalesce(danfe_logo_print, danfe_logo)
+		select coalesce(danfe_logo_print, danfse_logo)
 		from organization_companies
 		where id = $1 and organization_id = $2
 		  and danfe_custom_logo_enabled
-		  and coalesce(danfe_logo_print, danfe_logo) is not null
+		  and coalesce(danfe_logo_print, danfse_logo) is not null
 	`, companyID, organizationID).Scan(&logo)
 	if err != nil || len(logo) == 0 {
 		return nil

@@ -245,12 +245,12 @@ export interface ApiCompany {
   tax_regime?: string | null;
   /** NFS-e regEspTrib: 0=Nenhum … 7 */
   special_tax_regime?: string | null;
-  /** Quando true e há logo enviada, o DANFSe usa a marca da empresa no cabeçalho. */
+  /** Logo única da empresa, usada pela DANFSe e pela DANFE conforme os flags abaixo. */
+  has_logo?: boolean;
+  /** Quando true e há logo enviada, a DANFSe usa a marca da empresa no cabeçalho. */
   danfse_custom_logo_enabled?: boolean;
-  has_danfse_logo?: boolean;
   /** Quando true e há logo enviada, a DANFE gerada pelo Nexus usa a marca no quadro do emitente. */
   danfe_custom_logo_enabled?: boolean;
-  has_danfe_logo?: boolean;
   environment: 'production' | 'homologation' | string;
   status: 'active' | 'suspended' | 'disabled' | string;
   metadata_json: unknown;

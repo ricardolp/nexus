@@ -1199,34 +1199,26 @@ export function updateCompanyDetails(
   });
 }
 
-/** danfse = cabeçalho da DANFSe; danfe = quadro do emitente da DANFE gerada pelo Nexus. */
-export type CompanyLogoKind = 'danfse' | 'danfe';
-
-export function uploadCompanyLogo(
-  kind: CompanyLogoKind,
-  token: string,
-  organizationId: string,
-  companyId: string,
-  file: File
-) {
+/** Logo única da empresa: o backend gera uma cópia para a DANFSe e outra para a DANFE. */
+export function uploadCompanyLogo(token: string, organizationId: string, companyId: string, file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  return apiFetch<ApiCompany>(`/v1/organizations/${organizationId}/companies/${companyId}/${kind}-logo`, {
+  return apiFetch<ApiCompany>(`/v1/organizations/${organizationId}/companies/${companyId}/logo`, {
     method: 'POST',
     token,
     formData
   });
 }
 
-export function deleteCompanyLogo(kind: CompanyLogoKind, token: string, organizationId: string, companyId: string) {
-  return apiFetch<ApiCompany>(`/v1/organizations/${organizationId}/companies/${companyId}/${kind}-logo`, {
+export function deleteCompanyLogo(token: string, organizationId: string, companyId: string) {
+  return apiFetch<ApiCompany>(`/v1/organizations/${organizationId}/companies/${companyId}/logo`, {
     method: 'DELETE',
     token
   });
 }
 
-export function getCompanyLogoBlob(kind: CompanyLogoKind, token: string, organizationId: string, companyId: string) {
-  return apiFetchBlob(`/v1/organizations/${organizationId}/companies/${companyId}/${kind}-logo`, { token });
+export function getCompanyLogoBlob(token: string, organizationId: string, companyId: string) {
+  return apiFetchBlob(`/v1/organizations/${organizationId}/companies/${companyId}/logo`, { token });
 }
 
 export function listCustomers(
