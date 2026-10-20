@@ -415,6 +415,9 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
     _sub(reg_trib, "regEspTrib", _reg_esp_trib(payload))
 
     _append_pessoa(_sub(inf, "toma"), toma, default_name="CONSUMIDOR NAO IDENTIFICADO")
+    # NT 009 v1.01 pacote 2: indDest (e dest, quando indDest=1) ficam em infDPS,
+    # imediatamente depois de toma.
+    _append_ind_dest(inf, payload)
 
     if interm:
         inter_el = _sub(inf, "interm")
@@ -675,9 +678,7 @@ def _ibscbs_classification(payload: dict[str, Any], serv: dict[str, Any]) -> tup
 
 
 # Competência >= 2026-10-01 exige o grupo (E0855). CST 000 tem IndExigeTrib,
-# então cIndOp entra. O Anexo VI v1.04.01 manda indDest para depois do tomador,
-# mas a SefinNacional 1.6.0 ainda espera interm/serv nesse ponto e rejeita o
-# elemento (esquema). indDest permanece dentro de IBSCBS.
+# então cIndOp entra. indDest fica em infDPS, depois de toma (NT 009 pacote 2).
 _EMIT_DPS_IBSCBS = True
 
 
@@ -693,6 +694,14 @@ def _validate_ind_dest(payload: dict[str, Any]) -> str:
             "quando o próprio tomador for o destinatário."
         )
     return ind_dest[:1]
+
+
+def _append_ind_dest(inf: etree._Element, payload: dict[str, Any]) -> None:
+    ind_dest = _validate_ind_dest(payload)
+    _sub(inf, "indDest", ind_dest)
+    if ind_dest == "1":
+        dest = payload.get("destinatario") or payload.get("destinatario_operacao")
+        _append_pessoa(_sub(inf, "dest"), dest, default_name="DESTINATARIO")
 
 
 _TP_NFSE_DEBITO = frozenset({"01", "02", "03", "04", "05", "06"})
@@ -788,7 +797,6 @@ def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str,
     ind_final = _text(payload.get("consumidor_final") or payload.get("ind_final") or "0") or "0"
     if ind_final[:1] not in {"0", "1"}:
         raise SapNfseMapperError(f"consumidor_final (indFinal) deve ser 0 ou 1: {ind_final!r}")
-    ind_dest = _validate_ind_dest(payload)
 
     if not _EMIT_DPS_IBSCBS:
         return
@@ -796,10 +804,6 @@ def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str,
     ibs = _sub(inf, "IBSCBS")
     _sub(ibs, "indFinal", ind_final[:1])
     _sub(ibs, "cIndOp", c_ind_op)
-    _sub(ibs, "indDest", ind_dest)
-    if ind_dest == "1":
-        dest = payload.get("destinatario") or payload.get("destinatario_operacao")
-        _append_pessoa(_sub(ibs, "dest"), dest, default_name="DESTINATARIO")
     # NT 009 / homologação em 20/10/2026: trib espera CST direto.
     # gIBSCBS nesse ponto é E1235 ("invalid child element 'gIBSCBS', expected 'CST'").
     # Alíquotas e valores continuam com a calculadora.
