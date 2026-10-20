@@ -75,19 +75,22 @@ def test_build_unsigned_dps_success(sap_fixture):
     cserv = root.find(f"{{{NS}}}infDPS/{{{NS}}}serv/{{{NS}}}cServ")
     assert cserv is not None
     assert [etree.QName(child).localname for child in cserv] == ["cTribNac", "xDescServ", "cNBS"]
+    inf = root.find(f"{{{NS}}}infDPS")
+    header = [etree.QName(child).localname for child in inf]
+    assert header.index("tpEmit") < header.index("finNFSe") < header.index("cLocEmi")
+    assert inf.findtext(f"{{{NS}}}finNFSe") == "0"
+    assert inf.find(f"{{{NS}}}tpNFSeDebito") is None
+    assert inf.find(f"{{{NS}}}tpNFSeCredito") is None
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
     assert ibs is not None
     assert [etree.QName(child).localname for child in ibs] == [
-        "finNFSe",
         "indFinal",
         "cIndOp",
         "indDest",
         "valores",
     ]
     trib = ibs.find(f"{{{NS}}}valores/{{{NS}}}trib")
-    assert [etree.QName(child).localname for child in trib] == ["gIBSCBS"]
-    grupo = trib.find(f"{{{NS}}}gIBSCBS")
-    assert [etree.QName(child).localname for child in grupo] == ["CST", "cClassTrib"]
+    assert [etree.QName(child).localname for child in trib] == ["CST", "cClassTrib"]
 
 
 def test_build_unsigned_dps_omits_ibscbs_without_classification():
@@ -141,6 +144,7 @@ def test_build_unsigned_dps_omits_ibscbs_without_classification():
     assert "<vCofins>" not in xml
     assert "<pTotTribSN>9.41</pTotTribSN>" in xml
     assert root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS") is None
+    assert root.findtext(f"{{{NS}}}infDPS/{{{NS}}}finNFSe") == "0"
 
 
 def test_build_unsigned_dps_me_epp_requires_percentual():
@@ -233,9 +237,12 @@ def test_build_unsigned_dps_ibscbs_when_classification_provided():
     assert "<IBSCBS>" in xml
     assert "<cClassTrib>000001</cClassTrib>" in xml
     assert "<cIndOp>010101</cIndOp>" in xml
+    inf = root.find(f"{{{NS}}}infDPS")
+    header = [etree.QName(child).localname for child in inf]
+    assert header.index("finNFSe") < header.index("cLocEmi")
+    assert inf.findtext(f"{{{NS}}}finNFSe") == "0"
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
     assert [etree.QName(child).localname for child in ibs] == [
-        "finNFSe",
         "indFinal",
         "cIndOp",
         "indDest",
@@ -392,15 +399,58 @@ def test_ibscbs_ind_dest_1_emits_dest_group():
     root = build_unsigned_dps(payload, homologacao=True)
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
     assert [etree.QName(c).localname for c in ibs] == [
-        "finNFSe", "indFinal", "cIndOp", "indDest", "dest", "valores",
+        "indFinal", "cIndOp", "indDest", "dest", "valores",
     ]
     dest = ibs.find(f"{{{NS}}}dest")
     assert dest.findtext(f"{{{NS}}}CPF") == "12345678909"
     assert dest.findtext(f"{{{NS}}}xNome") == "FULANO DE TAL"
     trib = ibs.find(f"{{{NS}}}valores/{{{NS}}}trib")
-    assert [etree.QName(child).localname for child in trib] == ["gIBSCBS"]
-    grupo = trib.find(f"{{{NS}}}gIBSCBS")
-    assert [etree.QName(child).localname for child in grupo] == ["CST", "cClassTrib"]
+    assert [etree.QName(child).localname for child in trib] == ["CST", "cClassTrib"]
+
+
+def test_fin_nfse_debito_sits_before_c_loc_emi():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["finalidade_emissao"] = "2"
+    payload["tipo_nfse_debito"] = "4"
+    root = build_unsigned_dps(payload, homologacao=True)
+    inf = root.find(f"{{{NS}}}infDPS")
+    names = [etree.QName(child).localname for child in inf]
+    assert names.index("finNFSe") < names.index("tpNFSeDebito") < names.index("cLocEmi")
+    assert inf.findtext(f"{{{NS}}}finNFSe") == "2"
+    assert inf.findtext(f"{{{NS}}}tpNFSeDebito") == "04"
+    assert inf.find(f"{{{NS}}}tpNFSeCredito") is None
+    ibs = inf.find(f"{{{NS}}}IBSCBS")
+    assert "finNFSe" not in [etree.QName(child).localname for child in ibs]
+
+
+def test_fin_nfse_credito_sits_before_c_loc_emi():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["finalidade_emissao"] = "1"
+    payload["tipo_nfse_credito"] = "05"
+    root = build_unsigned_dps(payload, homologacao=True)
+    inf = root.find(f"{{{NS}}}infDPS")
+    names = [etree.QName(child).localname for child in inf]
+    assert names.index("finNFSe") < names.index("tpNFSeCredito") < names.index("cLocEmi")
+    assert inf.findtext(f"{{{NS}}}tpNFSeCredito") == "05"
+    assert inf.find(f"{{{NS}}}tpNFSeDebito") is None
+
+
+def test_fin_nfse_regular_omits_adjustment_type():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["finalidade_emissao"] = "0"
+    payload["tipo_nfse_debito"] = "01"
+    root = build_unsigned_dps(payload, homologacao=True)
+    inf = root.find(f"{{{NS}}}infDPS")
+    assert inf.findtext(f"{{{NS}}}finNFSe") == "0"
+    assert inf.find(f"{{{NS}}}tpNFSeDebito") is None
+
+
+def test_tipo_nfse_debito_rejects_unknown_code():
+    payload = _ibscbs_payload(codigo_indicador_operacao="100301")
+    payload["finalidade_emissao"] = "2"
+    payload["tipo_nfse_debito"] = "99"
+    with pytest.raises(SapNfseMapperError, match="tpNFSeDebito"):
+        build_unsigned_dps(payload, homologacao=True)
 
 
 def test_desconto_incondicionado_goes_between_vserv_and_trib():

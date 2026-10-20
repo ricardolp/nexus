@@ -336,7 +336,11 @@ func (r *renderer) Render(xmlData []byte, opts ...RenderOptions) ([]byte, error)
 	pdf.SetX(cmToPt(5.41))
 	fitCell(&pdf, colX3, formatCStat(nfse.InfNFSe.CStat))
 
-	fin := firstNonEmpty(nfse.InfNFSe.DPS.InfDPS.IBSCBS.FinNFSe, nfse.InfNFSe.IBSCBS.FinNFSe)
+	fin := firstNonEmpty(
+		nfse.InfNFSe.DPS.InfDPS.FinNFSe,
+		nfse.InfNFSe.DPS.InfDPS.IBSCBS.FinNFSe,
+		nfse.InfNFSe.IBSCBS.FinNFSe,
+	)
 	pdf.SetX(cmToPt(10.51))
 	fitCell(&pdf, colXEnd, formatFinNFSe(fin))
 

@@ -11,18 +11,18 @@ type NFSe struct {
 }
 
 type InfNFSeNode struct {
-	ID            string     `xml:"Id,attr"`
-	XLocEmi       string     `xml:"http://www.sped.fazenda.gov.br/nfse xLocEmi"`
-	XLocPrestacao string     `xml:"http://www.sped.fazenda.gov.br/nfse xLocPrestacao"`
-	NNFSe         string     `xml:"http://www.sped.fazenda.gov.br/nfse nNFSe"`
-	CLocIncid     string     `xml:"http://www.sped.fazenda.gov.br/nfse cLocIncid"`
-	XLocIncid     string     `xml:"http://www.sped.fazenda.gov.br/nfse xLocIncid"`
-	XTribNac      string     `xml:"http://www.sped.fazenda.gov.br/nfse xTribNac"`
-	AmbGer        string     `xml:"http://www.sped.fazenda.gov.br/nfse ambGer"`
-	CStat         string     `xml:"http://www.sped.fazenda.gov.br/nfse cStat"`
-	DhProc        string     `xml:"http://www.sped.fazenda.gov.br/nfse dhProc"`
-	Emit          EmitNode   `xml:"http://www.sped.fazenda.gov.br/nfse emit"`
-	Valores       Valores    `xml:"http://www.sped.fazenda.gov.br/nfse valores"`
+	ID            string   `xml:"Id,attr"`
+	XLocEmi       string   `xml:"http://www.sped.fazenda.gov.br/nfse xLocEmi"`
+	XLocPrestacao string   `xml:"http://www.sped.fazenda.gov.br/nfse xLocPrestacao"`
+	NNFSe         string   `xml:"http://www.sped.fazenda.gov.br/nfse nNFSe"`
+	CLocIncid     string   `xml:"http://www.sped.fazenda.gov.br/nfse cLocIncid"`
+	XLocIncid     string   `xml:"http://www.sped.fazenda.gov.br/nfse xLocIncid"`
+	XTribNac      string   `xml:"http://www.sped.fazenda.gov.br/nfse xTribNac"`
+	AmbGer        string   `xml:"http://www.sped.fazenda.gov.br/nfse ambGer"`
+	CStat         string   `xml:"http://www.sped.fazenda.gov.br/nfse cStat"`
+	DhProc        string   `xml:"http://www.sped.fazenda.gov.br/nfse dhProc"`
+	Emit          EmitNode `xml:"http://www.sped.fazenda.gov.br/nfse emit"`
+	Valores       Valores  `xml:"http://www.sped.fazenda.gov.br/nfse valores"`
 	// IBSCBS at infNFSe level holds SEFIN-calculated amounts (valores/totCIBS).
 	IBSCBS IBSCBSNode `xml:"http://www.sped.fazenda.gov.br/nfse IBSCBS"`
 	DPS    DPSNode    `xml:"http://www.sped.fazenda.gov.br/nfse DPS"`
@@ -63,17 +63,20 @@ type DPSNode struct {
 }
 
 type InfDPSNode struct {
-	TpAmb   string     `xml:"http://www.sped.fazenda.gov.br/nfse tpAmb"`
-	DhEmi   string     `xml:"http://www.sped.fazenda.gov.br/nfse dhEmi"`
-	Serie   string     `xml:"http://www.sped.fazenda.gov.br/nfse serie"`
-	NDPS    string     `xml:"http://www.sped.fazenda.gov.br/nfse nDPS"`
-	DCompet string     `xml:"http://www.sped.fazenda.gov.br/nfse dCompet"`
-	TpEmit  string     `xml:"http://www.sped.fazenda.gov.br/nfse tpEmit"`
+	TpAmb   string `xml:"http://www.sped.fazenda.gov.br/nfse tpAmb"`
+	DhEmi   string `xml:"http://www.sped.fazenda.gov.br/nfse dhEmi"`
+	Serie   string `xml:"http://www.sped.fazenda.gov.br/nfse serie"`
+	NDPS    string `xml:"http://www.sped.fazenda.gov.br/nfse nDPS"`
+	DCompet string `xml:"http://www.sped.fazenda.gov.br/nfse dCompet"`
+	TpEmit  string `xml:"http://www.sped.fazenda.gov.br/nfse tpEmit"`
+	// NT 009 moved finNFSe onto infDPS. Older authorized notes still carry it inside IBSCBS.
+	FinNFSe string     `xml:"http://www.sped.fazenda.gov.br/nfse finNFSe"`
 	Prest   PrestNode  `xml:"http://www.sped.fazenda.gov.br/nfse prest"`
 	Toma    TomaNode   `xml:"http://www.sped.fazenda.gov.br/nfse toma"`
 	Interm  IntermNode `xml:"http://www.sped.fazenda.gov.br/nfse interm"`
 	Serv    ServNode   `xml:"http://www.sped.fazenda.gov.br/nfse serv"`
-	// IBSCBS at DPS level holds emit-time CST/cClassTrib/finNFSe/cIndOp/dest.
+	// IBSCBS at DPS level holds emit-time CST/cClassTrib/cIndOp/dest.
+	// finNFSe on this group is the layout used before NT 009.
 	IBSCBS  IBSCBSNode `xml:"http://www.sped.fazenda.gov.br/nfse IBSCBS"`
 	Valores ValoresDPS `xml:"http://www.sped.fazenda.gov.br/nfse valores"`
 }
@@ -199,7 +202,7 @@ type IBSCBSNode struct {
 			// GIBSCBS keeps the layout used before 01/10/2026.
 			CST        string `xml:"http://www.sped.fazenda.gov.br/nfse CST"`
 			CClassTrib string `xml:"http://www.sped.fazenda.gov.br/nfse cClassTrib"`
-			GIBSCBS struct {
+			GIBSCBS    struct {
 				CST        string `xml:"http://www.sped.fazenda.gov.br/nfse CST"`
 				CClassTrib string `xml:"http://www.sped.fazenda.gov.br/nfse cClassTrib"`
 			} `xml:"http://www.sped.fazenda.gov.br/nfse gIBSCBS"`

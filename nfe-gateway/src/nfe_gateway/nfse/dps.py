@@ -387,6 +387,10 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
     _sub(inf, "nDPS", n_dps)
     _sub(inf, "dCompet", d_compet)
     _sub(inf, "tpEmit", "1")
+    # NT 009 moved finNFSe onto infDPS, before cLocEmi. Homologação rejects
+    # cLocEmi at this point (E1235, expected cMotivoEmisTI or finNFSe).
+    # cMotivoEmisTI stays omitted: it applies only when tpEmit is 2 or 3.
+    _append_fin_nfse(inf, payload)
     _sub(inf, "cLocEmi", c_loc_emi)
 
     # Substitution group (optional): emitting a DPS with subst causes SEFIN to
@@ -691,6 +695,58 @@ def _validate_ind_dest(payload: dict[str, Any]) -> str:
     return ind_dest[:1]
 
 
+_TP_NFSE_DEBITO = frozenset({"01", "02", "03", "04", "05", "06"})
+_TP_NFSE_CREDITO = frozenset({"01", "05"})
+
+
+def _fin_nfse(payload: dict[str, Any]) -> str:
+    fin = _text(payload.get("finalidade_emissao") or payload.get("fin_nfse") or "0") or "0"
+    fin = fin[:1]
+    if fin not in {"0", "1", "2"}:
+        raise SapNfseMapperError(f"finalidade_emissao (finNFSe) inválida: {fin!r}")
+    return fin
+
+
+def _tp_nfse_ajuste(payload: dict[str, Any], *keys: str) -> str:
+    raw = ""
+    for key in keys:
+        raw = _text(payload.get(key))
+        if raw:
+            break
+    if not raw:
+        return ""
+    digits = _digits(raw)
+    if len(digits) == 1:
+        digits = digits.zfill(2)
+    return digits
+
+
+def _append_fin_nfse(inf: etree._Element, payload: dict[str, Any]) -> None:
+    """Emit finNFSe (and the adjustment type, when present) before cLocEmi.
+
+    A regular NFS-e is finNFSe=0 and carries neither tpNFSeDebito nor
+    tpNFSeCredito. Those tags belong only to debit (2) and credit (1) notes.
+    """
+    fin = _fin_nfse(payload)
+    _sub(inf, "finNFSe", fin)
+    if fin == "2":
+        tp = _tp_nfse_ajuste(payload, "tipo_nfse_debito", "tp_nfse_debito", "tpNFSeDebito")
+        if tp and tp not in _TP_NFSE_DEBITO:
+            raise SapNfseMapperError(
+                f"tipo_nfse_debito (tpNFSeDebito) inválido: {tp!r} (use 01 a 06)"
+            )
+        if tp:
+            _sub(inf, "tpNFSeDebito", tp)
+    elif fin == "1":
+        tp = _tp_nfse_ajuste(payload, "tipo_nfse_credito", "tp_nfse_credito", "tpNFSeCredito")
+        if tp and tp not in _TP_NFSE_CREDITO:
+            raise SapNfseMapperError(
+                f"tipo_nfse_credito (tpNFSeCredito) inválido: {tp!r} (use 01 ou 05)"
+            )
+        if tp:
+            _sub(inf, "tpNFSeCredito", tp)
+
+
 def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str, Any]) -> None:
     """Validate and, when enabled, append <IBSCBS>.
 
@@ -729,10 +785,7 @@ def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str,
             f"empresa (item LC 116 {item or '?'}, NBS {nbs or '?'})."
         )
 
-    fin = _text(payload.get("finalidade_emissao") or payload.get("fin_nfse") or "0") or "0"
     ind_final = _text(payload.get("consumidor_final") or payload.get("ind_final") or "0") or "0"
-    if fin[:1] not in {"0", "1", "2"}:
-        raise SapNfseMapperError(f"finalidade_emissao (finNFSe) inválida: {fin!r}")
     if ind_final[:1] not in {"0", "1"}:
         raise SapNfseMapperError(f"consumidor_final (indFinal) deve ser 0 ou 1: {ind_final!r}")
     ind_dest = _validate_ind_dest(payload)
@@ -741,22 +794,19 @@ def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str,
         return
 
     ibs = _sub(inf, "IBSCBS")
-    _sub(ibs, "finNFSe", fin[:1])
     _sub(ibs, "indFinal", ind_final[:1])
     _sub(ibs, "cIndOp", c_ind_op)
     _sub(ibs, "indDest", ind_dest)
     if ind_dest == "1":
         dest = payload.get("destinatario") or payload.get("destinatario_operacao")
         _append_pessoa(_sub(ibs, "dest"), dest, default_name="DESTINATARIO")
-    # Homologação em 13/10/2026 19:20 voltou a exigir trib/gIBSCBS. CST direto
-    # em trib é recusado: "invalid child element 'CST', expected 'gIBSCBS'".
-    # De manhã o schema inverso (CST direto) estava no ar; a DPS segue o que
-    # a SEFIN valida agora. Alíquotas e valores continuam com a calculadora.
+    # NT 009 / homologação em 20/10/2026: trib espera CST direto.
+    # gIBSCBS nesse ponto é E1235 ("invalid child element 'gIBSCBS', expected 'CST'").
+    # Alíquotas e valores continuam com a calculadora.
     valores = _sub(ibs, "valores")
     trib = _sub(valores, "trib")
-    grupo = _sub(trib, "gIBSCBS")
-    _sub(grupo, "CST", cst)
-    _sub(grupo, "cClassTrib", c_class)
+    _sub(trib, "CST", cst)
+    _sub(trib, "cClassTrib", c_class)
 
 
 def dps_xml_bytes(root: etree._Element) -> bytes:
