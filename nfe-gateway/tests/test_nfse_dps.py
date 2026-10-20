@@ -78,9 +78,8 @@ def test_build_unsigned_dps_success(sap_fixture):
     inf = root.find(f"{{{NS}}}infDPS")
     header = [etree.QName(child).localname for child in inf]
     assert header.index("tpEmit") < header.index("finNFSe") < header.index("cLocEmi")
-    assert header.index("toma") < header.index("indDest") < header.index("serv")
+    assert "indDest" not in header
     assert inf.findtext(f"{{{NS}}}finNFSe") == "0"
-    assert inf.findtext(f"{{{NS}}}indDest") == "0"
     assert inf.find(f"{{{NS}}}tpNFSeDebito") is None
     assert inf.find(f"{{{NS}}}tpNFSeCredito") is None
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
@@ -88,6 +87,7 @@ def test_build_unsigned_dps_success(sap_fixture):
     assert [etree.QName(child).localname for child in ibs] == [
         "indFinal",
         "cIndOp",
+        "indDest",
         "valores",
     ]
     trib = ibs.find(f"{{{NS}}}valores/{{{NS}}}trib")
@@ -243,10 +243,11 @@ def test_build_unsigned_dps_ibscbs_when_classification_provided():
     assert header.index("finNFSe") < header.index("cLocEmi")
     assert inf.findtext(f"{{{NS}}}finNFSe") == "0"
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
-    assert header.index("toma") < header.index("indDest")
+    assert "indDest" not in header
     assert [etree.QName(child).localname for child in ibs] == [
         "indFinal",
         "cIndOp",
+        "indDest",
         "valores",
     ]
 
@@ -398,14 +399,11 @@ def test_ibscbs_ind_dest_1_emits_dest_group():
     payload["indicador_destinatario"] = "1"
     payload["destinatario"] = {"cpf": "12345678909", "razao_social": "FULANO DE TAL"}
     root = build_unsigned_dps(payload, homologacao=True)
-    inf = root.find(f"{{{NS}}}infDPS")
-    names = [etree.QName(c).localname for c in inf]
-    assert names.index("toma") < names.index("indDest") < names.index("dest") < names.index("serv")
     ibs = root.find(f"{{{NS}}}infDPS/{{{NS}}}IBSCBS")
     assert [etree.QName(c).localname for c in ibs] == [
-        "indFinal", "cIndOp", "valores",
+        "indFinal", "cIndOp", "indDest", "dest", "valores",
     ]
-    dest = inf.find(f"{{{NS}}}dest")
+    dest = ibs.find(f"{{{NS}}}dest")
     assert dest.findtext(f"{{{NS}}}CPF") == "12345678909"
     assert dest.findtext(f"{{{NS}}}xNome") == "FULANO DE TAL"
     trib = ibs.find(f"{{{NS}}}valores/{{{NS}}}trib")

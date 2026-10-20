@@ -415,9 +415,6 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
     _sub(reg_trib, "regEspTrib", _reg_esp_trib(payload))
 
     _append_pessoa(_sub(inf, "toma"), toma, default_name="CONSUMIDOR NAO IDENTIFICADO")
-    # NT 009 v1.01 pacote 2: indDest (e dest, quando indDest=1) ficam em infDPS,
-    # imediatamente depois de toma.
-    _append_ind_dest(inf, payload)
 
     if interm:
         inter_el = _sub(inf, "interm")
@@ -678,7 +675,9 @@ def _ibscbs_classification(payload: dict[str, Any], serv: dict[str, Any]) -> tup
 
 
 # Competência >= 2026-10-01 exige o grupo (E0855). CST 000 tem IndExigeTrib,
-# então cIndOp entra. indDest fica em infDPS, depois de toma (NT 009 pacote 2).
+# então cIndOp entra. A NT 009 descreve indDest depois de toma, mas a
+# homologação em 20/10/2026 rejeita esse ponto ("expected interm, serv").
+# indDest permanece dentro de IBSCBS.
 _EMIT_DPS_IBSCBS = True
 
 
@@ -804,6 +803,7 @@ def _append_ibscbs(inf: etree._Element, payload: dict[str, Any], serv: dict[str,
     ibs = _sub(inf, "IBSCBS")
     _sub(ibs, "indFinal", ind_final[:1])
     _sub(ibs, "cIndOp", c_ind_op)
+    _append_ind_dest(ibs, payload)
     # NT 009 / homologação em 20/10/2026: trib espera CST direto.
     # gIBSCBS nesse ponto é E1235 ("invalid child element 'gIBSCBS', expected 'CST'").
     # Alíquotas e valores continuam com a calculadora.
