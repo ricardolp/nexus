@@ -439,11 +439,13 @@ def build_unsigned_dps(payload: dict[str, Any], *, homologacao: bool) -> etree._
     disc = _text(serv.get("discriminacao"))
     if not disc:
         raise SapNfseMapperError("servico.discriminacao is required")
-    _sub(cserv, "xDescServ", disc)
-    # TCCServ has no cCNAE (cTribNac, cTribMun?, xDescServ, cNBS?, cIntContrib?).
+    # Produção restrita de 20/10/2026 (esquemas_prod_restrita_20261020):
+    # TCCServ é cTribNac, cTribMun?, cNBS?, cIntContrib?, xDescServ.
+    # cNBS depois de xDescServ é E1235 ("invalid child element 'cNBS'").
     nbs = _normalize_nbs(serv.get("codigo_nbs"))
     if len(nbs) == 9:
         _sub(cserv, "cNBS", nbs)
+    _sub(cserv, "xDescServ", disc)
 
     valores = _sub(inf, "valores")
     vserv = _sub(valores, "vServPrest")

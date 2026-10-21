@@ -74,7 +74,7 @@ def test_build_unsigned_dps_success(sap_fixture):
     ]
     cserv = root.find(f"{{{NS}}}infDPS/{{{NS}}}serv/{{{NS}}}cServ")
     assert cserv is not None
-    assert [etree.QName(child).localname for child in cserv] == ["cTribNac", "xDescServ", "cNBS"]
+    assert [etree.QName(child).localname for child in cserv] == ["cTribNac", "cNBS", "xDescServ"]
     inf = root.find(f"{{{NS}}}infDPS")
     header = [etree.QName(child).localname for child in inf]
     assert header.index("tpEmit") < header.index("finNFSe") < header.index("cLocEmi")
