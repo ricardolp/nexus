@@ -68,7 +68,10 @@ def test_signature_uses_default_xmldsig_xmlns_not_ds_prefix():
     assert "<Signature xmlns=" in out
     assert 'xmlns:ns0="' not in out and "<ns0:" not in out
     x509_el = signed.find(f".//{{{DSIG_NS}}}X509Certificate")
-    assert x509_el is not None and x509_el.text
+    if x509_el is None:
+        # signxml 5+ may leave child tags without expanded NS in the tree.
+        x509_el = signed.find(".//{*}X509Certificate")
+    assert x509_el is not None and (x509_el.text or "").strip()
     assert "\n" not in x509_el.text
     assert " " not in x509_el.text
 

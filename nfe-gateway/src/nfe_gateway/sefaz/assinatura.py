@@ -126,8 +126,12 @@ def _compact_signature_base64(signed_root: etree._Element) -> None:
 
     Safe after signing: neither element is inside the SignedInfo digest.
     Some UF validators mishandle wrapped base64 as an invalid X.509 (cStat 290).
+
+    Match by local name: signxml 5+ may put Signature under a default xmlns
+    while leaving child tags without an expanded namespace in the lxml tree.
     """
-    for local in ("SignatureValue", "X509Certificate"):
-        for el in signed_root.iter(f"{{{DSIG_NS}}}{local}"):
-            if el.text:
-                el.text = "".join(el.text.split())
+    targets = {"SignatureValue", "X509Certificate"}
+    for el in signed_root.iter():
+        local = el.tag.rsplit("}", 1)[-1] if isinstance(el.tag, str) else ""
+        if local in targets and el.text:
+            el.text = "".join(el.text.split())
