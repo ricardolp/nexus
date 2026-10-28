@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
 from lxml import etree
 
 from nfe_gateway.sefaz.xml_patches import (
     SEFAZ_BA_AUTXML_CNPJ,
+    ExportaError,
     apply_all_patches,
     ensure_ean_sem_gtin,
     patch_aut_xml_bahia,
+    patch_exporta,
     patch_ibscbs_tot,
     patch_icms51,
     patch_id_estrangeiro,
@@ -408,6 +411,53 @@ def test_apply_all_patches_idempotent_structure():
     apply_all_patches(root, {"finalidade_emissao": "3", "formas_pagamento": []})
     pag = [el for el in root.iter() if etree.QName(el).localname == "pag"]
     assert len(pag) == 1
+
+
+def test_patch_exporta_insere_grupo_antes_do_resp_tec():
+    """cStat 355: exportação exige UFSaidaPais e xLocExporta antes de infRespTec."""
+    root = _el("NFe")
+    inf = etree.SubElement(root, f"{{{NFE_NS}}}infNFe")
+    ide = etree.SubElement(inf, f"{{{NFE_NS}}}ide")
+    etree.SubElement(ide, f"{{{NFE_NS}}}idDest").text = "3"
+    etree.SubElement(inf, f"{{{NFE_NS}}}infAdic")
+    etree.SubElement(inf, f"{{{NFE_NS}}}infRespTec")
+
+    patch_exporta(
+        root,
+        {
+            "uf_local_embarque": "sc",
+            "local_embarque": "São Francisco do Sul",
+            "local_despacho": "Itajaí",
+        },
+    )
+
+    names = [etree.QName(c).localname for c in inf]
+    assert names.index("infAdic") < names.index("exporta") < names.index("infRespTec")
+    exporta = next(el for el in inf if etree.QName(el).localname == "exporta")
+    tags = {etree.QName(c).localname: c.text for c in exporta}
+    assert tags == {
+        "UFSaidaPais": "SC",
+        "xLocExporta": "São Francisco do Sul",
+        "xLocDespacho": "Itajaí",
+    }
+
+
+def test_patch_exporta_exige_local_quando_id_dest_3():
+    root = _el("NFe")
+    inf = etree.SubElement(root, f"{{{NFE_NS}}}infNFe")
+    ide = etree.SubElement(inf, f"{{{NFE_NS}}}ide")
+    etree.SubElement(ide, f"{{{NFE_NS}}}idDest").text = "3"
+    with pytest.raises(ExportaError, match="355"):
+        patch_exporta(root, {"uf_local_embarque": "", "local_embarque": ""})
+
+
+def test_patch_exporta_ignora_operacao_interna():
+    root = _el("NFe")
+    inf = etree.SubElement(root, f"{{{NFE_NS}}}infNFe")
+    ide = etree.SubElement(inf, f"{{{NFE_NS}}}ide")
+    etree.SubElement(ide, f"{{{NFE_NS}}}idDest").text = "1"
+    patch_exporta(root, {})
+    assert not any(etree.QName(c).localname == "exporta" for c in inf)
 
 
 def test_patch_ver_proc_replaces_pynfe():

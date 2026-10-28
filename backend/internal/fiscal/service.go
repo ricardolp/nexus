@@ -488,6 +488,25 @@ func (s *Service) OriginalPayloadObjectKey(ctx context.Context, documentID uuid.
 	return key, nil
 }
 
+const PayloadMissingMessage = "O arquivo original da nota não está no armazenamento. Reenvie a nota pelo SAP."
+
+// EnsureOriginalPayload confirms the blob the gateway will sign still exists.
+// The database row can outlive the object (local disk wiped, bucket replaced).
+func (s *Service) EnsureOriginalPayload(ctx context.Context, documentID uuid.UUID) error {
+	err := s.ensureOriginalPayloadBlob(ctx, documentID)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domainerr.NotFound("payload_not_found", PayloadMissingMessage)
+	}
+	var missing *domainerr.Error
+	if errors.As(err, &missing) && missing.Code == "payload_not_found" {
+		return missing
+	}
+	return err
+}
+
 // DocumentPayloadDownload is what a client needs to stream a document's
 // original XML/JSON back out: the bytes themselves plus enough metadata to
 // set sane HTTP response headers.
@@ -1650,6 +1669,9 @@ func (s *Service) ResubmitOutbound(ctx context.Context, organizationID, document
 	}
 	if strings.ToLower(doc.Direction) != "outbound" {
 		return nil, domainerr.Validation("not_outbound", "Only outbound documents can be resubmitted")
+	}
+	if err := s.EnsureOriginalPayload(ctx, documentID); err != nil {
+		return nil, err
 	}
 	fromStatus := strings.ToLower(doc.Status)
 	switch fromStatus {

@@ -33,8 +33,8 @@ func TestDecodeDanfePDF(t *testing.T) {
 	}
 
 	cases := map[string]string{
-		"":         "missing_pdf_base64",
-		"@@@@":     "invalid_pdf_base64",
+		"":     "missing_pdf_base64",
+		"@@@@": "invalid_pdf_base64",
 		base64.StdEncoding.EncodeToString([]byte("<xml/>")): "invalid_pdf",
 	}
 	for in, code := range cases {
@@ -46,6 +46,40 @@ func TestDecodeDanfePDF(t *testing.T) {
 	big := base64.StdEncoding.EncodeToString([]byte("%PDF" + strings.Repeat("a", MaxDanfePDFBytes)))
 	if _, err := DecodeDanfePDF(big); domainCode(err) != "danfe_too_large" {
 		t.Fatalf("big: err=%v, want danfe_too_large", err)
+	}
+}
+
+func TestSAPCancelRefKind(t *testing.T) {
+	nfe := strings.Repeat("1", 44)
+	nfse := strings.Repeat("2", 50)
+	id := "11111111-1111-1111-1111-111111111111"
+	cases := map[string]string{
+		"":         "",
+		"  " + nfe: "nfe",
+		nfse:       "nfse_key",
+		id:         "document_id",
+		"00001234": "nfse_number",
+		"123":      "nfse_number",
+	}
+	for ref, want := range cases {
+		if got := sapCancelRefKind(ref); got != want {
+			t.Fatalf("%q: got %q want %q", ref, got, want)
+		}
+	}
+}
+
+func TestChooseNFSeCancelProvider(t *testing.T) {
+	if got := chooseNFSeCancelProvider("ipm", "sefin_nacional", true); got != "ipm" {
+		t.Fatalf("frozen provider: got %q", got)
+	}
+	if got := chooseNFSeCancelProvider("", "ipm", true); got != "ipm" {
+		t.Fatalf("garuva catalog: got %q", got)
+	}
+	if got := chooseNFSeCancelProvider("", "ipm", false); got != "sefin_nacional" {
+		t.Fatalf("catalog disabled: got %q", got)
+	}
+	if got := chooseNFSeCancelProvider("", "", false); got != "sefin_nacional" {
+		t.Fatalf("no catalog: got %q", got)
 	}
 }
 

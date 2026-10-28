@@ -31,9 +31,9 @@ from nfe_gateway.nfse.parametros import (
     is_cnc_rejection,
 )
 from nfe_gateway.oauth import TokenCache
-from nfe_gateway.sefaz.client import SefazClient
+from nfe_gateway.sefaz.client import SefazClient, is_name_resolution_error
 from nfe_gateway.sefaz.environment import resolve_homologacao
-from nfe_gateway.storage import ObjectStore, build_object_store
+from nfe_gateway.storage import ObjectNotFoundError, ObjectStore, build_object_store
 
 logger = logging.getLogger("nfe_gateway.outbound_consumer")
 
@@ -46,6 +46,18 @@ CERTIFICATE_MISSING_MESSAGE = (
     "Empresa sem certificado A1 ativo. Cadastre o certificado em Configurações → Empresas para transmitir a nota."
 )
 
+PAYLOAD_MISSING_MESSAGE = (
+    "O arquivo original da nota não está no armazenamento. Reenvie a nota pelo SAP."
+)
+
+CERTIFICATE_DNS_MESSAGE = (
+    "Não foi possível buscar o certificado digital (falha de DNS). A nota não foi enviada à SEFAZ."
+)
+
+SERVICE_DNS_MESSAGE = (
+    "Falha de DNS ao preparar o envio. A nota não chegou à SEFAZ."
+)
+
 
 NFSE_CREDENTIALS_MISSING_MESSAGE = (
     "Empresa sem usuário/senha do webservice municipal de NFS-e. Cadastre em Configurações → Empresas → NFS-e municipal."
@@ -54,6 +66,12 @@ NFSE_CREDENTIALS_MISSING_MESSAGE = (
 
 def classify_transmission_error(exc: BaseException) -> tuple[str, str]:
     """Map a pre-SEFAZ failure to a code and a message safe to show on the note."""
+    if isinstance(exc, ObjectNotFoundError) or _is_missing_object(exc):
+        return "payload_not_found", PAYLOAD_MISSING_MESSAGE
+    if is_name_resolution_error(exc):
+        if isinstance(exc, BackendError):
+            return "certificate_unreachable", CERTIFICATE_DNS_MESSAGE
+        return "service_unreachable", SERVICE_DNS_MESSAGE
     if isinstance(exc, BackendError):
         code, detail = _problem_fields(exc.body)
         if code == "certificate_not_found" or (
@@ -68,6 +86,11 @@ def classify_transmission_error(exc: BaseException) -> tuple[str, str]:
             return code or "backend_error", detail
         return code or "backend_error", str(exc)
     return "transmission_error", str(exc)
+
+
+def _is_missing_object(exc: BaseException) -> bool:
+    text = str(exc)
+    return "NoSuchKey" in text or "specified key does not exist" in text.lower()
 
 
 async def _attach_convenio_diagnosis(
@@ -346,9 +369,14 @@ async def _publish_transmission_error(
     broker: Broker, organization_id: UUID, document_id: str, exc: BaseException
 ) -> None:
     error_code, error_message = classify_transmission_error(exc)
+    logged = error_message
+    if isinstance(exc, ObjectNotFoundError):
+        logged = f"{error_message} key={exc.object_key}"
     logger.warning(
-        "transmission failed",
-        extra={"document_id": document_id, "error_code": error_code, "error": error_message},
+        "transmission failed document_id=%s error_code=%s error=%s",
+        document_id,
+        error_code,
+        logged,
     )
     await broker.publish(
         RESULT_ROUTING_KEY,

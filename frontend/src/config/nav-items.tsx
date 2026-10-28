@@ -1,4 +1,4 @@
-import { ArrowDownToLineIcon, ArrowUpFromLineIcon, ActivityIcon, AlertTriangleIcon, BuildingIcon, HandshakeIcon, InboxIcon, LayoutDashboardIcon,
+import { ArrowDownToLineIcon, ArrowUpFromLineIcon, ActivityIcon, AlertTriangleIcon, BookOpenIcon, BuildingIcon, HandshakeIcon, InboxIcon, LayoutDashboardIcon,
   ListIcon,
   PackageIcon,
   PlugZapIcon,
@@ -44,6 +44,7 @@ export const adminNavGroups: NavGroup[] = [
     items: [
       { title: 'Organizações', url: '/admin/organizations', icon: BuildingIcon },
       { title: 'Usuários', url: '/admin/users', icon: UsersIcon },
+      { title: 'FAQ mensagens', url: '/admin/faq', icon: BookOpenIcon },
       { title: 'Perfil', url: '/admin/profile', icon: UserIcon }
     ]
   }

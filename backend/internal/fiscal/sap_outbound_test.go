@@ -506,6 +506,41 @@ func TestSAPFlatFieldMapping(t *testing.T) {
 	}
 }
 
+func TestDINumberSkipsBlankImportDeclaration(t *testing.T) {
+	if _, ok := diNumber(SAPDocumentoImportacao{}); ok {
+		t.Fatal("missing numero_di should be skipped")
+	}
+	empty := ""
+	spaces := "   "
+	if _, ok := diNumber(SAPDocumentoImportacao{NumeroDi: &empty}); ok {
+		t.Fatal("empty numero_di should be skipped")
+	}
+	if _, ok := diNumber(SAPDocumentoImportacao{NumeroDi: &spaces}); ok {
+		t.Fatal("whitespace numero_di should be skipped")
+	}
+	n := "2600123456"
+	got, ok := diNumber(SAPDocumentoImportacao{NumeroDi: &n})
+	if !ok || got != n {
+		t.Fatalf("di number=%q ok=%v", got, ok)
+	}
+	padded := "  2600123456  "
+	got, ok = diNumber(SAPDocumentoImportacao{NumeroDi: &padded})
+	if !ok || got != n {
+		t.Fatalf("trimmed di number=%q ok=%v", got, ok)
+	}
+}
+
+func TestAdditionNumberSkipsMissingSequence(t *testing.T) {
+	if _, ok := additionNumber(SAPAdicao{}); ok {
+		t.Fatal("missing numero_adicao should be skipped")
+	}
+	n := 1
+	got, ok := additionNumber(SAPAdicao{NumeroAdicao: &n})
+	if !ok || got != 1 {
+		t.Fatalf("addition=%d ok=%v", got, ok)
+	}
+}
+
 // Helper functions
 func strPtr(s string) *string {
 	return &s

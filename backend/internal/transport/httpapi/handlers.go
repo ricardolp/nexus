@@ -13,6 +13,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/billing"
 	"github.com/nexus/fiscal-messaging/internal/certificate"
 	"github.com/nexus/fiscal-messaging/internal/email"
+	"github.com/nexus/fiscal-messaging/internal/faq"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/identity"
 	"github.com/nexus/fiscal-messaging/internal/inbound"
@@ -35,6 +36,7 @@ type ControlPlane struct {
 	Identity         *identity.Service
 	Orgs             *organization.Service
 	Ops              *ops.Service
+	FAQ              *faq.Service
 	IntegrationLogs  *integrationlog.Service
 	Webhooks         *webhook.Service
 	Certificates     *certificate.Service
@@ -112,6 +114,13 @@ func (a *ControlPlane) Routes() http.Handler {
 		r.Get("/v1/request_traces/{trace_id}", a.getRequestTrace)
 		r.Get("/v1/platform/errors", a.listPlatformErrors)
 		r.Get("/v1/platform/status", a.getPlatformStatus)
+		r.Get("/v1/platform/faq/messages", a.listFAQMessages)
+		r.Post("/v1/platform/faq/messages", a.createFAQMessage)
+		r.Get("/v1/platform/faq/messages/{id}", a.getFAQMessage)
+		r.Put("/v1/platform/faq/messages/{id}", a.updateFAQMessage)
+		r.Patch("/v1/platform/faq/messages/{id}/active", a.patchFAQMessageActive)
+		r.Get("/v1/platform/faq/hits/missing", a.listFAQMissingHits)
+		r.Get("/v1/platform/faq/hits/top", a.listFAQTopHits)
 		r.Get("/v1/organizations/{organization_id}/authentication_settings", a.getAuthSettings)
 		r.Patch("/v1/organizations/{organization_id}/authentication_settings", a.patchAuthSettings)
 		r.Get("/v1/organizations/{organization_id}/members", a.listMembers)
@@ -1694,6 +1703,7 @@ type InboundAPI struct {
 	Inbound *inbound.Service
 	Orgs    *organization.Service
 	Tokens  *auth.TokenService
+	FAQ     *faq.Service
 }
 
 func (a *InboundAPI) Routes() http.Handler {
@@ -1709,6 +1719,7 @@ func (a *InboundAPI) Routes() http.Handler {
 		r.Use(a.bearerOrLegacyOrgTokenAuth)
 		r.Use(auth.RequireClient)
 		r.Post("/v1/fiscal_documents/{document_type}", a.receiveDocument)
+		r.Get("/v1/fiscal/help", a.fiscalHelpLookup)
 	})
 
 	r.Group(func(r chi.Router) {

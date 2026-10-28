@@ -447,6 +447,39 @@ def test_blank_required_int_field_is_mapper_error(sap_fixture):
         build_unsigned_xml(sap_fixture, homologacao=True)
 
 
+def test_exportacao_grava_local_de_saida_do_pais(sap_fixture):
+    """cStat 355: idDest=3 must carry exporta from the SAP embarque fields."""
+    sap_fixture["local_destino"] = "3"
+    sap_fixture["uf_destinatario"] = "EX"
+    sap_fixture["codigo_pais_destinatario"] = "2496"
+    sap_fixture["cnpj_destinatario"] = ""
+    sap_fixture["cpf_destinatario"] = ""
+    sap_fixture["id_estrangeiro_destinatario"] = "1388147556"
+    sap_fixture["uf_local_embarque"] = "SC"
+    sap_fixture["local_embarque"] = "Itajaí"
+    sap_fixture["local_despacho"] = ""
+    xml = build_unsigned_xml(sap_fixture, homologacao=True)
+    ns = "http://www.portalfiscal.inf.br/nfe"
+    inf = xml.find(f".//{{{ns}}}infNFe")
+    assert inf is not None
+    names = [etree.QName(c).localname for c in inf]
+    assert "exporta" in names
+    assert names.index("exporta") < names.index("infRespTec")
+    exporta = inf.find(f"{{{ns}}}exporta")
+    assert exporta is not None
+    assert exporta.find(f"{{{ns}}}UFSaidaPais").text == "SC"
+    assert exporta.find(f"{{{ns}}}xLocExporta").text == "Itajai"
+    assert exporta.find(f"{{{ns}}}xLocDespacho") is None
+
+
+def test_exportacao_sem_local_de_saida_falha_antes_da_sefaz(sap_fixture):
+    sap_fixture["local_destino"] = "3"
+    sap_fixture["uf_local_embarque"] = ""
+    sap_fixture["local_embarque"] = ""
+    with pytest.raises(SapNfeMapperError, match="355"):
+        build_unsigned_xml(sap_fixture, homologacao=True)
+
+
 def test_cnpj_destinatario_alphanumeric_survives_pynfe(sap_fixture):
     """NT 2026.004: PyNFe so_numeros() strips letters — patch must restore CNPJ."""
     # Pattern [A-Z0-9]{12}[0-9]{2}; 4 letters + 10 digits → digit remnant 3315000193.

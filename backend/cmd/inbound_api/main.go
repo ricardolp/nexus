@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/nexus/fiscal-messaging/internal/config"
+	"github.com/nexus/fiscal-messaging/internal/faq"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/inbound"
 	"github.com/nexus/fiscal-messaging/internal/integration"
@@ -61,6 +62,7 @@ func main() {
 		Inbound: inbound.NewService(pool, fiscalSvc, orgs, integrations).WithIntegrationLog(intLogs),
 		Orgs:    orgs,
 		Tokens:  tokens,
+		FAQ:     faq.NewService(pool),
 	}
 
 	r := chi.NewRouter()

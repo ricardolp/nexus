@@ -66,7 +66,7 @@
           "raw": "{\n  \"chave_acesso\": \"{{chave_acesso}}\",\n  \"justificativa\": \"Erro na emissao da nota fiscal\"\n}"
         },
         "url": "{{sap_nfe_url}}/cancel",
-        "description": "Evento 110111. Assíncrono: responde 202 e o resultado aparece em `/{chave}/status`. Justificativa com no mínimo 15 caracteres."
+        "description": "NF-e: evento SEFAZ 110111 com chave de 44 dígitos. NFS-e: a mesma rota aceita chave nacional de 50 caracteres, `document_id` ou o número da nota municipal (Garuva/IPM). O provedor gravado na nota manda para a SEFIN Nacional ou para o municipal. `c_motivo` opcional na NFS-e (`1`, `2` ou `9`; padrão `1`). `cnpj_prestador` desambigua número municipal repetido. Justificativa com no mínimo 15 caracteres. Assíncrono: responde 202."
       },
       "response": []
     },

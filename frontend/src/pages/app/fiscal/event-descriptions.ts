@@ -66,6 +66,20 @@ function isSefazCstat(value: string): boolean {
   return /^\d{3,4}$/.test(value.trim());
 }
 
+const PAYLOAD_MISSING_MESSAGE =
+  'O arquivo original da nota não está no armazenamento. Reenvie a nota pelo SAP.';
+const DNS_FAILURE_MESSAGE =
+  'Falha de DNS ao preparar o envio. A nota não chegou à SEFAZ — ela não foi recusada.';
+
+function presentMotivo(text: string | undefined): string | undefined {
+  if (!text) return text;
+  if (/NoSuchKey|GetObject operation|specified key does not exist/i.test(text)) return PAYLOAD_MISSING_MESSAGE;
+  if (/Name or service not known|Errno -2|getaddrinfo|no such host|Temporary failure in name resolution/i.test(text)) {
+    return DNS_FAILURE_MESSAGE;
+  }
+  return text;
+}
+
 /** SEFAZ/SEFIN rejection payload uses cstat + x_motivo (not inbound's `reason`). */
 export function describeAuthorityResult(meta: Record<string, unknown>): string | undefined {
   const cstat = metaText(meta.cstat) ?? metaText(meta.error_code) ?? metaText(meta.authorization_code);
@@ -74,18 +88,19 @@ export function describeAuthorityResult(meta: Record<string, unknown>): string |
     metaText(meta.reason) ??
     metaText(meta.error_message) ??
     metaText(meta.authorization_message);
-  if (cstat && motivo) {
-    if (!isSefazCstat(cstat) || motivoAlreadyHasCode(motivo, cstat)) return motivo;
-    return `${cstat} — ${motivo}`;
+  const shown = presentMotivo(motivo);
+  if (cstat && shown) {
+    if (!isSefazCstat(cstat) || motivoAlreadyHasCode(shown, cstat)) return shown;
+    return `${cstat} — ${shown}`;
   }
-  if (motivo) return motivo;
+  if (shown) return shown;
   if (cstat) return isSefazCstat(cstat) ? `Código ${cstat}` : cstat;
   return undefined;
 }
 
 export function formatAuthorityReturn(code?: string | null, message?: string | null): string {
   const cstat = code?.trim() ?? '';
-  const motivo = message?.trim() ?? '';
+  const motivo = presentMotivo(message?.trim()) ?? '';
   if (cstat && motivo && isSefazCstat(cstat)) return `${cstat} — ${motivo}`;
   return motivo || cstat || '—';
 }
@@ -245,6 +260,27 @@ export function describeInboundEvent(event: ApiDocumentEvent): DescribedEvent {
       };
 
     case 'fiscal.document.failed.v1':
+      if (
+        metaText(meta.error_code) === 'certificate_unreachable' ||
+        metaText(meta.cstat) === 'certificate_unreachable' ||
+        metaText(meta.error_code) === 'authority_unreachable' ||
+        metaText(meta.cstat) === 'authority_unreachable' ||
+        metaText(meta.error_code) === 'service_unreachable' ||
+        metaText(meta.cstat) === 'service_unreachable'
+      ) {
+        return {
+          title: 'Falha de comunicação',
+          description: describeAuthorityResult(meta) ?? DNS_FAILURE_MESSAGE
+        };
+      }
+      if (metaText(meta.error_code) === 'payload_not_found' || metaText(meta.cstat) === 'payload_not_found') {
+        return {
+          title: 'Arquivo da nota ausente',
+          description:
+            describeAuthorityResult(meta) ??
+            'O arquivo original da nota não está no armazenamento. Reenvie a nota pelo SAP.'
+        };
+      }
       if (metaText(meta.error_code) === 'certificate_not_found' || metaText(meta.cstat) === 'certificate_not_found') {
         return {
           title: 'Certificado digital ausente',

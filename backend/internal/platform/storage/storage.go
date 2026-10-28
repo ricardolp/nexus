@@ -2,10 +2,13 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/nexus/fiscal-messaging/internal/platform/crypto"
 )
 
@@ -13,6 +16,32 @@ type ObjectStore interface {
 	Put(ctx context.Context, key string, contentType string, data []byte) error
 	Get(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
+}
+
+// IsNotFound reports a missing blob. Local files surface os.ErrNotExist
+// (on Windows, a missing parent directory is path-not-found, not ErrNotExist).
+// S3-compatible stores surface NoSuchKey.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) || isWindowsPathMissing(err) {
+		return true
+	}
+	var missing *types.NoSuchKey
+	if errors.As(err, &missing) {
+		return true
+	}
+	return strings.Contains(err.Error(), "NoSuchKey")
+}
+
+func isWindowsPathMissing(err error) bool {
+	var pe *os.PathError
+	if !errors.As(err, &pe) || pe.Err == nil {
+		return false
+	}
+	msg := strings.ToLower(pe.Err.Error())
+	return strings.Contains(msg, "cannot find the file") || strings.Contains(msg, "cannot find the path")
 }
 
 // LocalStore is the dev/on-prem object store — payloads are fiscal document

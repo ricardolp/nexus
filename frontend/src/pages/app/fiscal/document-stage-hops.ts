@@ -129,6 +129,10 @@ function sapStepLabel(step?: HopTrackInput['currentPlanStep'], fallback = 'Lanç
   return stepTypeLabels[step.step_type] ?? step.step_type;
 }
 
+const PAYLOAD_MISSING_FALLBACK =
+  'O arquivo original da nota não está no armazenamento. Reenvie a nota pelo SAP.';
+const DNS_FAILURE_FALLBACK =
+  'Falha de DNS ao preparar o envio. A nota não chegou à SEFAZ — ela não foi recusada.';
 const CERTIFICATE_MISSING_FALLBACK =
   'A empresa não tem certificado A1 ativo. Cadastre o certificado em Configurações → Empresas para transmitir a nota.';
 const CERTIFICATE_EXPIRED_FALLBACK =
@@ -143,45 +147,50 @@ function hasProcessingCancelled(events: ApiDocumentEvent[] | undefined) {
   });
 }
 
-function certificateProblemCode(document: ApiFiscalDocument, events: ApiDocumentEvent[] | undefined) {
-  const fromDocument = norm(document.authorization_code);
-  if (fromDocument === 'certificate_not_found' || fromDocument === 'certificate_expired') return fromDocument;
-  for (const event of events ?? []) {
-    const meta = event.metadata_json;
-    if (!meta || typeof meta !== 'object') continue;
-    const raw = (meta as Record<string, unknown>).error_code ?? (meta as Record<string, unknown>).cstat;
-    const code = typeof raw === 'string' ? norm(raw) : '';
-    if (code === 'certificate_not_found' || code === 'certificate_expired') return code;
+const FAILURE_EVENT_TYPES = new Set([
+  'fiscal.document.rejected.v1',
+  'fiscal.document.failed.v1',
+  'fiscal.document.authorized.v1',
+  'fiscal.document.cancelled.v1'
+]);
+
+function latestFailureMeta(document: ApiFiscalDocument, events: ApiDocumentEvent[] | undefined) {
+  if (events?.length) {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i];
+      if (!FAILURE_EVENT_TYPES.has(event.event_type)) continue;
+      if (!event.metadata_json || typeof event.metadata_json !== 'object') continue;
+      return event.metadata_json as Record<string, unknown>;
+    }
   }
+  return {
+    cstat: document.authorization_code,
+    error_code: document.authorization_code,
+    x_motivo: document.authorization_message
+  };
+}
+
+function failureCode(meta: Record<string, unknown>) {
+  const raw = meta.error_code ?? meta.cstat ?? meta.authorization_code;
+  return typeof raw === 'string' ? norm(raw) : '';
+}
+
+function certificateProblemCode(document: ApiFiscalDocument, events: ApiDocumentEvent[] | undefined) {
+  const code = failureCode(latestFailureMeta(document, events));
+  if (code === 'certificate_not_found' || code === 'certificate_expired') return code;
   return '';
 }
 
 function latestReason(document: ApiFiscalDocument, events: ApiDocumentEvent[] | undefined) {
+  const described = describeAuthorityResult(latestFailureMeta(document, events));
+  if (described) return described;
   if (events?.length) {
-    const preferred = [
-      'fiscal.document.rejected.v1',
-      'fiscal.document.failed.v1',
-      'fiscal.document.authorized.v1',
-      'fiscal.document.cancelled.v1'
-    ];
-    const preferredSet = new Set(preferred);
-    for (let i = events.length - 1; i >= 0; i--) {
-      const event = events[i];
-      if (!preferredSet.has(event.event_type)) continue;
-      if (!event.metadata_json || typeof event.metadata_json !== 'object') continue;
-      const described = describeAuthorityResult(event.metadata_json as Record<string, unknown>);
-      if (described) return described;
-    }
     const tail = events[events.length - 1]?.metadata_json;
     if (tail && typeof tail === 'object') {
-      const described = describeAuthorityResult(tail as Record<string, unknown>);
-      if (described) return described;
+      return describeAuthorityResult(tail as Record<string, unknown>);
     }
   }
-  return describeAuthorityResult({
-    cstat: document.authorization_code,
-    x_motivo: document.authorization_message
-  });
+  return undefined;
 }
 
 function buildOutbound(input: HopTrackInput): DocumentHop[] {
@@ -391,6 +400,26 @@ function buildAlert(input: HopTrackInput, hops: DocumentHop[]): DocumentHopAlert
   }
 
   if (failed) {
+    const latestCode = failureCode(latestFailureMeta(document, events));
+    if (latestCode === 'payload_not_found' || reason === PAYLOAD_MISSING_FALLBACK) {
+      return {
+        tone: 'danger',
+        title: 'Arquivo da nota ausente',
+        description: PAYLOAD_MISSING_FALLBACK
+      };
+    }
+    if (
+      latestCode === 'certificate_unreachable' ||
+      latestCode === 'authority_unreachable' ||
+      latestCode === 'service_unreachable' ||
+      reason === DNS_FAILURE_FALLBACK
+    ) {
+      return {
+        tone: 'danger',
+        title: 'Falha de comunicação',
+        description: reason ?? DNS_FAILURE_FALLBACK
+      };
+    }
     const certificateCode = certificateProblemCode(document, events);
     if (certificateCode === 'certificate_not_found' || certificateCode === 'certificate_expired') {
       return {

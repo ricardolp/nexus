@@ -15,6 +15,7 @@ import (
 	"github.com/nexus/fiscal-messaging/internal/certificate"
 	"github.com/nexus/fiscal-messaging/internal/config"
 	"github.com/nexus/fiscal-messaging/internal/email"
+	"github.com/nexus/fiscal-messaging/internal/faq"
 	"github.com/nexus/fiscal-messaging/internal/fiscal"
 	"github.com/nexus/fiscal-messaging/internal/identity"
 	"github.com/nexus/fiscal-messaging/internal/inbound"
@@ -87,6 +88,7 @@ func main() {
 		Identity:         identitySvc,
 		Orgs:             orgs,
 		Ops:              ops.NewService(pool),
+		FAQ:              faq.NewService(pool),
 		IntegrationLogs:  integrationlog.NewService(pool),
 		Webhooks:         webhook.NewService(pool),
 		Certificates:     certificate.NewService(pool, certStore),

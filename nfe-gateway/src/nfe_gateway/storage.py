@@ -15,6 +15,14 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
+class ObjectNotFoundError(FileNotFoundError):
+    """The object key is registered, but the blob is not in the store."""
+
+    def __init__(self, object_key: str):
+        self.object_key = object_key
+        super().__init__(object_key)
+
+
 class ObjectStore:
     async def get(self, object_key: str) -> bytes:
         raise NotImplementedError
@@ -31,7 +39,10 @@ class LocalObjectStore(ObjectStore):
         self._key = encryption_key
 
     async def get(self, object_key: str) -> bytes:
-        raw = (self._base / object_key).read_bytes()
+        try:
+            raw = (self._base / object_key).read_bytes()
+        except FileNotFoundError as exc:
+            raise ObjectNotFoundError(object_key) from exc
         return _decrypt(self._key, raw.decode("ascii"))
 
     async def put(self, object_key: str, content_type: str, data: bytes) -> None:
@@ -78,7 +89,15 @@ class S3ObjectStore(ObjectStore):
         import asyncio
 
         def _read() -> bytes:
-            obj = self._client.get_object(Bucket=self._bucket, Key=object_key)
+            from botocore.exceptions import ClientError
+
+            try:
+                obj = self._client.get_object(Bucket=self._bucket, Key=object_key)
+            except ClientError as exc:
+                code = str((exc.response or {}).get("Error", {}).get("Code") or "")
+                if code in {"NoSuchKey", "404", "NotFound"}:
+                    raise ObjectNotFoundError(object_key) from exc
+                raise
             raw = obj["Body"].read()
             return _decrypt(self._key, raw.decode("ascii"))
 

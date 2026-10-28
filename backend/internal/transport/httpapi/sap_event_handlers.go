@@ -29,8 +29,10 @@ func SAPDanfeBodyLimit(r *http.Request) int64 {
 	return 0
 }
 
-// sapEventRoutes registers the frozen SAP NF-e event/DANFE contract under
+// sapEventRoutes registers the frozen SAP event/DANFE contract under
 // /v1/nfe/documents/sap (X-Org-Token auth, see legacyOrgTokenAuth).
+// POST .../cancel accepts NF-e (44-digit key) and NFS-e (national key,
+// document id, or municipal number).
 func (a *InboundAPI) sapEventRoutes(r chi.Router, base string) {
 	r.Post(base+"/cancel", a.sapCancelNFe)
 	r.Post(base+"/cce", a.sapCCe)
@@ -49,6 +51,10 @@ type sapCancelBody struct {
 	ChaveAcesso   string `json:"chave_acesso"`
 	AccessKey     string `json:"access_key"`
 	Justificativa string `json:"justificativa"`
+	// CMotivo is NFS-e only (1 erro na emissão, 2 serviço não prestado, 9 outros).
+	// Omitted values default to 1 so the NF-e body still cancels a service note.
+	CMotivo       string `json:"c_motivo"`
+	CNPJPrestador string `json:"cnpj_prestador"`
 }
 
 type sapCCeBody struct {
@@ -146,8 +152,23 @@ func (a *InboundAPI) sapCancelNFe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, domainerr.Validation("invalid_json", "Invalid JSON body"))
 		return
 	}
-	doc, ok := a.resolveSAPNFe(w, r, p, sapAccessKey(body.ChaveAcesso, body.AccessKey))
-	if !ok {
+	doc, err := a.Fiscal.ResolveSAPCancelDocument(r.Context(), p.OrganizationID, sapAccessKey(body.ChaveAcesso, body.AccessKey), body.CNPJPrestador)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if strings.EqualFold(doc.DocumentType, "nfse") {
+		cMotivo := strings.TrimSpace(body.CMotivo)
+		if cMotivo == "" {
+			cMotivo = "1"
+		}
+		updated, err := a.Fiscal.RequestCancelNFSe(r.Context(), p.OrganizationID, doc.ID,
+			fiscal.CancelNFSeInput{CMotivo: cMotivo, Justificativa: body.Justificativa}, "api_client", p.ClientID)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		writeSAPEventAccepted(w, updated)
 		return
 	}
 	updated, err := a.Fiscal.RequestCancelNFe(r.Context(), p.OrganizationID, doc.ID,

@@ -38,6 +38,74 @@ func (s *Service) ResolveSAPOutboundNFe(ctx context.Context, organizationID uuid
 	return doc, nil
 }
 
+// sapCancelRefKind classifies the SAP cancel reference before any lookup.
+// A 44-digit key is NF-e. A 50-character key is NFS-e Nacional. A UUID is the
+// document id. Anything else is treated as the municipal NFS-e number
+// (Garuva/IPM has no access key).
+func sapCancelRefKind(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if _, err := uuid.Parse(ref); err == nil {
+		return "document_id"
+	}
+	if LooksLikeNFeAccessKey(ref) {
+		return "nfe"
+	}
+	if len(normalizeAccessKey(ref)) == 50 {
+		return "nfse_key"
+	}
+	return "nfse_number"
+}
+
+// ResolveSAPCancelDocument finds the outbound note a SAP cancel refers to.
+// NF-e stays on the 44-digit key. NFS-e accepts the national access key, the
+// document UUID, or the municipal number when the city (Garuva) has none.
+func (s *Service) ResolveSAPCancelDocument(ctx context.Context, organizationID uuid.UUID, ref, providerCNPJ string) (*Document, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil, domainerr.Validation("invalid_document_ref", "chave_acesso or document_id is required")
+	}
+	switch sapCancelRefKind(ref) {
+	case "document_id":
+		id, _ := uuid.Parse(ref)
+		doc, err := s.GetDocument(ctx, organizationID, id)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(doc.Direction, "outbound") {
+			return nil, domainerr.NotFound("document_not_found", "No outbound document found for this document_id")
+		}
+		switch strings.ToLower(doc.DocumentType) {
+		case "nfe", "nfse":
+			return doc, nil
+		default:
+			return nil, domainerr.Validation("not_cancellable", "Only NF-e and NFS-e can be cancelled through this endpoint")
+		}
+	case "nfe":
+		return s.ResolveSAPOutboundNFe(ctx, organizationID, ref)
+	case "nfse_key":
+		doc, err := s.FindOutboundNFSeByAccessKey(ctx, organizationID, ref)
+		if err != nil {
+			return nil, err
+		}
+		if doc == nil {
+			return nil, domainerr.NotFound("document_not_found", "No outbound NFS-e found for this chave_acesso")
+		}
+		return doc, nil
+	default:
+		doc, err := s.FindOutboundNFSeByNumber(ctx, organizationID, ref, providerCNPJ)
+		if err != nil {
+			return nil, err
+		}
+		if doc == nil {
+			return nil, domainerr.NotFound("document_not_found", "No outbound NF-e or NFS-e found for this chave_acesso")
+		}
+		return doc, nil
+	}
+}
+
 // ResolveSAPOutboundNFSe finds an outbound NFS-e by document UUID or by the
 // national access key (50 digits). It never creates a stub.
 func (s *Service) ResolveSAPOutboundNFSe(ctx context.Context, organizationID uuid.UUID, ref string) (*Document, error) {

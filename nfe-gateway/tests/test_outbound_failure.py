@@ -1,6 +1,8 @@
 from nfe_gateway.backend_client import BackendError
+from nfe_gateway.storage import ObjectNotFoundError
 from nfe_gateway.workers.outbound_consumer import (
     CERTIFICATE_MISSING_MESSAGE,
+    PAYLOAD_MISSING_MESSAGE,
     classify_transmission_error,
 )
 
@@ -22,6 +24,31 @@ def test_other_backend_error_keeps_the_detail() -> None:
     code, message = classify_transmission_error(BackendError(404, body))
     assert code == "company_not_found"
     assert message == "Empresa não encontrada"
+
+
+def test_missing_object_is_a_screen_error() -> None:
+    code, message = classify_transmission_error(ObjectNotFoundError("fiscal/org/doc/original_request/payload.bin"))
+    assert code == "payload_not_found"
+    assert message == PAYLOAD_MISSING_MESSAGE
+    assert "payload.bin" not in message
+
+
+def test_raw_nosuchkey_is_a_screen_error() -> None:
+    exc = RuntimeError(
+        "An error occurred (NoSuchKey) when calling the GetObject operation: The specified key does not exist."
+    )
+    code, message = classify_transmission_error(exc)
+    assert code == "payload_not_found"
+    assert message == PAYLOAD_MISSING_MESSAGE
+    assert "NoSuchKey" not in message
+
+
+def test_dns_failure_on_the_certificate_call_is_not_a_sefaz_rejection() -> None:
+    exc = BackendError(503, "[Errno -2] Name or service not known")
+    code, message = classify_transmission_error(exc)
+    assert code == "certificate_unreachable"
+    assert "SEFAZ" in message
+    assert "Errno" not in message
 
 
 def test_generic_failure_stays_a_transmission_error() -> None:

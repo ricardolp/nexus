@@ -63,6 +63,7 @@ def apply_all_patches(xml: etree._Element, sap: dict[str, Any] | None = None) ->
     ensure_empty_payment(xml, sap)
     ensure_payment_troco(xml, sap)
     patch_icms_uf_dest(xml, sap)
+    patch_exporta(xml, sap)
     patch_ver_proc(xml)
     sanitize_for_signature(xml)
     strip_whitespace_between_tags(xml)
@@ -512,6 +513,70 @@ _DESTINO_SETE = frozenset(
     }
 )
 _ORIGEM_ALIQUOTA_4 = frozenset({"1", "2", "3", "8"})
+
+
+# TUfEmi — UF where the goods leave Brazil. EX is not valid here (cStat 355).
+_UF_SAIDA_PAIS = frozenset(
+    {
+        "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS",
+        "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC",
+        "SE", "SP", "TO",
+    }
+)
+# Schema order inside infNFe: … infAdic, exporta, compra, cana, infRespTec …
+_BEFORE_EXPORTA = ("compra", "cana", "infRespTec", "infSolicNFF", "agropecuario")
+
+
+class ExportaError(ValueError):
+    """Export NF-e is missing the place of departure from the country."""
+
+
+def patch_exporta(xml: etree._Element, sap: dict[str, Any]) -> None:
+    """cStat 355: idDest=3 requires exporta/UFSaidaPais and xLocExporta.
+
+    PyNFe never writes the group. SAP sends it as uf_local_embarque,
+    local_embarque and the optional local_despacho.
+    """
+    ide = _find(xml, "ide")
+    id_dest = _child_text(ide, "idDest") or str(sap.get("local_destino") or "").strip()
+    if id_dest != "3":
+        return
+    inf = _find(xml, "infNFe")
+    if inf is None:
+        return
+    uf = str(sap.get("uf_local_embarque") or "").strip().upper()
+    local = _export_place(sap.get("local_embarque"))
+    despacho = _export_place(sap.get("local_despacho"))
+    if uf not in _UF_SAIDA_PAIS or not local:
+        raise ExportaError(
+            "Exportação (idDest=3) exige uf_local_embarque (UF de saída do país) "
+            "e local_embarque (local de embarque ou transposição de fronteira). "
+            "SEFAZ rejeita com cStat 355 quando o grupo exporta não vai no XML."
+        )
+    existing = _child(inf, "exporta")
+    if existing is not None:
+        inf.remove(existing)
+    group = _insert_before_locals(inf, "exporta", _BEFORE_EXPORTA)
+    _sub_nfe(group, "UFSaidaPais", uf)
+    _sub_nfe(group, "xLocExporta", local)
+    if despacho:
+        _sub_nfe(group, "xLocDespacho", despacho)
+
+
+def _export_place(value: Any) -> str:
+    return " ".join(str(value or "").split())[:60]
+
+
+def _insert_before_locals(
+    parent: etree._Element, local: str, before: tuple[str, ...]
+) -> etree._Element:
+    el = etree.Element(_nfe_qname(parent, local))
+    for child in parent:
+        if _local(child) in before:
+            child.addprevious(el)
+            return el
+    parent.append(el)
+    return el
 
 
 def patch_icms_uf_dest(xml: etree._Element, sap: dict[str, Any]) -> None:

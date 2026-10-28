@@ -537,8 +537,14 @@ func (s *Service) persistItemChildArrays(ctx context.Context, tx pgx.Tx, organiz
 		}
 	}
 
-	// Imports
+	// Imports. SAP sends an initial documentos_importacao line with every
+	// field empty. di_number is NOT NULL, so inserting that line aborts the
+	// whole NF-e (SQLSTATE 23502 on POST /v1/nfe/documents/sap).
 	for _, imp := range item.DocumentosImportacao {
+		di, ok := diNumber(imp)
+		if !ok {
+			continue
+		}
 		impID := ids.New()
 		_, err := tx.Exec(ctx, `
 			INSERT INTO organization_nfe_item_imports (
@@ -546,21 +552,25 @@ func (s *Service) persistItemChildArrays(ctx context.Context, tx pgx.Tx, organiz
 				customs_clearance_location, customs_clearance_uf, customs_clearance_date, transport_code,
 				afrmm_value, intermediary_import_code, exporter_cnpj, exporter_uf, exporter_location
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-		`, impID, organizationID, documentID, itemID, imp.NumeroDi, parseDate(imp.DataDi),
+		`, impID, organizationID, documentID, itemID, di, parseDate(imp.DataDi),
 			imp.LocalDesembaraco, imp.UfDesembaraco, parseDate(imp.DataDesembaraco), imp.CodigoTransporte,
 			imp.ValorAfrmm, imp.CodigoIntermediacao, imp.CnpjExportador, imp.UfExportador, imp.LocalExportador)
 		if err != nil {
 			return err
 		}
 
-		// Import additions
+		// Import additions. addition_number is NOT NULL.
 		for _, adi := range imp.Adicoes {
+			nAdicao, ok := additionNumber(adi)
+			if !ok {
+				continue
+			}
 			_, err := tx.Exec(ctx, `
 				INSERT INTO organization_nfe_item_import_additions (
 					id, organization_id, organization_document_id, import_id, addition_number, addition_sequence,
 					manufacturer_code, discount_value, drawback_number
 				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			`, ids.New(), organizationID, documentID, impID, adi.NumeroAdicao, adi.SequenciaAdicao,
+			`, ids.New(), organizationID, documentID, impID, nAdicao, adi.SequenciaAdicao,
 				adi.CodigoFabricante, adi.ValorDesconto, adi.NumeroDrawback)
 			if err != nil {
 				return err
@@ -626,6 +636,21 @@ func (s *Service) persistItemChildArrays(ctx context.Context, tx pgx.Tx, organiz
 }
 
 // Date/time parsing helpers
+func diNumber(imp SAPDocumentoImportacao) (string, bool) {
+	n := strings.TrimSpace(sapField(imp.NumeroDi))
+	if n == "" {
+		return "", false
+	}
+	return n, true
+}
+
+func additionNumber(adi SAPAdicao) (int, bool) {
+	if adi.NumeroAdicao == nil {
+		return 0, false
+	}
+	return *adi.NumeroAdicao, true
+}
+
 func blankToNil(s *string) *string {
 	if s == nil {
 		return nil

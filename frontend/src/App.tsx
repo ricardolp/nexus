@@ -15,6 +15,7 @@ import AdminSignInPage from '@/pages/admin/sign-in';
 import NfeDistributionPage from '@/pages/admin/nfe-distribution';
 import AdminBillingPage from '@/pages/admin/billing';
 import UsersPage from '@/pages/admin/users';
+import AdminFaqPage from '@/pages/admin/faq';
 import NotFoundPage from '@/pages/not-found';
 import HelpPage from '@/pages/help';
 import SupportPage from '@/pages/support';
@@ -98,6 +99,7 @@ export default function App() {
             <Route path="errors" element={<AdminErrorsPage />} />
             <Route path="status" element={<AdminStatusPage />} />
             <Route path="users" element={<UsersPage />} />
+            <Route path="faq" element={<AdminFaqPage />} />
             <Route path="nfe-distribution" element={<NfeDistributionPage />} />
             <Route path="billing" element={<AdminBillingPage />} />
             <Route path="profile" element={<ProfilePage />} />

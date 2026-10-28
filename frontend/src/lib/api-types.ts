@@ -166,6 +166,52 @@ export interface ApiPlatformError {
   occurred_at: string;
 }
 
+export type FaqSource = 'SEFAZ' | 'SAP' | 'API' | 'NEXUS';
+export type FaqSeverity = 'DENIED' | 'REJECTED' | 'TECHNICAL' | 'UNKNOWN';
+export type FaqRecommendedAction =
+  | 'REVERSE_SOURCE'
+  | 'RESET_AND_RESEND'
+  | 'WAIT_RETRY'
+  | 'CONTACT_SUPPORT'
+  | 'NONE';
+
+export interface ApiFaqMessage {
+  id: string;
+  source: FaqSource | string;
+  code: string;
+  docsta: string;
+  lang: string;
+  severity: FaqSeverity | string;
+  title: string;
+  summary: string;
+  steps: string[];
+  forbidden_actions: string[];
+  recommended_action: FaqRecommendedAction | string;
+  faq_slug?: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiFaqMissingHit {
+  source: string;
+  code: string;
+  docsta: string;
+  count: number;
+  last_seen: string;
+}
+
+export interface ApiFaqTopHit {
+  source: string;
+  code: string;
+  docsta: string;
+  count: number;
+  found_count: number;
+  missing_count: number;
+  last_seen: string;
+  organization_id?: string | null;
+}
+
 export interface ApiPlatformStatus {
   control_plane: string;
   organizations_active: number;

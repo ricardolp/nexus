@@ -50,6 +50,19 @@ func TestLocalStorePutGet(t *testing.T) {
 	}
 }
 
+func TestLocalStoreMissingIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	store, err := storage.NewLocalStore(t.TempDir(), testKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Get(context.Background(), "fiscal/missing.bin")
+	if !storage.IsNotFound(err) {
+		t.Fatalf("expected not found, got %v", err)
+	}
+}
+
 func TestLocalStoreEncryptedAtRest(t *testing.T) {
 	t.Parallel()
 

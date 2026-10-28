@@ -95,6 +95,19 @@ func (p *MessagingProvider) Transmit(ctx context.Context, doc Document) (Provide
 		}, nil
 	}
 
+	if err := p.docs.EnsureOriginalPayload(ctx, doc.ID); err != nil {
+		var missing *domainerr.Error
+		if errors.As(err, &missing) && missing.Code == "payload_not_found" {
+			return ProviderResult{
+				Outcome:      "error",
+				Provider:     "nfe_gateway",
+				ErrorCode:    missing.Code,
+				ErrorMessage: PayloadMissingMessage,
+			}, nil
+		}
+		return ProviderResult{}, err
+	}
+
 	objectKey, err := p.docs.OriginalPayloadObjectKey(ctx, doc.ID)
 	if err != nil {
 		return ProviderResult{}, err

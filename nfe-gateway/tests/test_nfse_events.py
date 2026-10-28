@@ -163,6 +163,9 @@ def test_dps_subst_group():
             "discriminacao": "Servico de teste",
             "codigo_municipio": "3550308",
             "codigo_nbs": "1.1501.10.00",
+            "situacao_tributaria_pis_cofins": "00",
+            "tipo_retencao_pis_cofins": "0",
+            "percentual_total_tributos": 9.41,
         },
     }
     root = build_unsigned_dps(payload, homologacao=True)

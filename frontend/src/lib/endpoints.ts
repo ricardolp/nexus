@@ -42,6 +42,9 @@ import type {
   ApiPasswordPolicy,
   ApiPendingFiscalDocument,
   ApiPlanStep,
+  ApiFaqMessage,
+  ApiFaqMissingHit,
+  ApiFaqTopHit,
   ApiPlatformError,
   ApiPlatformStatus,
   ApiPurchaseOrder,
@@ -694,6 +697,94 @@ export function listPlatformErrors(
 
 export function getPlatformStatus(token: string) {
   return apiFetch<ApiPlatformStatus>('/v1/platform/status', { token });
+}
+
+export function listFaqMessages(
+  token: string,
+  params?: { source?: string; code?: string; q?: string; active?: boolean; limit?: number }
+) {
+  const qs = new URLSearchParams();
+  if (params?.source) qs.set('source', params.source);
+  if (params?.code) qs.set('code', params.code);
+  if (params?.q) qs.set('q', params.q);
+  if (params?.active != null) qs.set('active', String(params.active));
+  if (params?.limit != null) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  return apiFetch<{ items: ApiFaqMessage[] }>(
+    `/v1/platform/faq/messages${query ? `?${query}` : ''}`,
+    { token }
+  );
+}
+
+export function getFaqMessage(token: string, id: string) {
+  return apiFetch<ApiFaqMessage>(`/v1/platform/faq/messages/${id}`, { token });
+}
+
+export type FaqMessageInput = {
+  source: string;
+  code: string;
+  docsta?: string;
+  lang?: string;
+  severity: string;
+  title: string;
+  summary: string;
+  steps?: string[];
+  forbidden_actions?: string[];
+  recommended_action?: string;
+  faq_slug?: string | null;
+  active?: boolean;
+};
+
+export function createFaqMessage(token: string, body: FaqMessageInput) {
+  return apiFetch<ApiFaqMessage>('/v1/platform/faq/messages', {
+    method: 'POST',
+    token,
+    body
+  });
+}
+
+export function updateFaqMessage(token: string, id: string, body: FaqMessageInput) {
+  return apiFetch<ApiFaqMessage>(`/v1/platform/faq/messages/${id}`, {
+    method: 'PUT',
+    token,
+    body
+  });
+}
+
+export function setFaqMessageActive(token: string, id: string, active: boolean) {
+  return apiFetch<ApiFaqMessage>(`/v1/platform/faq/messages/${id}/active`, {
+    method: 'PATCH',
+    token,
+    body: { active }
+  });
+}
+
+export function listFaqMissingHits(
+  token: string,
+  params?: { organization_id?: string; limit?: number }
+) {
+  const qs = new URLSearchParams();
+  if (params?.organization_id) qs.set('organization_id', params.organization_id);
+  if (params?.limit != null) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  return apiFetch<{ items: ApiFaqMissingHit[] }>(
+    `/v1/platform/faq/hits/missing${query ? `?${query}` : ''}`,
+    { token }
+  );
+}
+
+export function listFaqTopHits(
+  token: string,
+  params?: { organization_id?: string; limit?: number }
+) {
+  const qs = new URLSearchParams();
+  if (params?.organization_id) qs.set('organization_id', params.organization_id);
+  if (params?.limit != null) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  return apiFetch<{ items: ApiFaqTopHit[] }>(
+    `/v1/platform/faq/hits/top${query ? `?${query}` : ''}`,
+    { token }
+  );
 }
 
 export function listPermissionCatalog(token: string, organizationId: string) {

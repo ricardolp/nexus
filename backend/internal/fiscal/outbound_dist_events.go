@@ -198,6 +198,52 @@ func (s *Service) FindOutboundNFeByAccessKey(ctx context.Context, organizationID
 	return doc, nil
 }
 
+// FindOutboundNFSeByNumber returns the outbound NFS-e whose authorized number
+// matches. Municipal notes (IPM/Garuva) have no access key, so SAP cancels
+// them by this number. providerCNPJ disambiguates when the org has more than
+// one match; an empty CNPJ is accepted only when the number is unique.
+func (s *Service) FindOutboundNFSeByNumber(ctx context.Context, organizationID uuid.UUID, number, providerCNPJ string) (*Document, error) {
+	num := normalizeNFSeNumber(number)
+	if num == "" || num == "0" {
+		return nil, nil
+	}
+	cnpj := digitsOnly(providerCNPJ)
+	rows, err := s.pool.Query(ctx, `
+		select d.id
+		from organization_documents d
+		join organization_nfse n on n.organization_document_id = d.id
+		where d.organization_id = $1
+		  and d.document_type = 'nfse'
+		  and d.direction = 'outbound'
+		  and nullif(ltrim(regexp_replace(coalesce(n.nfse_number, ''), '[^0-9]', '', 'g'), '0'), '') = $2
+		  and ($3 = '' or regexp_replace(coalesce(n.provider_cnpj, ''), '[^0-9]', '', 'g') = $3)
+		order by d.received_at desc
+		limit 2
+	`, organizationID, num, cnpj)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(ids) > 1 {
+		return nil, domainerr.Conflict("ambiguous_nfse_number", "More than one NFS-e matches this number; send document_id or cnpj_prestador")
+	}
+	return s.GetDocument(ctx, organizationID, ids[0])
+}
+
 // FindOutboundNFSeByAccessKey returns the outbound NFS-e for this access key.
 func (s *Service) FindOutboundNFSeByAccessKey(ctx context.Context, organizationID uuid.UUID, accessKey string) (*Document, error) {
 	key := normalizeAccessKey(accessKey)

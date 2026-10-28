@@ -1,0 +1,124 @@
+# QAS e produção são pipelines diferentes.
+#
+#   branch hom  -> QAS  (leiaute da NT 009, SEFIN de homologação)
+#   branch main -> PRD  (leiaute que a SEFIN de produção ainda aceita)
+#
+# O ambiente Railway que existe hoje se chama "production", mas é o QAS
+# (qas.nexus.novaconsulting.com.br). A produção real ainda precisa de um
+# segundo ambiente no Railway; até lá o job de PRD para de propósito.
+#
+# Segredo obrigatório no repositório: RAILWAY_TOKEN (token do projeto).
+# Para liberar PRD: RAILWAY_ENVIRONMENT_ID_PRD com o id do ambiente novo.
+# No GitHub, o environment "prd" pode exigir aprovação manual.
+
+name: Deploy
+
+on:
+  push:
+    branches: [hom, main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Ambiente
+        type: choice
+        options:
+          - qas
+          - prd
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Testes do gateway
+        working-directory: nfe-gateway
+        run: |
+          pip install -e ".[dev]"
+          python -m pytest -q
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: backend/go.sum
+
+      - name: Testes do DANFSE
+        working-directory: backend
+        run: go test ./internal/platform/danfse/ -count=1
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.ref_name == 'main' && 'prd' || 'qas') }}
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      # Ambiente Railway atual. O nome interno é "production"; o uso é QAS.
+      QAS_ENVIRONMENT_ID: 57d2f075-e066-47c9-a603-bb04fef4809b
+      PRD_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID_PRD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Railway CLI
+        run: npm install -g @railway/cli@5
+
+      - name: Escolher ambiente
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target="${{ inputs.target }}"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            target="prd"
+          else
+            target="qas"
+          fi
+          if [ "$target" = "prd" ]; then
+            id="$PRD_ENVIRONMENT_ID"
+            if [ -z "$id" ]; then
+              echo "PRD ainda não tem ambiente no Railway. Crie o ambiente e grave o id em RAILWAY_ENVIRONMENT_ID_PRD."
+              exit 1
+            fi
+          else
+            id="$QAS_ENVIRONMENT_ID"
+          fi
+          echo "name=$target" >> "$GITHUB_OUTPUT"
+          echo "environment_id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar serviços a partir do commit
+        env:
+          ENVIRONMENT_ID: ${{ steps.target.outputs.environment_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          # Deploy pelo commit do GitHub, não por upload local.
+          # Assim o root directory de cada serviço (nfe-gateway, backend, frontend)
+          # é aplicado uma vez só. railway up a partir da máquina duplica essa pasta.
+          services=(
+            nfe_gateway
+            frontend
+            inbound_api
+            internal_api
+            control_plane_api
+            fiscal_worker
+            inbound_orchestrator_worker
+            outbox_relay
+            webhook_dispatcher
+            scheduler
+            nfe_event_worker
+            nfe_protocol_worker
+            nfe_query_worker
+            nfe_distribution_poller
+          )
+          query='query services($id: String!) { project(id: $id) { services { edges { node { id name } } } } }'
+          railway api "$query" --raw-var id=9df37c2f-2e44-4ff7-8f5f-770735cb008d > /tmp/services.json
+          mutation='mutation serviceInstanceDeployV2($environmentId: String!, $serviceId: String!, $commitSha: String) { serviceInstanceDeployV2(environmentId: $environmentId, serviceId: $serviceId, commitSha: $commitSha) }'
+          for name in "${services[@]}"; do
+            service_id="$(python -c 'import json,sys; name=sys.argv[1]; data=json.load(open("/tmp/services.json")); edges=data["data"]["project"]["services"]["edges"]; print(next(e["node"]["id"] for e in edges if e["node"]["name"]==name))' "$name")"
+            echo "deploy $name ($service_id)"
+            railway api "$mutation" \
+              --raw-var environmentId="$ENVIRONMENT_ID" \
+              --raw-var serviceId="$service_id" \
+              --raw-var commitSha="$COMMIT_SHA"
+          done

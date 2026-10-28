@@ -27,7 +27,7 @@ from nfe_gateway.sefaz.cnpj_doc import CnpjDocError, normalize_cnpj, normalize_c
 from nfe_gateway.sefaz.environment import HOMOLOGACAO_DISCLAIMER
 from nfe_gateway.sefaz.ibscbs_nfe import IbsCbsMapperError
 from nfe_gateway.sefaz.referencias_nfe import ReferenciaMapperError
-from nfe_gateway.sefaz.xml_patches import apply_all_patches
+from nfe_gateway.sefaz.xml_patches import ExportaError, apply_all_patches
 
 # NT 2018.003 — software house that emits the NF-e. TO rejects with cStat 972
 # when infRespTec is absent. Same block GRC sends for this emitter.
@@ -60,7 +60,7 @@ def build_unsigned_xml(sap_json: dict, *, homologacao: bool) -> etree._Element:
         xml = etree.fromstring(xml if isinstance(xml, bytes) else xml.encode("utf-8"))
     try:
         xml = apply_all_patches(xml, sap_json)
-    except (IbsCbsMapperError, ReferenciaMapperError) as exc:
+    except (IbsCbsMapperError, ReferenciaMapperError, ExportaError) as exc:
         raise SapNfeMapperError(str(exc)) from exc
     # Stable default xmlns before validate/sign (tree rebuild — no string xmlns hacks).
     from nfe_gateway.sefaz.assinatura import normalize_nfe_namespaces

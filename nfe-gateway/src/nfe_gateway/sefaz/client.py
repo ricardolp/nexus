@@ -93,6 +93,20 @@ from nfe_gateway.sefaz.tls_comunicacao import ComunicacaoSefazVerified
 Comunicacao = ComunicacaoSefazVerified
 
 
+def is_name_resolution_error(exc: BaseException) -> bool:
+    """glibc/getaddrinfo failure: the hostname does not resolve. Not a SEFAZ cStat."""
+    text = str(exc)
+    lowered = text.lower()
+    return (
+        "Name or service not known" in text
+        or "Errno -2" in text
+        or "getaddrinfo" in lowered
+        or "temporary failure in name resolution" in lowered
+        or "nodename nor servname" in lowered
+        or "no such host" in lowered
+    )
+
+
 class SefazClient(ABC):
     @abstractmethod
     async def consult_distribution(
@@ -331,8 +345,18 @@ class PyNfeSefazClient(SefazClient):
             result["tp_emis"] = tp_emis
             return result
         except Exception as exc:
+            if is_name_resolution_error(exc):
+                return {
+                    "outcome": "error",
+                    "error_code": "authority_unreachable",
+                    "error_message": (
+                        "Não foi possível resolver o endereço da SEFAZ (falha de DNS). A nota não foi enviada."
+                    ),
+                    "response_xml": b"",
+                    "signed_xml": signed_xml_bytes,
+                }
             return {
-                "outcome": "rejected",
+                "outcome": "error",
                 "error_code": "sefaz_error",
                 "error_message": f"SEFAZ transmission failed: {exc}",
                 "response_xml": b"",

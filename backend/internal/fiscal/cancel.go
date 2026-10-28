@@ -3,6 +3,7 @@ package fiscal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 	"unicode"
@@ -185,17 +186,74 @@ func (s *Service) loadNFSeCancelMaterial(ctx context.Context, organizationID, do
 	if nfseNumber != nil {
 		out.NFSeNumber = normalizeNFSeNumber(*nfseNumber)
 	}
-	out.ProviderCode = nfseprovider.CodeSefinNacional
-	if providerCode != nil {
-		out.ProviderCode = nfseprovider.NormalizeCode(*providerCode)
+	if municipality != nil {
+		out.MunicipalityCode = strings.TrimSpace(*municipality)
 	}
 	if len(providerConfig) > 0 && string(providerConfig) != "null" {
 		out.ProviderConfig = json.RawMessage(providerConfig)
 	}
-	if municipality != nil {
-		out.MunicipalityCode = strings.TrimSpace(*municipality)
+	storedCode := ""
+	if providerCode != nil {
+		storedCode = strings.TrimSpace(*providerCode)
 	}
+	catalogCode := ""
+	catalogEnabled := false
+	if storedCode == "" && out.MunicipalityCode != "" {
+		route, routeErr := s.municipalCancelRoute(ctx, out.MunicipalityCode)
+		if routeErr != nil {
+			return nfseCancelMaterial{}, routeErr
+		}
+		catalogCode = route.code
+		catalogEnabled = route.enabled
+		if len(out.ProviderConfig) == 0 && route.enabled && len(route.config) > 0 && string(route.config) != "null" {
+			out.ProviderConfig = route.config
+		}
+	}
+	out.ProviderCode = chooseNFSeCancelProvider(storedCode, catalogCode, catalogEnabled)
 	return out, nil
+}
+
+// chooseNFSeCancelProvider keeps the provider frozen on the note. When the
+// note has none, an enabled municipal catalog row (Garuva → IPM) wins;
+// otherwise the cancel goes to SEFIN Nacional.
+func chooseNFSeCancelProvider(storedCode, catalogCode string, catalogEnabled bool) string {
+	if strings.TrimSpace(storedCode) != "" {
+		return nfseprovider.NormalizeCode(storedCode)
+	}
+	if catalogEnabled && strings.TrimSpace(catalogCode) != "" {
+		if _, ok := nfseprovider.Lookup(catalogCode); ok {
+			return nfseprovider.NormalizeCode(catalogCode)
+		}
+	}
+	return nfseprovider.CodeSefinNacional
+}
+
+type municipalCancelRoute struct {
+	code    string
+	config  json.RawMessage
+	enabled bool
+}
+
+func (s *Service) municipalCancelRoute(ctx context.Context, municipality string) (municipalCancelRoute, error) {
+	municipality = strings.TrimSpace(municipality)
+	if len(municipality) != 7 {
+		return municipalCancelRoute{}, nil
+	}
+	var code string
+	var cfg []byte
+	var enabled bool
+	err := s.pool.QueryRow(ctx, `
+		select provider_code, provider_config, enabled
+		from nfse_municipal_providers
+		where ibge_municipality_code = $1
+	`, municipality).Scan(&code, &cfg, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return municipalCancelRoute{}, nil
+	}
+	if err != nil {
+		return municipalCancelRoute{}, err
+	}
+	return municipalCancelRoute{code: code, config: json.RawMessage(cfg), enabled: enabled}, nil
 }
 
 func digitsOnly(v string) string {
