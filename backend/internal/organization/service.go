@@ -142,11 +142,11 @@ func (s *Service) CreateOrganization(ctx context.Context, in CreateOrganizationI
 
 func (s *Service) GetOrganization(ctx context.Context, id uuid.UUID) (*Organization, error) {
 	row := s.pool.QueryRow(ctx, `
-		select id, legal_name, trade_name, slug, tax_identifier, logo_url, status, timezone, default_locale, created_at, updated_at
+		select `+organizationSelectCols+`
 		from organizations where id = $1
 	`, id)
 	var org Organization
-	if err := row.Scan(&org.ID, &org.LegalName, &org.TradeName, &org.Slug, &org.TaxIdentifier, &org.LogoURL, &org.Status, &org.Timezone, &org.DefaultLocale, &org.CreatedAt, &org.UpdatedAt); err != nil {
+	if err := scanOrganization(row, &org); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domainerr.NotFound("organization_not_found", "Organization not found")
 		}
@@ -179,9 +179,9 @@ func (s *Service) UpdateOrganization(ctx context.Context, in UpdateOrganizationI
 			    default_locale = coalesce(nullif($5, ''), default_locale),
 			    updated_at = $6
 			where id = $7
-			returning id, legal_name, trade_name, slug, tax_identifier, logo_url, status, timezone, default_locale, created_at, updated_at
+			returning `+organizationSelectCols+`
 		`, legalName, tradeName, taxIdentifier, strings.TrimSpace(in.Timezone), strings.TrimSpace(in.DefaultLocale), now, in.OrganizationID)
-		if err := row.Scan(&org.ID, &org.LegalName, &org.TradeName, &org.Slug, &org.TaxIdentifier, &org.LogoURL, &org.Status, &org.Timezone, &org.DefaultLocale, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		if err := scanOrganization(row, &org); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return domainerr.NotFound("organization_not_found", "Organization not found")
 			}
@@ -507,7 +507,7 @@ func (s *Service) UnlinkSupportMember(ctx context.Context, in RemoveMemberInput)
 
 func (s *Service) ListOrganizations(ctx context.Context) ([]Organization, error) {
 	rows, err := s.pool.Query(ctx, `
-		select id, legal_name, trade_name, slug, tax_identifier, logo_url, status, timezone, default_locale, created_at, updated_at
+		select `+organizationSelectCols+`
 		from organizations
 		order by created_at desc
 	`)
@@ -519,7 +519,7 @@ func (s *Service) ListOrganizations(ctx context.Context) ([]Organization, error)
 	var out []Organization
 	for rows.Next() {
 		var org Organization
-		if err := rows.Scan(&org.ID, &org.LegalName, &org.TradeName, &org.Slug, &org.TaxIdentifier, &org.LogoURL, &org.Status, &org.Timezone, &org.DefaultLocale, &org.CreatedAt, &org.UpdatedAt); err != nil {
+		if err := scanOrganization(rows, &org); err != nil {
 			return nil, err
 		}
 		out = append(out, org)
@@ -1042,7 +1042,7 @@ func (s *Service) ResolveUserOrganization(ctx context.Context, userID uuid.UUID)
 func (s *Service) ListOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]Organization, error) {
 	rows, err := s.pool.Query(ctx, `
 		select o.id, o.legal_name, o.trade_name, o.slug, o.tax_identifier, o.logo_url,
-		       o.status, o.timezone, o.default_locale, o.created_at, o.updated_at
+		       (o.logo is not null), o.status, o.timezone, o.default_locale, o.created_at, o.updated_at
 		from organization_members m
 		join organizations o on o.id = m.organization_id
 		where m.user_id = $1
@@ -1057,10 +1057,7 @@ func (s *Service) ListOrganizationsForUser(ctx context.Context, userID uuid.UUID
 	var out []Organization
 	for rows.Next() {
 		var org Organization
-		if err := rows.Scan(
-			&org.ID, &org.LegalName, &org.TradeName, &org.Slug, &org.TaxIdentifier, &org.LogoURL,
-			&org.Status, &org.Timezone, &org.DefaultLocale, &org.CreatedAt, &org.UpdatedAt,
-		); err != nil {
+		if err := scanOrganization(rows, &org); err != nil {
 			return nil, err
 		}
 		out = append(out, org)

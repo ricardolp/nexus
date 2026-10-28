@@ -29,6 +29,8 @@ export interface ApiOrganization {
   slug: string;
   tax_identifier?: string | null;
   logo_url?: string | null;
+  /** Uploaded binary mark (GET /v1/organizations/:id/logo). */
+  has_logo?: boolean;
   status: string;
   timezone: string;
   default_locale: string;

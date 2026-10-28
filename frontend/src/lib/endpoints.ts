@@ -395,6 +395,28 @@ export function updateOrganization(
   });
 }
 
+/** Logo da organização no switcher / página Organização (não é a logo DANFE/DANFSe). */
+export function uploadOrganizationLogo(token: string, organizationId: string, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiFetch<ApiOrganization>(`/v1/organizations/${organizationId}/logo`, {
+    method: 'POST',
+    token,
+    formData
+  });
+}
+
+export function deleteOrganizationLogo(token: string, organizationId: string) {
+  return apiFetch<ApiOrganization>(`/v1/organizations/${organizationId}/logo`, {
+    method: 'DELETE',
+    token
+  });
+}
+
+export function getOrganizationLogoBlob(token: string, organizationId: string) {
+  return apiFetchBlob(`/v1/organizations/${organizationId}/logo`, { token });
+}
+
 export function listOrganizations(token: string) {
   return apiFetch<{ items: ApiOrganization[] }>('/v1/organizations', { token });
 }

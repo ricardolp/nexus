@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2Icon, CheckIcon } from 'lucide-react';
@@ -8,7 +8,7 @@ import { NexusMark } from '@/components/brand/nexus-mark';
 
 import type { ApiOrganization } from '@/lib/api-types';
 import { ApiError } from '@/lib/api';
-import { listMyOrganizations } from '@/lib/endpoints';
+import { getOrganizationLogoBlob, listMyOrganizations } from '@/lib/endpoints';
 import { useAuthStore } from '@/store/auth-store';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -31,13 +31,13 @@ function orgInitials(name: string) {
     .toUpperCase();
 }
 
-/** Known tenant marks shipped with the app. API `logo_url` always wins. */
+/** Known tenant marks shipped with the app. Uploaded logo / API `logo_url` win. */
 const ORG_LOGO_BY_SLUG: Record<string, string> = {
   'ls-mtron-brasil': '/logos/ls-mtron.jpg',
   'ls-mtron': '/logos/ls-mtron.jpg'
 };
 
-function orgLogoSrc(organization: ApiOrganization) {
+function orgStaticLogoSrc(organization: ApiOrganization) {
   const fromApi = organization.logo_url?.trim();
   if (fromApi) return fromApi;
   return ORG_LOGO_BY_SLUG[organization.slug];
@@ -52,8 +52,33 @@ export function OrganizationMark({
   displayName: string;
   size?: 'sm' | 'lg';
 }) {
-  const src = orgLogoSrc(organization);
+  const token = useAuthStore((s) => s.token);
+  const hasLogo = Boolean(organization.has_logo);
   const [failed, setFailed] = useState(false);
+  const [blobSrc, setBlobSrc] = useState<string | null>(null);
+
+  const logoQuery = useQuery({
+    queryKey: ['organization-logo', organization.id, organization.updated_at],
+    queryFn: () => getOrganizationLogoBlob(token!, organization.id),
+    enabled: Boolean(token && hasLogo)
+  });
+
+  useEffect(() => {
+    setFailed(false);
+  }, [organization.id, organization.updated_at, organization.has_logo, organization.logo_url]);
+
+  useEffect(() => {
+    if (!logoQuery.data) {
+      setBlobSrc(null);
+      return;
+    }
+    const url = URL.createObjectURL(logoQuery.data.blob);
+    setBlobSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logoQuery.data]);
+
+  const staticSrc = orgStaticLogoSrc(organization);
+  const src = (hasLogo ? blobSrc : null) ?? staticSrc;
   const box = size === 'lg' ? 'size-16 text-lg' : 'size-8 text-xs';
   if (src && !failed) {
     return (

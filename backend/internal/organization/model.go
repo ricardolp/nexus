@@ -14,6 +14,9 @@ type Organization struct {
 	Slug          string    `json:"slug"`
 	TaxIdentifier *string   `json:"tax_identifier,omitempty"`
 	LogoURL       *string   `json:"logo_url,omitempty"`
+	// HasLogo reports an uploaded binary mark (organizations.logo). Distinct
+	// from logo_url, which may still point at a static asset path.
+	HasLogo       bool      `json:"has_logo"`
 	Status        string    `json:"status"`
 	Timezone      string    `json:"timezone"`
 	DefaultLocale string    `json:"default_locale"`

@@ -34,6 +34,7 @@ import {
 import { OrganizationSecurityTab } from './organization/security-tab';
 import { OrganizationConsumoTab } from './organization/consumo-tab';
 import { OrganizationEmailTab } from './organization/email-tab';
+import { OrganizationLogoCard } from './organization/organization-logo-card';
 
 type Section = 'general' | 'tax' | 'defaults';
 type OrgTab = 'general' | 'consumo' | 'security' | 'email';
@@ -284,6 +285,8 @@ export default function OrganizationPage() {
                   )}
                 </CardContent>
               </Card>
+
+              <OrganizationLogoCard organization={org} canEdit={canEdit} />
 
               <Card>
                 <CardHeader className="border-b">
