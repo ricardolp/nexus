@@ -132,7 +132,7 @@ insert into faq_messages (
 ),
 -- API technical
 (
-    '01900000-0000-7000-8000-00000000400',
+    '01900000-0000-7000-8000-000000000400',
     'API', 'HTTP_400', '', 'PT', 'TECHNICAL',
     'Requisição inválida (HTTP 400)',
     'A API rejeitou o payload. Verifique campos obrigatórios e formato antes de reenviar.',
@@ -141,7 +141,7 @@ insert into faq_messages (
     'CONTACT_SUPPORT', 'api-http-400', true, now(), now()
 ),
 (
-    '01900000-0000-7000-8000-00000000401',
+    '01900000-0000-7000-8000-000000000401',
     'API', 'HTTP_401', '', 'PT', 'TECHNICAL',
     'Não autorizado (HTTP 401)',
     'Credencial ou token inválido/expirado. Renove a autenticação e tente novamente.',
@@ -150,7 +150,7 @@ insert into faq_messages (
     'CONTACT_SUPPORT', 'api-http-401', true, now(), now()
 ),
 (
-    '01900000-0000-7000-8000-00000000403',
+    '01900000-0000-7000-8000-000000000403',
     'API', 'HTTP_403', '', 'PT', 'TECHNICAL',
     'Acesso negado (HTTP 403)',
     'O cliente não tem permissão/escopo para a operação. Ajuste credenciais ou escopos.',
@@ -159,7 +159,7 @@ insert into faq_messages (
     'CONTACT_SUPPORT', 'api-http-403', true, now(), now()
 ),
 (
-    '01900000-0000-7000-8000-00000000429',
+    '01900000-0000-7000-8000-000000000429',
     'API', 'HTTP_429', '', 'PT', 'TECHNICAL',
     'Limite de taxa (HTTP 429)',
     'Muitas requisições em pouco tempo. Aguarde e tente novamente com backoff.',
@@ -168,7 +168,7 @@ insert into faq_messages (
     'WAIT_RETRY', 'api-http-429', true, now(), now()
 ),
 (
-    '01900000-0000-7000-8000-00000000500',
+    '01900000-0000-7000-8000-000000000500',
     'API', 'HTTP_500', '', 'PT', 'TECHNICAL',
     'Erro interno da API (HTTP 500)',
     'Falha temporária no servidor. Aguarde e tente novamente; se persistir, acione o suporte.',
@@ -177,7 +177,7 @@ insert into faq_messages (
     'WAIT_RETRY', 'api-http-500', true, now(), now()
 ),
 (
-    '01900000-0000-7000-8000-00000000502',
+    '01900000-0000-7000-8000-000000000502',
     'API', 'HTTP_502', '', 'PT', 'TECHNICAL',
     'Gateway inválido (HTTP 502)',
     'Falha de gateway/proxy. Em geral é transitória — aguarde e reenvie.',
@@ -186,7 +186,7 @@ insert into faq_messages (
     'WAIT_RETRY', 'api-http-502', true, now(), now()
 ),
 (
-    '01900000-0000-7000-8000-00000000503',
+    '01900000-0000-7000-8000-000000000503',
     'API', 'HTTP_503', '', 'PT', 'TECHNICAL',
     'Serviço indisponível (HTTP 503)',
     'Serviço temporariamente indisponível. Aguarde e tente novamente.',
