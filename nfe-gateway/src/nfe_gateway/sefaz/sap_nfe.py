@@ -290,8 +290,10 @@ def _build_destinatario(sap: dict) -> Cliente:
     cpf = str(_get(sap, "cpf_destinatario") or "").strip()
     id_estr = str(_get(sap, "id_estrangeiro_destinatario") or "").strip()
     uf = str(_get(sap, "uf_destinatario") or "").upper()
-    pais = str(_get(sap, "codigo_pais_destinatario") or "1058")
-    is_export = uf == "EX" or pais != "1058"
+    pais_raw = str(_get(sap, "codigo_pais_destinatario") or "").strip()
+    pais = pais_raw or "1058"
+    local_dest = str(_get(sap, "local_destino") or "").strip()
+    is_export = uf == "EX" or local_dest == "3" or pais_raw not in ("", "1058")
 
     cliente = Cliente()
     cliente.razao_social = _parse_str(sap, "nome_destinatario")[:60]
@@ -316,6 +318,14 @@ def _build_destinatario(sap: dict) -> Cliente:
         if len(cnpj_try) != 14 and len(cpf_d) != 11:
             cliente.tipo_documento = "CNPJ"
             cliente.numero_documento = ""
+            # SEFAZ exterior address: UF EX, cMun 9999999, xMun EXTERIOR.
+            # A foreign postal code is not a Brazilian CEP (8 digits).
+            cliente.endereco_uf = "EX"
+            cliente.endereco_municipio = "EXTERIOR"
+            cliente.endereco_cod_municipio = "9999999"
+            if len(cliente.endereco_cep) != 8:
+                cliente.endereco_cep = ""
+            cliente.indicador_ie = 9
         elif len(cnpj_try) == 14:
             cliente.tipo_documento = "CNPJ"
             cliente.numero_documento = cnpj_try
@@ -339,7 +349,7 @@ def _build_destinatario(sap: dict) -> Cliente:
     ie = _get(sap, "inscricao_estadual_destinatario") or _get(sap, "inscricao_estadual_dest")
     if ie:
         cliente.inscricao_estadual = ie
-    if _get(sap, "codigo_municipio_destinatario"):
+    if _get(sap, "codigo_municipio_destinatario") and cliente.endereco_uf != "EX":
         cliente.endereco_cod_municipio = _get(sap, "codigo_municipio_destinatario")
     if _get(sap, "email_destinatario"):
         cliente.email = _get(sap, "email_destinatario")
@@ -352,8 +362,11 @@ def _build_destinatario(sap: dict) -> Cliente:
     if _get(sap, "inscricao_suframa_destinatario"):
         cliente.inscricao_suframa = _get(sap, "inscricao_suframa_destinatario")
     ind_ie = _get(sap, "indicador_inscricao_estadual_destinatario") or _get(sap, "indicador_inscricao_est_dest")
-    if ind_ie and hasattr(cliente, "indicador_ie"):
-        cliente.indicador_ie = ind_ie
+    if ind_ie and hasattr(cliente, "indicador_ie") and cliente.indicador_ie != 9:
+        try:
+            cliente.indicador_ie = int(str(ind_ie).strip())
+        except (TypeError, ValueError):
+            cliente.indicador_ie = ind_ie
     return cliente
 
 

@@ -12,6 +12,7 @@ from nfe_gateway.sefaz.xml_patches import (
     patch_ibscbs_tot,
     patch_icms51,
     patch_id_estrangeiro,
+    patch_exterior_destinatario,
     patch_ii_zero_values,
     patch_ver_proc,
 )
@@ -80,6 +81,36 @@ def test_patch_id_estrangeiro_export():
     assert "idEstrangeiro" in tags
     assert tags.index("idEstrangeiro") < tags.index("xNome")
     assert "CNPJ" not in tags
+
+
+def test_patch_exterior_destinatario_normaliza_endereco():
+    root = _el("NFe")
+    dest = etree.SubElement(root, f"{{{NFE_NS}}}dest")
+    etree.SubElement(dest, f"{{{NFE_NS}}}CNPJ").text = ""
+    etree.SubElement(dest, f"{{{NFE_NS}}}xNome").text = "FOREIGN BUYER"
+    ender = etree.SubElement(dest, f"{{{NFE_NS}}}enderDest")
+    etree.SubElement(ender, f"{{{NFE_NS}}}xMun").text = "Dongan-Gu"
+    etree.SubElement(ender, f"{{{NFE_NS}}}UF").text = "08"
+    etree.SubElement(ender, f"{{{NFE_NS}}}CEP").text = "123517"
+    etree.SubElement(dest, f"{{{NFE_NS}}}indIEDest").text = "1"
+    etree.SubElement(dest, f"{{{NFE_NS}}}IE").text = ""
+    sap = {
+        "local_destino": "3",
+        "uf_destinatario": "08",
+        "codigo_pais_destinatario": "1902",
+        "id_estrangeiro_destinatario": "1388147556",
+        "cnpj_destinatario": "",
+        "cpf_destinatario": "",
+    }
+    patch_exterior_destinatario(root, sap)
+    addr = {etree.QName(c).localname: (c.text or "") for c in ender}
+    assert addr["cMun"] == "9999999"
+    assert addr["xMun"] == "EXTERIOR"
+    assert addr["UF"] == "EX"
+    assert "CEP" not in addr
+    tags = {etree.QName(c).localname: (c.text or "") for c in dest}
+    assert tags["indIEDest"] == "9"
+    assert "IE" not in tags
 
 
 def test_patch_ii_zero():

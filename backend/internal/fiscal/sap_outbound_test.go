@@ -293,6 +293,56 @@ func TestValidateSAPNFeOutbound(t *testing.T) {
 			wantErr: "missing_recipient",
 		},
 		{
+			name: "blank recipient documents",
+			payload: &SAPNFePayload{
+				Serie:            strPtr("1"),
+				Numero:           strPtr("12345"),
+				CnpjEmitente:     strPtr("12345678000195"),
+				CnpjDestinatario: strPtr(""),
+				CpfDestinatario:  strPtr(""),
+				Items:            []SAPItem{taxItem},
+			},
+			wantErr: "missing_recipient",
+		},
+		{
+			name: "exterior recipient with foreign id",
+			payload: &SAPNFePayload{
+				Serie:                     strPtr("000"),
+				Numero:                    strPtr("000069352"),
+				CnpjEmitente:              strPtr("13677964000200"),
+				CnpjDestinatario:          strPtr(""),
+				CpfDestinatario:           strPtr(""),
+				IdEstrangeiroDestinatario: strPtr("1388147556"),
+				LocalDestino:              strPtr("3"),
+				UfDestinatario:            strPtr("08"),
+				CodigoPaisDestinatario:    strPtr("1902"),
+				Items:                     []SAPItem{taxItem},
+			},
+			wantErr: "",
+		},
+		{
+			name: "exterior by country code without brazilian document",
+			payload: &SAPNFePayload{
+				Serie:                  strPtr("1"),
+				Numero:                 strPtr("12345"),
+				CnpjEmitente:           strPtr("12345678000195"),
+				CodigoPaisDestinatario: strPtr("1902"),
+				Items:                  []SAPItem{taxItem},
+			},
+			wantErr: "",
+		},
+		{
+			name: "exterior uf without brazilian document",
+			payload: &SAPNFePayload{
+				Serie:          strPtr("1"),
+				Numero:         strPtr("12345"),
+				CnpjEmitente:   strPtr("12345678000195"),
+				UfDestinatario: strPtr("EX"),
+				Items:          []SAPItem{taxItem},
+			},
+			wantErr: "",
+		},
+		{
 			name: "recipient cpf is valid",
 			payload: &SAPNFePayload{
 				Serie:           strPtr("1"),

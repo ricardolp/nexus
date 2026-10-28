@@ -49,6 +49,7 @@ def apply_all_patches(xml: etree._Element, sap: dict[str, Any] | None = None) ->
     ensure_ean_sem_gtin(xml)
     patch_icms51(xml, sap)
     patch_id_estrangeiro(xml, sap)
+    patch_exterior_destinatario(xml, sap)
     patch_cnpj_documents(xml, sap)
     patch_ii_zero_values(xml)
     patch_fin_nfe_debito_credito(xml, sap)
@@ -114,24 +115,32 @@ def patch_icms51(xml: etree._Element, sap: dict[str, Any]) -> None:
             _insert_after(node, after, "vICMSDif", _fmt2(item["icms_valor_diferido"]))
 
 
+def _digits(value: Any) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _is_foreign_dest(sap: dict[str, Any]) -> bool:
+    """Exterior recipient without a Brazilian CNPJ/CPF (idEstrangeiro)."""
+    uf = str(sap.get("uf_destinatario") or "").strip().upper()
+    pais = str(sap.get("codigo_pais_destinatario") or "").strip()
+    local = str(sap.get("local_destino") or "").strip()
+    if not (uf == "EX" or local == "3" or pais not in ("", "1058")):
+        return False
+    cnpj = str(sap.get("cnpj_destinatario") or "").strip()
+    cpf = str(sap.get("cpf_destinatario") or "").strip()
+    if any(ch.isalpha() for ch in cnpj):
+        return False
+    if len(_digits(cnpj)) == 14 or len(_digits(cpf)) == 11:
+        return False
+    return True
+
+
 def patch_id_estrangeiro(xml: etree._Element, sap: dict[str, Any]) -> None:
     """Export destinations without BR CNPJ/CPF must use idEstrangeiro before xNome."""
+    if not _is_foreign_dest(sap):
+        return
     dest = _find(xml, "dest")
     if dest is None:
-        return
-    uf = (sap.get("uf_destinatario") or "").upper()
-    pais = str(sap.get("codigo_pais_destinatario") or "1058")
-    is_export = uf == "EX" or (pais and pais != "1058")
-    if not is_export:
-        return
-    cnpj = (sap.get("cnpj_destinatario") or "").strip()
-    cpf = (sap.get("cpf_destinatario") or "").strip()
-    if any(ch.isalpha() for ch in cnpj):
-        # Alphanumeric CNPJ (NT 2026.004) is a valid BR document.
-        return
-    if len("".join(ch for ch in cnpj if ch.isdigit())) == 14:
-        return
-    if len("".join(ch for ch in cpf if ch.isdigit())) == 11:
         return
     # Drop empty CNPJ/CPF tags
     for tag in ("CNPJ", "CPF"):
@@ -139,7 +148,7 @@ def patch_id_estrangeiro(xml: etree._Element, sap: dict[str, Any]) -> None:
         if child is not None and not (child.text or "").strip():
             dest.remove(child)
     if _child(dest, "idEstrangeiro") is None:
-        id_estr = sap.get("id_estrangeiro_destinatario") or ""
+        id_estr = str(sap.get("id_estrangeiro_destinatario") or "")
         if id_estr in ("0", "00"):
             id_estr = ""
         el = etree.Element(_ns_tag("idEstrangeiro"))
@@ -149,6 +158,36 @@ def patch_id_estrangeiro(xml: etree._Element, sap: dict[str, Any]) -> None:
             xnome.addprevious(el)
         else:
             dest.insert(0, el)
+
+
+def patch_exterior_destinatario(xml: etree._Element, sap: dict[str, Any]) -> None:
+    """SEFAZ exterior address: UF EX, cMun 9999999, xMun EXTERIOR, no short CEP."""
+    if not _is_foreign_dest(sap):
+        return
+    dest = _find(xml, "dest")
+    if dest is None:
+        return
+    ender = _child(dest, "enderDest")
+    if ender is not None:
+        _set_child_text(ender, "cMun", "9999999")
+        _set_child_text(ender, "xMun", "EXTERIOR")
+        _set_child_text(ender, "UF", "EX")
+        cep = _child(ender, "CEP")
+        if cep is not None and len(_digits(cep.text)) != 8:
+            ender.remove(cep)
+    ind = _child(dest, "indIEDest")
+    if ind is None:
+        el = etree.Element(_ns_tag("indIEDest"))
+        el.text = "9"
+        if ender is not None:
+            ender.addnext(el)
+        else:
+            dest.append(el)
+    else:
+        ind.text = "9"
+    ie = _child(dest, "IE")
+    if ie is not None and not (ie.text or "").strip():
+        dest.remove(ie)
 
 
 def patch_cnpj_documents(xml: etree._Element, sap: dict[str, Any]) -> None:
@@ -680,6 +719,13 @@ def _child(parent: etree._Element, local_name: str) -> etree._Element | None:
         if _local(child) == local_name:
             return child
     return None
+
+
+def _set_child_text(parent: etree._Element, local_name: str, text: str) -> None:
+    child = _child(parent, local_name)
+    if child is None:
+        child = etree.SubElement(parent, _ns_tag(local_name))
+    child.text = text
 
 
 def _insert_after(parent: etree._Element, after_local: str, new_local: str, text: str) -> None:

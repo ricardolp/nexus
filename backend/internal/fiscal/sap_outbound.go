@@ -548,6 +548,27 @@ func ParseSAPNFePayloadNormalized(payload []byte) (*SAPNFePayload, []byte, error
 	return &p, normalized, nil
 }
 
+func sapField(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
+}
+
+// isExteriorDestinatario reports an operation with the exterior, where the
+// recipient is identified by idEstrangeiro instead of a Brazilian CNPJ/CPF.
+func isExteriorDestinatario(p *SAPNFePayload) bool {
+	if sapField(p.LocalDestino) == "3" || strings.EqualFold(sapField(p.UfDestinatario), "EX") {
+		return true
+	}
+	pais := sapField(p.CodigoPaisDestinatario)
+	if pais != "" && pais != "1058" {
+		return true
+	}
+	id := sapField(p.IdEstrangeiroDestinatario)
+	return id != "" && id != "0" && id != "00"
+}
+
 // ValidateSAPNFeOutbound ensures required fields are present for outbound NF-e.
 func ValidateSAPNFeOutbound(p *SAPNFePayload) error {
 	// Issuer document required
@@ -572,16 +593,12 @@ func ValidateSAPNFeOutbound(p *SAPNFePayload) error {
 		return domainerr.Validation("missing_items", "items array cannot be empty for outbound NF-e")
 	}
 
-	// Recipient document required (cnpj or cpf)
-	recipientOk := false
-	if p.CnpjDestinatario != nil && strings.TrimSpace(*p.CnpjDestinatario) != "" {
-		recipientOk = true
-	}
-	if p.CpfDestinatario != nil && strings.TrimSpace(*p.CpfDestinatario) != "" {
-		recipientOk = true
-	}
-	if !recipientOk {
-		return domainerr.Validation("missing_recipient", "cnpj_destinatario or cpf_destinatario is required for outbound NF-e")
+	// Domestic notes need a Brazilian document. Operations with the exterior
+	// (idDest=3, UF EX, foreign country, or idEstrangeiro) identify the
+	// recipient without CNPJ/CPF — the tag may even be empty.
+	recipientOk := sapField(p.CnpjDestinatario) != "" || sapField(p.CpfDestinatario) != ""
+	if !recipientOk && !isExteriorDestinatario(p) {
+		return domainerr.Validation("missing_recipient", "cnpj_destinatario or cpf_destinatario is required for outbound NF-e; id_estrangeiro_destinatario is accepted for operations with the exterior")
 	}
 
 	for i, item := range p.Items {

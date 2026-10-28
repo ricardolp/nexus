@@ -34,6 +34,51 @@ def test_garuva_ibge_overrides_wrong_cmunfg():
     assert _resolve_emitente_ibge(sap) == "4205803"
 
 
+def test_exterior_destinatario_coreia_sem_documento_brasileiro():
+    """Foreign buyer (idDest=3) is identified by idEstrangeiro, not CNPJ/CPF."""
+    from pynfe.processamento.serializacao import SerializacaoXML
+
+    from nfe_gateway.sefaz.sap_nfe import _build_destinatario
+    from nfe_gateway.sefaz.xml_patches import patch_exterior_destinatario, patch_id_estrangeiro
+
+    sap = {
+        "local_destino": "3",
+        "uf_destinatario": "08",
+        "codigo_pais_destinatario": "1902",
+        "id_estrangeiro_destinatario": "1388147556",
+        "nome_destinatario": "NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL",
+        "logradouro_destinatario": "Hogye-Dong",
+        "numero_destinatario": "555",
+        "bairro_destinatario": "N/A",
+        "municipio_destinatario": "Dongan-Gu",
+        "cep_destinatario": "123-517",
+        "cnpj_destinatario": "",
+        "cpf_destinatario": "",
+        "indicador_inscricao_est_dest": "9",
+    }
+    cliente = _build_destinatario(sap)
+    assert cliente.endereco_uf == "EX"
+    assert cliente.endereco_municipio == "EXTERIOR"
+    assert cliente.endereco_cep == ""
+    assert cliente.indicador_ie == 9
+    assert cliente.numero_documento == ""
+
+    xml = SerializacaoXML(None, homologacao=True)._serializar_cliente(cliente, 55, retorna_string=False)
+    patch_id_estrangeiro(xml, sap)
+    patch_exterior_destinatario(xml, sap)
+    tags = {etree.QName(c).localname: (c.text or "") for c in xml}
+    assert tags["idEstrangeiro"] == "1388147556"
+    assert "CNPJ" not in tags
+    assert tags["indIEDest"] == "9"
+    ender = next(c for c in xml if etree.QName(c).localname == "enderDest")
+    addr = {etree.QName(c).localname: (c.text or "") for c in ender}
+    assert addr["UF"] == "EX"
+    assert addr["cMun"] == "9999999"
+    assert addr["xMun"] == "EXTERIOR"
+    assert "CEP" not in addr
+    assert addr["cPais"] == "1902"
+
+
 def test_cmunfg_from_city_when_ibge_omitted(sap_fixture):
     """Missing IBGE must still emit ide/cMunFG, or SEFAZ 225 names the next tag tpImp."""
     sap_fixture.pop("codigo_municipio_fato_gerador", None)
