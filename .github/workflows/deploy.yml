@@ -56,9 +56,10 @@ jobs:
     environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target || (github.ref_name == 'main' && 'prd' || 'qas') }}
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      # Ambiente Railway atual. O nome interno é "production"; o uso é QAS.
-      QAS_ENVIRONMENT_ID: 57d2f075-e066-47c9-a603-bb04fef4809b
+      # Ambiente Railway QAS (nome interno "v2").
+      QAS_ENVIRONMENT_ID: ebe7fd77-4a75-4803-8027-2e74b1add1eb
       PRD_ENVIRONMENT_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID_PRD }}
+      RAILWAY_PROJECT_ID: a400c2f5-ad26-4228-86a6-aadcf5bd31e0
     steps:
       - uses: actions/checkout@v4
 
@@ -112,7 +113,7 @@ jobs:
             nfe_distribution_poller
           )
           query='query services($id: String!) { project(id: $id) { services { edges { node { id name } } } } }'
-          railway api "$query" --raw-var id=9df37c2f-2e44-4ff7-8f5f-770735cb008d > /tmp/services.json
+          railway api "$query" --raw-var id="$RAILWAY_PROJECT_ID" > /tmp/services.json
           mutation='mutation serviceInstanceDeployV2($environmentId: String!, $serviceId: String!, $commitSha: String) { serviceInstanceDeployV2(environmentId: $environmentId, serviceId: $serviceId, commitSha: $commitSha) }'
           for name in "${services[@]}"; do
             service_id="$(python -c 'import json,sys; name=sys.argv[1]; data=json.load(open("/tmp/services.json")); edges=data["data"]["project"]["services"]["edges"]; print(next(e["node"]["id"] for e in edges if e["node"]["name"]==name))' "$name")"
